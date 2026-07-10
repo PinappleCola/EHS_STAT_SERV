@@ -1238,29 +1238,81 @@ fms_intent_cache = {}
 state_lock = threading.Lock()
 pipeline = PipeDecoder()
 log_queue = queue.Queue()
+LOG_QUEUE_WARN_THRESHOLD = 50000
+LOG_QUEUE_WARN_INTERVAL = 5.0
+TELEMETRY_EXCLUDED_FIELDS = {
+    "sys_mode", "ias_mach", "track_info", "latlon", "meteo",
+    "latest_sys_log", "latest_intent", "latest_db_log",
+    "last_seen", "last_msg_time", "current_burst_start", "ident_time",
+    "first_seen_time", "age", "first_seen", "display_heading", "display_heading_source",
+}
+TELEMETRY_FIELDS = {
+    field["key"] for field in FIELD_REGISTRY
+    if field.get("type") != "virtual" and field["key"] not in TELEMETRY_EXCLUDED_FIELDS
+}
+telemetry_last_logged = {}
+log_queue_warn_state = {"depth": 0, "telemetry_drop": 0}
+
+
+def emit_throttled_warning(key, message):
+    now = time.time()
+    last_emit = log_queue_warn_state.get(key, 0)
+    if now - last_emit >= LOG_QUEUE_WARN_INTERVAL:
+        log_queue_warn_state[key] = now
+        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}WARNING: {message}{ANSI.RESET}")
+
+
+def serialize_telemetry_value(value):
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            return json.dumps(value, sort_keys=True)
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def queue_db_write(item, allow_drop=False):
+    try:
+        depth = log_queue.qsize()
+    except Exception:
+        depth = 0
+
+    if depth > LOG_QUEUE_WARN_THRESHOLD:
+        emit_throttled_warning("depth", f"DB write queue depth {depth} exceeds {LOG_QUEUE_WARN_THRESHOLD}. Archivist lagging.")
+        if allow_drop:
+            emit_throttled_warning("telemetry_drop", f"Dropping telemetry deltas while queue remains above {LOG_QUEUE_WARN_THRESHOLD}.")
+            return False
+
+    log_queue.put_nowait(item)
+    return True
+
+
+def queue_telemetry_delta(ts, icao, field, value):
+    if field.startswith("_") or field not in TELEMETRY_FIELDS:
+        return
+    queue_db_write(("TELEMETRY", ts, icao, field, serialize_telemetry_value(value)), allow_drop=True)
 
 # --- DB Engine & Live Metrics ---
-db_conn = sqlite3.connect("DATABASE.db", check_same_thread=False)
+DB_PATH = os.path.join(BASE_DIR, "TELEMETRY.db")
+db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 db_cursor = db_conn.cursor()
 db_lock = threading.Lock()
 ledger_count = 0 
 
 with db_lock:
+    db_cursor.execute("PRAGMA journal_mode=WAL;")
+    db_cursor.execute("PRAGMA synchronous=NORMAL;")
     db_cursor.execute('''CREATE TABLE IF NOT EXISTS aircraft_registry
                          (icao TEXT PRIMARY KEY, latest_callsign TEXT, airline TEXT, last_lat TEXT, last_lon TEXT, total_spots INTEGER)''')
     
     db_cursor.execute('''CREATE TABLE IF NOT EXISTS flight_ledger
                          (timestamp TEXT, event TEXT, icao TEXT, callsign TEXT, airline_or_data TEXT, lat TEXT, lon TEXT)''')
-    
-    try:
-        db_cursor.execute("ALTER TABLE aircraft_registry ADD COLUMN last_lat TEXT DEFAULT '----'")
-        db_cursor.execute("ALTER TABLE aircraft_registry ADD COLUMN last_lon TEXT DEFAULT '----'")
-    except sqlite3.OperationalError: pass 
-    
-    try:
-        db_cursor.execute("ALTER TABLE flight_ledger ADD COLUMN lat TEXT DEFAULT '----'")
-        db_cursor.execute("ALTER TABLE flight_ledger ADD COLUMN lon TEXT DEFAULT '----'")
-    except sqlite3.OperationalError: pass
+
+    db_cursor.execute('''CREATE TABLE IF NOT EXISTS telemetry
+                         (ts REAL, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
+    db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_field_val ON telemetry(field, value)")
+    db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_ts ON telemetry(ts)")
+    db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_icao ON telemetry(icao)")
     
     try:
         db_cursor.execute("SELECT COUNT(*) FROM flight_ledger")
@@ -1293,7 +1345,7 @@ def archivist_loop():
     global ledger_count
     while True:
         time.sleep(5)
-        ledger_batch, reg_updates, reg_inserts = [], [], []
+        ledger_batch, reg_updates, reg_inserts, telemetry_pending = [], [], [], []
         
         while not log_queue.empty():
             try:
@@ -1307,17 +1359,30 @@ def archivist_loop():
                     reg_updates.append((item[2], item[3], item[4], item[5], item[6], item[1])) 
                 elif item[0] == "REGISTRY_INSERT": 
                     reg_inserts.append((item[1], item[2], item[3], item[4], item[5], item[6])) 
+                elif item[0] == "TELEMETRY":
+                    telemetry_pending.append(item[1:])
             except queue.Empty: break
                 
-        if ledger_batch or reg_updates or reg_inserts:
+        if ledger_batch or reg_updates or reg_inserts or telemetry_pending:
             try:
+                telemetry_batch = []
+                telemetry_updates = {}
+                for ts, icao, field, value in telemetry_pending:
+                    cache_key = (icao, field)
+                    current_value = telemetry_updates.get(cache_key, telemetry_last_logged.get(cache_key))
+                    if current_value != value:
+                        telemetry_batch.append((ts, icao, field, value))
+                        telemetry_updates[cache_key] = value
+
                 with db_lock:
                     if ledger_batch: 
                         db_cursor.executemany("INSERT INTO flight_ledger (timestamp, event, icao, callsign, airline_or_data, lat, lon) VALUES (?, ?, ?, ?, ?, ?, ?)", ledger_batch)
                         ledger_count += len(ledger_batch)
                     if reg_inserts: db_cursor.executemany("INSERT INTO aircraft_registry (icao, latest_callsign, airline, last_lat, last_lon, total_spots) VALUES (?, ?, ?, ?, ?, ?)", reg_inserts)
                     if reg_updates: db_cursor.executemany("UPDATE aircraft_registry SET latest_callsign=?, airline=?, last_lat=?, last_lon=?, total_spots=? WHERE icao=?", reg_updates)
+                    if telemetry_batch: db_cursor.executemany("INSERT INTO telemetry (ts, icao, field, value) VALUES (?, ?, ?, ?)", telemetry_batch)
                     db_conn.commit()
+                    telemetry_last_logged.update(telemetry_updates)
             except Exception: pass
 
 
@@ -1347,8 +1412,8 @@ def handle_entry_gate(icao):
         console_log = f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.CYAN}{event_pad}{ANSI.RESET} {ANSI.DIM}{count_pad}{ANSI.RESET} {ANSI.YELLOW}{icao}{ANSI.RESET}  {ANSI.CYAN}{cs_pad}{ANSI.RESET}  {ANSI.CYAN}{cached_airline}{ANSI.RESET} {ANSI.DIM}{pos_str}{ANSI.RESET}"
         print(console_log)
         
-        log_queue.put(("LEDGER", iso_time, "SIGHT", icao, cached_callsign, cached_airline, cached_lat, cached_lon))
-        log_queue.put(("REGISTRY_UPDATE", icao, cached_callsign, cached_airline, cached_lat, cached_lon, count))
+        queue_db_write(("LEDGER", iso_time, "SIGHT", icao, cached_callsign, cached_airline, cached_lat, cached_lon))
+        queue_db_write(("REGISTRY_UPDATE", icao, cached_callsign, cached_airline, cached_lat, cached_lon, count))
     else:
         historical_state[icao] = {"total_spots": 1, "latest_callsign": "----", "airline": "----", "last_lat": "----", "last_lon": "----"}
         event_pad = "[AQUISITION]".ljust(13)
@@ -1360,8 +1425,8 @@ def handle_entry_gate(icao):
         console_log = f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.GREEN}{event_pad}{ANSI.RESET} {ANSI.DIM}{count_pad}{ANSI.RESET} {ANSI.YELLOW}{icao}{ANSI.RESET}  {ANSI.CYAN}{cs_pad}{ANSI.RESET}  {ANSI.DIM}---- {pos_str}{ANSI.RESET}"
         print(console_log)
         
-        log_queue.put(("LEDGER", iso_time, "AQUISITION", icao, "----", "----", "----", "----"))
-        log_queue.put(("REGISTRY_INSERT", icao, "----", "----", "----", "----", 1))
+        queue_db_write(("LEDGER", iso_time, "AQUISITION", icao, "----", "----", "----", "----"))
+        queue_db_write(("REGISTRY_INSERT", icao, "----", "----", "----", "----", 1))
             
     formatted_log = f"> <span class=\"ts-badge\">[{ui_time}]</span> <span style=\"color:#39ff14;\">{plain_log}</span>"
     update_aircraft(icao, "latest_sys_log", {"hash": f"gate_{icao}_{now}", "text": formatted_log})
@@ -1397,7 +1462,7 @@ def run_reaper_loop():
                         console_log = f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.RED}{event_pad}{ANSI.RESET} {ANSI.DIM}{count_pad}{ANSI.RESET} {ANSI.YELLOW}{icao}{ANSI.RESET}  {ANSI.CYAN}{cs_pad}{ANSI.RESET}  {ANSI.CYAN}{al_val}{ANSI.RESET} {ANSI.DIM}{pos_str}{ANSI.RESET}"
                         print(console_log)
                         
-                        log_queue.put(("LEDGER", true_exit_iso, "FAREWELL", icao, cs_val, al_val, lat_val, lon_val))
+                        queue_db_write(("LEDGER", true_exit_iso, "FAREWELL", icao, cs_val, al_val, lat_val, lon_val))
                         
                         formatted_log = f"> <span class=\"ts-badge\">[{ui_time}]</span> <span style=\"color:#f87171;\">{plain_log}</span>"
                         data["latest_sys_log"] = {"hash": f"sys_exit_{icao}_{now}", "text": formatted_log}
@@ -1420,12 +1485,12 @@ def run_reaper_loop():
                         historical_state[icao]["last_lat"] = final_lat
                         historical_state[icao]["last_lon"] = final_lon
                         
-                    log_queue.put(("REGISTRY_UPDATE", icao, 
-                                   historical_state[icao]["latest_callsign"], 
-                                   historical_state[icao]["airline"], 
-                                   historical_state[icao]["last_lat"], 
-                                   historical_state[icao]["last_lon"], 
-                                   historical_state[icao]["total_spots"]))
+                    queue_db_write(("REGISTRY_UPDATE", icao, 
+                                    historical_state[icao]["latest_callsign"], 
+                                    historical_state[icao]["airline"], 
+                                    historical_state[icao]["last_lat"], 
+                                    historical_state[icao]["last_lon"], 
+                                    historical_state[icao]["total_spots"]))
                                    
                 del aircraft_state[icao]
                 if icao in fms_intent_cache: del fms_intent_cache[icao]
@@ -1511,12 +1576,12 @@ def update_aircraft(icao, key, value):
                 "latest_intent": {}, "latest_db_log": {}, "latest_sys_log": {}, "last_msg_time": 0, 
                 "current_burst_start": 0, "last_seen": now, "first_seen_time": now
             }
-        
-        curr_lat = aircraft_state[icao].get("lat", "----")
-        curr_lon = aircraft_state[icao].get("lon", "----")
 
+        previous_value = aircraft_state[icao].get(key)
+        previous_airline = aircraft_state[icao].get("airline")
+        
         if key == "lat":
-            old_lat = aircraft_state[icao].get("lat")
+            old_lat = previous_value
             if old_lat == "----" and value != "----":
                 ui_time = get_ui_time()
                 iso_time = get_iso_time()
@@ -1525,7 +1590,6 @@ def update_aircraft(icao, key, value):
                 log_text = f"> <span class=\"ts-badge\">[{ui_time}]</span> POS LOCK: <span class=\"icao-badge\">{icao}</span> acquired spatial coordinates."
                 console_log = f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.MAGENTA}{event_label}{ANSI.RESET} {' '*6} {ANSI.YELLOW}{icao}{ANSI.RESET}  {ANSI.CYAN}{cs_log.ljust(8)}{ANSI.RESET}  {ANSI.MAGENTA}Coordinates Acquired{ANSI.RESET}"
                 print(console_log)
-                log_queue.put(("LEDGER", iso_time, "POS LOCK", icao, cs_log, "Lat Lock", value, curr_lon))
                 aircraft_state[icao]["latest_sys_log"] = {"hash": f"cpr_{icao}_{now}", "text": log_text}
 
         if key == "callsign" and value != "----":
@@ -1539,6 +1603,13 @@ def update_aircraft(icao, key, value):
             aircraft_state[icao][f"_{key}_update_time"] = now
         if key == "lat":
             aircraft_state[icao]["_lat_update_time"] = now
+
+        if previous_value != value:
+            queue_telemetry_delta(now, icao, key, value)
+        if key == "callsign":
+            current_airline = aircraft_state[icao].get("airline")
+            if previous_airline != current_airline:
+                queue_telemetry_delta(now, icao, "airline", current_airline)
         
         # Increment message counter
         if key == "last_seen":
