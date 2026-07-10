@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <title>DART-B Live Grid</title>
     <!-- B612 Mono: designed by Airbus/ENAC for aircraft cockpit displays.
-         Highly legible at small sizes, truly monospaced, technical/aeronautical feel. -->
+         Highly legible at small sizes, truly monospaced, technical/aeronautical feel.
+         Loaded from Google Fonts. Falls back to Courier New if unavailable (offline /
+         CSP-restricted environments). Self-host the woff2 files from
+         https://fonts.google.com/specimen/B612+Mono to eliminate the dependency. -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=B612+Mono:ital@0;1&display=swap" rel="stylesheet">
@@ -262,7 +265,7 @@
         { key:'alt',              label:'ALTITUDE',       category:'ALTITUDE',       source:'DF17 / DF20',     sortable:true,  defaultVisible:true,  unit:'ft'    },
         { key:'target_alt',       label:'TARGET ALT',     category:'ALTITUDE',       source:'BDS 4,0',         sortable:false, defaultVisible:true  },
         // --- Kinematics ---
-        { key:'vert_rate',        label:'VERT RATE',      category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:true,  unit:'ft/m'  },
+        { key:'vert_rate',        label:'VERT RATE',      category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:true,  unit:'ft/min'  },
         // --- System / Modes (ordered here so default columns match original layout) ---
         { key:'sys_mode',         label:'SYS MODE',       category:'SYSTEM',         source:'BDS 4,0/6,2/4,8', sortable:false, defaultVisible:true              },
         { key:'baro',             label:'BARO SET',       category:'SYSTEM',         source:'BDS 4,0',         sortable:false, defaultVisible:true,  unit:'hPa'   },
@@ -278,7 +281,7 @@
         { key:'track_rate',       label:'TRACK RATE',     category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:false, unit:'deg/s' },
         { key:'roll',             label:'BANK INDEX',     category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:true,  unit:'deg'   },
         // --- Extended kinematics (opt-in) ---
-        { key:'inertial_vr',      label:'INERTIAL VR',    category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:false, unit:'ft/m'  },
+        { key:'inertial_vr',      label:'INERTIAL VR',    category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:false, unit:'ft/min'  },
         // --- Additional system fields ---
         { key:'discretes',        label:'DISCRETES',      category:'SYSTEM',         source:'BDS 6,2 / TC29',  sortable:false, defaultVisible:false             },
         { key:'capability_summary',label:'CAPABILITIES',  category:'SYSTEM',         source:'BDS 1,7',         sortable:false, defaultVisible:false             },
@@ -505,7 +508,7 @@
             case 'vert_rate': {
                 if (typeof plane.vert_rate !== 'number') return { html: EM };
                 const c = plane.vert_rate > 250 ? '#4ade80' : (plane.vert_rate < -250 ? '#fb923c' : '#94a3b8');
-                return { html: `<span style="color:${c};font-weight:bold;">${plane.vert_rate > 0 ? '+' : ''}${plane.vert_rate} ft/m</span>` };
+                return { html: `<span style="color:${c};font-weight:bold;">${plane.vert_rate > 0 ? '+' : ''}${plane.vert_rate} ft/min</span>` };
             }
             case 'speed':
                 return { html: (plane.speed && plane.speed !== '----') ? plane.speed + ' kt' : EM };
@@ -616,7 +619,7 @@
             case 'inertial_vr': {
                 if (typeof plane.inertial_vr !== 'number') return { html: EM };
                 const c = plane.inertial_vr > 250 ? '#4ade80' : (plane.inertial_vr < -250 ? '#fb923c' : '#94a3b8');
-                return { html: `<span style="color:${c};">${plane.inertial_vr > 0 ? '+' : ''}${plane.inertial_vr} ft/m</span>` };
+                return { html: `<span style="color:${c};">${plane.inertial_vr > 0 ? '+' : ''}${plane.inertial_vr} ft/min</span>` };
             }
             // --- System timing: first-seen timestamp ---
             case 'first_seen':
@@ -1137,6 +1140,7 @@
     // COLUMN RESIZE — draggable resize handles on header cells
     // Widths are persisted in activeConfig.columnWidths (localStorage).
     // ============================================================
+    const MIN_COLUMN_WIDTH = 40; // px — smallest a column can be dragged to
     let _colResizing = false;  // true while a drag is in progress
     let _colKey = null;        // key of column being resized
     let _colStartX = 0;        // mouse X at drag start
@@ -1146,7 +1150,7 @@
     document.addEventListener('mousemove', (e) => {
         if (!_colResizing) return;
         const delta = e.clientX - _colStartX;
-        _colCurW = Math.max(40, Math.round(_colStartW + delta));
+        _colCurW = Math.max(MIN_COLUMN_WIDTH, Math.round(_colStartW + delta));
         // Apply width live to the header th for instant feedback
         const th = document.querySelector(`th.header-cell[data-key="${_colKey}"]`);
         if (th) {

@@ -312,7 +312,7 @@ FIELD_REGISTRY = [
     {"key": "alt",              "label": "ALTITUDE",       "type": "number", "unit": "ft",   "category": "ALTITUDE",       "sortable": True,  "defaultVisible": True,  "source": "DF17 / DF20"},
     {"key": "target_alt",       "label": "TARGET ALT",     "type": "text",   "unit": "ft",   "category": "ALTITUDE",       "sortable": False, "defaultVisible": True,  "source": "BDS 4,0"},
     # --- Kinematics ---
-    {"key": "vert_rate",        "label": "VERT RATE",      "type": "number", "unit": "ft/m", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 6,0"},
+    {"key": "vert_rate",        "label": "VERT RATE",      "type": "number", "unit": "ft/min", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 6,0"},
     # sys_mode and baro are placed here so the default column order matches the original live grid layout
     {"key": "sys_mode",         "label": "SYS MODE",       "type": "virtual","unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": True,  "source": "BDS 4,0/6,2/4,8"},
     {"key": "baro",             "label": "BARO SET",       "type": "text",   "unit": "hPa",  "category": "SYSTEM",         "sortable": False, "defaultVisible": True,  "source": "BDS 4,0"},
@@ -355,7 +355,7 @@ FIELD_REGISTRY = [
     # --- Extended meteorology (BDS 4,4) ---
     {"key": "humidity",         "label": "HUMIDITY",       "type": "number", "unit": "%",    "category": "METEO",          "sortable": False, "defaultVisible": False, "source": "BDS 4,4"},
     # --- Extended kinematics (BDS 6,0 inertial VR) ---
-    {"key": "inertial_vr",      "label": "INERTIAL VR",    "type": "number", "unit": "ft/m", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
+    {"key": "inertial_vr",      "label": "INERTIAL VR",    "type": "number", "unit": "ft/min", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
     # --- System timing ---
     {"key": "age",              "label": "AGE",            "type": "number", "unit": "s",    "category": "SYSTEM",         "sortable": True,  "defaultVisible": True,  "source": "Sys Clock"},
     {"key": "first_seen",       "label": "FIRST SEEN",     "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "Sys Clock"},
