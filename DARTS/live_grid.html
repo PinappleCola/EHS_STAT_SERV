@@ -349,12 +349,13 @@
                 }
                 return cfg;
             }
-        } catch(e) {}
+        } catch(e) { console.warn('[DART-B] Config load error:', e); }
         return getDefaultConfig();
     }
 
     function saveConfig(cfg) {
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch(e) {}
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
+        catch(e) { console.warn('[DART-B] Config save error (storage quota?):', e); }
     }
 
     // Active config (drives table rendering)
@@ -657,6 +658,12 @@
     // ============================================================
     // TABLE UPDATE (called on every WebSocket message)
     // ============================================================
+
+    // Helper: treat missing/null/'----' values as "empty" for sort purposes
+    function isEmptyValue(val) {
+        return val === null || val === undefined || val === '----';
+    }
+
     function updateTable(aircraftList) {
         const tableBody = document.getElementById('aircraft-table-body');
 
@@ -671,13 +678,11 @@
             const sk = activeConfig.sortKey;
             const dir = activeConfig.sortDir === 'desc' ? -1 : 1;
             sorted.sort((a, b) => {
-                let va = a[sk], vb = b[sk];
-                // Treat missing/null/---- as always last
-                const aNull = (va === null || va === undefined || va === '----');
-                const bNull = (vb === null || vb === undefined || vb === '----');
-                if (aNull && bNull) return 0;
-                if (aNull) return 1;
-                if (bNull) return -1;
+                const va = a[sk], vb = b[sk];
+                // Empty values always sort to the bottom
+                if (isEmptyValue(va) && isEmptyValue(vb)) return 0;
+                if (isEmptyValue(va)) return 1;
+                if (isEmptyValue(vb)) return -1;
                 if (typeof va === 'number' && typeof vb === 'number') return dir * (va - vb);
                 return dir * String(va).localeCompare(String(vb));
             });
@@ -852,14 +857,47 @@
             li.draggable = true;
             li.dataset.key = key;
             li.dataset.idx = idx;
-            li.innerHTML = `
-                <span class="drag-handle" title="Drag to reorder">⠿</span>
-                <span class="col-item-label">${def ? def.label : key}</span>
-                <span class="col-item-cat">${def ? def.category : ''}</span>
-                <button class="col-item-btn up-btn" onclick="moveCol(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Move up">▲</button>
-                <button class="col-item-btn dn-btn" onclick="moveCol(${idx}, 1)" ${idx === tempConfig.columns.length - 1 ? 'disabled' : ''} title="Move down">▼</button>
-                <button class="col-item-btn danger" onclick="removeCol('${key}')" title="Remove column">✕</button>
-            `;
+
+            // Build inner elements without inline onclick to avoid XSS concerns
+            const dragSpan = document.createElement('span');
+            dragSpan.className = 'drag-handle';
+            dragSpan.title = 'Drag to reorder';
+            dragSpan.textContent = '⠿';
+
+            const labelSpan = document.createElement('span');
+            labelSpan.className = 'col-item-label';
+            labelSpan.textContent = def ? def.label : key;
+
+            const catSpan = document.createElement('span');
+            catSpan.className = 'col-item-cat';
+            catSpan.textContent = def ? def.category : '';
+
+            const upBtn = document.createElement('button');
+            upBtn.className = 'col-item-btn up-btn';
+            upBtn.title = 'Move up';
+            upBtn.textContent = '▲';
+            upBtn.disabled = (idx === 0);
+            upBtn.addEventListener('click', () => moveCol(idx, -1));
+
+            const dnBtn = document.createElement('button');
+            dnBtn.className = 'col-item-btn dn-btn';
+            dnBtn.title = 'Move down';
+            dnBtn.textContent = '▼';
+            dnBtn.disabled = (idx === tempConfig.columns.length - 1);
+            dnBtn.addEventListener('click', () => moveCol(idx, 1));
+
+            const rmBtn = document.createElement('button');
+            rmBtn.className = 'col-item-btn danger';
+            rmBtn.title = 'Remove column';
+            rmBtn.textContent = '✕';
+            rmBtn.addEventListener('click', () => removeCol(key));
+
+            li.appendChild(dragSpan);
+            li.appendChild(labelSpan);
+            li.appendChild(catSpan);
+            li.appendChild(upBtn);
+            li.appendChild(dnBtn);
+            li.appendChild(rmBtn);
 
             // Drag-and-drop events
             li.addEventListener('dragstart', (e) => {
@@ -936,19 +974,41 @@
         Object.entries(categories).forEach(([cat, defs]) => {
             const group = document.createElement('div');
             group.className = 'avail-cat-group';
-            group.innerHTML = `<div class="avail-cat-label">${cat}</div>`;
+
+            const catLabel = document.createElement('div');
+            catLabel.className = 'avail-cat-label';
+            catLabel.textContent = cat;
+            group.appendChild(catLabel);
 
             defs.forEach(def => {
                 const isActive = tempConfig.columns.includes(def.key);
                 const item = document.createElement('div');
                 item.className = 'avail-col-item' + (isActive ? '' : ' hidden-field');
-                item.innerHTML = `
-                    <div class="field-toggle ${isActive ? 'active' : ''}" onclick="toggleField('${def.key}')" title="${isActive ? 'Hide column' : 'Show column'}">
-                        ${isActive ? '✓' : ''}
-                    </div>
-                    <span class="avail-field-label">${def.label}${def.unit ? ` <span style="color:#475569;">(${def.unit})</span>` : ''}</span>
-                    <span class="avail-field-src">${def.source}</span>
-                `;
+
+                // Toggle checkbox — use addEventListener instead of inline onclick
+                const toggle = document.createElement('div');
+                toggle.className = 'field-toggle' + (isActive ? ' active' : '');
+                toggle.title = isActive ? 'Hide column' : 'Show column';
+                toggle.textContent = isActive ? '✓' : '';
+                toggle.addEventListener('click', () => toggleField(def.key));
+
+                const labelSpan = document.createElement('span');
+                labelSpan.className = 'avail-field-label';
+                labelSpan.textContent = def.label;
+                if (def.unit) {
+                    const unitSpan = document.createElement('span');
+                    unitSpan.style.color = '#475569';
+                    unitSpan.textContent = ` (${def.unit})`;
+                    labelSpan.appendChild(unitSpan);
+                }
+
+                const srcSpan = document.createElement('span');
+                srcSpan.className = 'avail-field-src';
+                srcSpan.textContent = def.source;
+
+                item.appendChild(toggle);
+                item.appendChild(labelSpan);
+                item.appendChild(srcSpan);
                 group.appendChild(item);
             });
 

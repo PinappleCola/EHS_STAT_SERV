@@ -322,7 +322,7 @@ FIELD_REGISTRY = [
     {"key": "ias",              "label": "IAS",            "type": "number", "unit": "kt",   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
     {"key": "mach",             "label": "MACH",           "type": "number", "unit": None,   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
     {"key": "heading",          "label": "MAG HDG",        "type": "angle",  "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 6,0"},
-    {"key": "track_info",       "label": "TRUE TRK/RATE",  "type": "virtual","unit": None,   "category": "KINEMATICS",     "sortable": False, "defaultVisible": True,  "source": "BDS 5,0"},
+    {"key": "track_info",       "label": "TRUE TRK / RATE","type": "virtual","unit": None,   "category": "KINEMATICS",     "sortable": False, "defaultVisible": True,  "source": "BDS 5,0"},
     {"key": "track",            "label": "TRUE TRK",       "type": "angle",  "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 5,0"},
     {"key": "track_rate",       "label": "TRACK RATE",     "type": "number", "unit": "deg/s","category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 5,0"},
     {"key": "roll",             "label": "BANK INDEX",     "type": "angle",  "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 5,0"},
@@ -838,7 +838,10 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
     """Lightweight HTTP handler serving field registry and grid config endpoints."""
 
     def log_message(self, format, *args):
-        pass  # Suppress default access log noise
+        # Log 4xx/5xx only; suppress noisy 200/OPTIONS to keep console clean
+        code = args[1] if len(args) > 1 else ""
+        if str(code).startswith(("4", "5")):
+            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[HTTP API] {format % args}{ANSI.RESET}")
 
     def _send_json(self, data, status=200):
         body = json.dumps(data).encode("utf-8")
