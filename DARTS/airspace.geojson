@@ -1,0 +1,448 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [
+                        151.171783,
+                        -33.930106
+                    ],
+                    [
+                        151.180648,
+                        -33.964265
+                    ]
+                ]
+            },
+            "properties": {
+                "id": "16R_34L"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [
+                        151.188854,
+                        -33.951645
+                    ],
+                    [
+                        151.193813,
+                        -33.970751
+                    ]
+                ]
+            },
+            "properties": {
+                "id": "16L_34R"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [
+                        151.163627,
+                        -33.943735
+                    ],
+                    [
+                        151.188903,
+                        -33.937783
+                    ]
+                ]
+            },
+            "properties": {
+                "id": "07_25"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.171783,
+                    -33.930106
+                ]
+            },
+            "properties": {
+                "id": "16R"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.188854,
+                    -33.951644
+                ]
+            },
+            "properties": {
+                "id": "16L"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.167524,
+                    -33.915308
+                ]
+            },
+            "properties": {
+                "id": "SYDENHAM NDB"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.210655,
+                    -33.852355
+                ]
+            },
+            "properties": {
+                "name": "NAME_DATA_HERE",
+                "icon": "VOR",
+                "color": "rgba(56, 189, 248, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "id": "16R_34L"
+            },
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [
+                        151.171783,
+                        -33.930106
+                    ],
+                    [
+                        151.180648,
+                        -33.964265
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "id": "16L_34R"
+            },
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [
+                        151.188854,
+                        -33.951645
+                    ],
+                    [
+                        151.193813,
+                        -33.970751
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "id": "07_25"
+            },
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [
+                        151.163627,
+                        -33.943735
+                    ],
+                    [
+                        151.188903,
+                        -33.937783
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "id": "16R"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.171783,
+                    -33.930106
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "id": "16L"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.188854,
+                    -33.951644
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "id": "SYDENHAM NDB"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.167524,
+                    -33.915308
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.027679,
+                    -33.854879
+                ]
+            },
+            "properties": {
+                "Name": "Value"
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "color": "Value",
+                "Name": "HOOSE",
+                "id": "VOR",
+                "name": "rgba(56, 0, 248, 0.9)"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.027679,
+                    -33.854879
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.14342821439087,
+                    -33.82040868954226
+                ]
+            },
+            "properties": {
+                "name": "TEST",
+                "icon": "VOR",
+                "color": "rgba(56, 189, 248, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.9389,
+                    -33.5816
+                ]
+            },
+            "properties": {
+                "name": "SSR 4.4s",
+                "icon": "RADAR",
+                "sweep": 4.4,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    150.2006,
+                    -34.4121
+                ]
+            },
+            "properties": {
+                "name": "SSR 14.7s",
+                "icon": "RADAR",
+                "sweep": 14.7,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    150.0835,
+                    -34.7356
+                ]
+            },
+            "properties": {
+                "name": "SSR 14.9s",
+                "icon": "RADAR",
+                "sweep": 14.9,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    150.7374,
+                    -34.0109
+                ]
+            },
+            "properties": {
+                "name": "SSR 9.8s",
+                "icon": "RADAR",
+                "sweep": 9.8,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    150.8236,
+                    -33.8916
+                ]
+            },
+            "properties": {
+                "name": "SSR 7.3s",
+                "icon": "RADAR",
+                "sweep": 7.3,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    150.9816,
+                    -34.8538
+                ]
+            },
+            "properties": {
+                "name": "SSR 10.6s",
+                "icon": "RADAR",
+                "sweep": 10.6,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.3699,
+                    -34.1136
+                ]
+            },
+            "properties": {
+                "name": "SSR 7.1s",
+                "icon": "RADAR",
+                "sweep": 7.1,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    150.8548,
+                    -34.0927
+                ]
+            },
+            "properties": {
+                "name": "SSR 7.6s",
+                "icon": "RADAR",
+                "sweep": 7.6,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    150.9742,
+                    -33.9641
+                ]
+            },
+            "properties": {
+                "name": "SSR 6.1s",
+                "icon": "RADAR",
+                "sweep": 6.1,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.213,
+                    -33.6946
+                ]
+            },
+            "properties": {
+                "name": "SSR 5.3s",
+                "icon": "RADAR",
+                "sweep": 5.3,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.3014,
+                    -34.0391
+                ]
+            },
+            "properties": {
+                "name": "SSR 3.9s",
+                "icon": "RADAR",
+                "sweep": 3.9,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    151.2722,
+                    -34.088
+                ]
+            },
+            "properties": {
+                "name": "SSR 4.7s",
+                "icon": "RADAR",
+                "sweep": 4.7,
+                "color": "rgba(16, 185, 129, 0.9)"
+            }
+        }
+    ]
+}

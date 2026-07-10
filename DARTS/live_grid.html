@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DART-B Live Grid</title>
+    <style>
+        :root { color-scheme: dark; }
+        body {
+            background-color: #0b0b0d; color: #e2e8f0; font-family: 'Consolas', 'Courier New', monospace;
+            margin: 12px; display: flex; flex-direction: column; height: 97vh; overflow: hidden;
+        }
+        h2 { color: #38bdf8; border-bottom: 2px solid #334155; padding-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-size: 1.3em; margin-top: 5px; flex-shrink: 0; }
+        .status { font-size: 0.82em; margin-bottom: 12px; color: #94a3b8; flex-shrink: 0; display: flex; justify-content: space-between; align-items: flex-end;}
+        .online { color: #4ade80; font-weight: bold; }
+        .offline { color: #f87171; font-weight: bold; }
+        .db-counter { color: #c084fc; font-weight: bold; letter-spacing: 0.5px; }
+        
+        .table-container { flex: 2; overflow-y: auto; margin-bottom: 10px; border-radius: 4px; border: 1px solid #1e293b; }
+        table { width: 100%; border-collapse: collapse; background-color: #0d1117; }
+        th, td { padding: 8px 4px; text-align: left; font-size: 0.75em; vertical-align: middle; color: #f1f5f9; white-space: nowrap; }
+        th { background-color: #030712; color: #38bdf8; font-weight: bold; border-bottom: 2px solid #1e293b; text-transform: uppercase; position: sticky; top: 0; z-index: 10; }
+        tr { border-bottom: 1px solid #1e293b; transition: background-color 0.1s ease; }
+        tr:hover { background-color: #1e293b; }
+        
+        .origin-cell { font-size: 0.65em; color: #8b5cf6; text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 0px !important; border-bottom: none !important; font-weight: normal; }
+        .header-cell { padding-top: 4px !important; }
+        
+        .row-ident { background-color: rgba(234, 179, 8, 0.4) !important; transition: background-color 0.2s ease; }
+        .row-emergency { background-color: rgba(220, 38, 38, 0.35) !important; font-weight: bold; }
+        .row-coasting { opacity: 0.35; transition: opacity 2.5s ease-in-out; }
+        
+        .icao { color: #fbbf24; font-weight: bold; }
+        .airline-cell { color: #22d3ee; font-weight: bold; text-transform: uppercase;}
+        .intent { color: #c084fc; font-weight: bold; }
+        .discrete-cell { color: #38bdf8; font-weight: bold; }
+        .decode-tag { display: inline-block; margin-top: 3px; padding: 1px 5px; border: 1px solid #7c3aed; border-radius: 999px; color: #c084fc; font-size: 0.9em; letter-spacing: 0.4px; }
+        .baro-cell { color: #f43f5e; font-weight: bold; }
+        .radar-cell { color: #a855f7; font-weight: bold; }
+        .sensor-cell { color: #2dd4bf; }
+        .gnss-cell { color: #10b981; font-weight: bold; }
+        .cpr-cell { color: #fb923c; font-weight: bold; }
+        .squawk-cell { font-weight: bold; color: #f472b6; }
+        .empty-datum { color: #64748b; }
+        .status-clean { color: #4ade80; }
+        .status-ra { color: #ef4444; font-weight: bold; animation: text-flash 0.5s infinite alternate; }
+        
+        .instrument-wrapper { display: flex; align-items: center; gap: 8px; transition: opacity 0.4s ease; }
+        .val-text { min-width: 32px; display: inline-block; }
+        .dial-core { position: relative; width: 24px; height: 24px; border: 1.5px solid #475569; border-radius: 50%; background-color: #0b0b0d; flex-shrink: 0; box-shadow: inset 0 0 4px rgba(0,0,0,0.6); }
+        .pointer-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        .bank-dial::after { content: ''; position: absolute; top: 50%; left: 50%; width: 4px; height: 4px; background-color: #38bdf8; border-radius: 50%; transform: translate(-50%, -50%); z-index: 5; }
+        .bank-pointer, .hdg-pointer { transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1); transform-origin: 50% 50%; }
+        .bank-pointer::before { content: ''; position: absolute; top: 50%; left: 10%; width: 80%; height: 2px; background-color: #06b6d4; box-shadow: 0 0 3px rgba(6, 182, 212, 0.8); transform: translateY(-50%); }
+        .hdg-pointer::before { content: ''; position: absolute; top: 2px; left: 50%; width: 6px; height: 6px; background-color: #f97316; border-radius: 50%; transform: translateX(-50%); box-shadow: 0 0 4px rgba(249, 115, 22, 0.7); }
+        
+        @keyframes text-flash { from { opacity: 1; } to { opacity: 0.4; } }
+
+        .intercept-panel { 
+            flex: 1; min-height: 250px; 
+            background-color: #030712; border: 1px solid #1e293b; border-left: 4px solid #c084fc; 
+            border-radius: 4px; padding: 10px; display: flex; flex-direction: column; 
+            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.5); 
+        }
+        .intercept-title { color: #c084fc; font-size: 0.8em; font-weight: bold; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+        .intercept-log { flex: 1; overflow-y: auto; font-size: 0.8em; color: #94a3b8; line-height: 1.5; padding-right: 5px; scroll-behavior: smooth; }
+        .intercept-log::-webkit-scrollbar { width: 6px; }
+        .intercept-log::-webkit-scrollbar-track { background: #0f172a; border-radius: 3px; }
+        .intercept-log::-webkit-scrollbar-thumb { background: #c084fc; border-radius: 3px; }
+        
+        .log-entry { margin-bottom: 4px; border-bottom: 1px dashed #1e293b; padding-bottom: 2px; animation: pulse-entry 2s ease-out; }
+        .db-log-entry { border-bottom: 1px dashed #064e3b; animation: pulse-db 2s ease-out; }
+        .sys-log-entry { border-bottom: 1px dashed #0284c7; animation: pulse-sys 2s ease-out; }
+        
+        .ts-badge { color: #64748b; font-family: monospace; margin-right: 6px; }
+        .icao-badge { color: #fbbf24; font-weight: bold; }
+        .bds-badge { color: #c084fc; font-weight: bold; }
+        .hex-payload { color: #22d3ee; font-weight: bold; }
+        
+        @keyframes pulse-entry { 0% { color: #fff; background-color: rgba(192, 132, 252, 0.2); } 100% { color: #94a3b8; background-color: transparent; } }
+        @keyframes pulse-db { 0% { color: #fff; background-color: rgba(74, 222, 128, 0.2); } 100% { background-color: transparent; } }
+        @keyframes pulse-sys { 0% { color: #fff; background-color: rgba(56, 189, 248, 0.2); } 100% { background-color: transparent; } }
+
+    </style>
+</head>
+<body>
+
+    <h2>DART-B Live Grid</h2>
+    <div class="status">
+        <span>DATASTREAM CORE LINK: <span id="status-text" class="offline">STANDBY</span></span>
+        <span class="db-counter">LEDGER DB: <span id="ledger-count-val">0</span> ROWS</span>
+    </div>
+
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th class="origin-cell">PI Parity</th> <th class="origin-cell">DF17 TC:1-4</th> <th class="origin-cell">DB Lookup</th> <th class="origin-cell">DF11 / DF21</th>
+                    <th class="origin-cell">DF17 / DF20</th> <th class="origin-cell">BDS 4,0</th> <th class="origin-cell">BDS 6,0</th>
+                    <th class="origin-cell">BDS 4,0/6,2/4,8</th> <th class="origin-cell">BDS 4,0</th> <th class="origin-cell">BDS 5,0 / TC19</th>
+                    <th class="origin-cell">BDS 5,0</th> <th class="origin-cell">BDS 6,0</th> <th class="origin-cell">BDS 6,0</th>
+                    <th class="origin-cell">BDS 5,0</th> <th class="origin-cell">BDS 5,0</th> <th class="origin-cell">BDS 3,0</th>
+                    <th class="origin-cell">Δt(Burst) Calc</th> <th class="origin-cell">DF17 TC:31</th> <th class="origin-cell">Local CPR Math</th>
+                    <th class="origin-cell">BDS4,4 + Calc</th> <th class="origin-cell">Sys Clock</th>
+                </tr>
+                <tr>
+                    <th class="header-cell">ICAO</th> <th class="header-cell">CALLSIGN</th> <th class="header-cell">AIRLINE</th> <th class="header-cell">SQUAWK</th>
+                    <th class="header-cell">ALTITUDE</th> <th class="header-cell">TARGET ALT</th> <th class="header-cell">VERT RATE</th>
+                    <th class="header-cell">SYS MODE</th> <th class="header-cell">BARO SET</th> <th class="header-cell">SPEED (GS)</th>
+                    <th class="header-cell">TAS</th> <th class="header-cell">IAS / MACH</th> <th class="header-cell">MAG HDG</th>
+                    <th class="header-cell">TRUE TRK / RATE</th> <th class="header-cell">BANK INDX</th> <th class="header-cell">TCAS RA</th>
+                    <th class="header-cell">RADAR SWEEP</th> <th class="header-cell">GNSS QUAL</th> <th class="header-cell">LAT / LON</th>
+                    <th class="header-cell">METEO / SENSORS</th> <th class="header-cell">AGE</th>
+                </tr>
+            </thead>
+            <tbody id="aircraft-table-body">
+                <tr id="cold-start-row"><td colspan="21" style="text-align: center; color: #10b981; font-weight: bold;">System cold-start. Synchronizing register array...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="intercept-panel">
+        <div class="intercept-title">DART-B - Intent Shadow Monitor & Registry</div>
+        <div class="intercept-log" id="intent-log-box">
+            <div style="color: #475569; font-style: italic;">Awaiting RF Payloads...</div>
+        </div>
+    </div>
+
+    <script>
+        const tableBody = document.getElementById('aircraft-table-body');
+        const statusText = document.getElementById('status-text');
+        const intentLogBox = document.getElementById('intent-log-box');
+        const ledgerCountVal = document.getElementById('ledger-count-val');
+        
+        const seenIntents = new Set();
+        let isFirstIntent = true;
+        const planeState = {}; 
+
+        const ws = new WebSocket('ws://localhost:8765');
+        ws.onopen = () => { statusText.innerText = 'ONLINE - STREAMING RAMPED'; statusText.className = 'online'; };
+        ws.onclose = () => { statusText.innerText = 'OFFLINE - CONSOLE DETACHED'; statusText.className = 'offline'; };
+
+        ws.onmessage = (event) => {
+            try {
+                const parsedData = JSON.parse(event.data);
+                
+                let aircraftList = [];
+                if (Array.isArray(parsedData)) {
+                    aircraftList = parsedData; 
+                } else {
+                    aircraftList = parsedData.airframes || [];
+                    if (parsedData.meta && parsedData.meta.ledger_count !== undefined) {
+                        if (ledgerCountVal) ledgerCountVal.innerText = parsedData.meta.ledger_count.toLocaleString();
+                    }
+                }
+                
+                const activeIcaos = new Set();
+
+                if (aircraftList.length > 0) {
+                    const coldStart = document.getElementById('cold-start-row');
+                    if (coldStart) coldStart.remove();
+                }
+
+                aircraftList.forEach(plane => {
+                    if (!plane || !plane.icao) return;
+                    activeIcaos.add(plane.icao);
+                    
+                    if (plane.latest_intent && plane.latest_intent.hex) {
+                        const intentHash = plane.latest_intent.icao + "_" + plane.latest_intent.hex;
+                        if (!seenIntents.has(intentHash)) {
+                            seenIntents.add(intentHash);
+                            if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
+                            const logEntry = document.createElement('div');
+                            logEntry.className = 'log-entry';
+                            logEntry.innerHTML = `> <span class="ts-badge">[${plane.latest_intent.time || ''}]</span> INTENT CAPTURE: <span class="icao-badge">${plane.latest_intent.icao || '----'}</span> broadcasted <span class="bds-badge">${plane.latest_intent.bds || ''}</span> payload [<span class="hex-payload">${plane.latest_intent.hex}</span>]`;
+                            intentLogBox.appendChild(logEntry);
+                            intentLogBox.scrollTop = intentLogBox.scrollHeight;
+                        }
+                    }
+
+                    if (plane.latest_db_log && plane.latest_db_log.hash) {
+                        if (!seenIntents.has(plane.latest_db_log.hash)) {
+                            seenIntents.add(plane.latest_db_log.hash);
+                            if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
+                            const logEntry = document.createElement('div');
+                            logEntry.className = 'log-entry db-log-entry';
+                            logEntry.innerHTML = `<span style="color: #4ade80; font-family: monospace; white-space: pre;">${plane.latest_db_log.text || ''}</span>`;
+                            intentLogBox.appendChild(logEntry);
+                            intentLogBox.scrollTop = intentLogBox.scrollHeight;
+                        }
+                    }
+
+                    if (plane.latest_sys_log && plane.latest_sys_log.hash) {
+                        if (!seenIntents.has(plane.latest_sys_log.hash)) {
+                            seenIntents.add(plane.latest_sys_log.hash);
+                            if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
+                            
+                            const logEntry = document.createElement('div');
+                            const safeHash = String(plane.latest_sys_log.hash);
+                            if (safeHash.includes('gate_')) {
+                                logEntry.className = 'log-entry db-log-entry';
+                            } else if (safeHash.includes('cpr_')) {
+                                logEntry.className = 'log-entry';
+                                logEntry.style.borderBottom = '1px dashed #c084fc';
+                                logEntry.style.animation = 'pulse-entry 2s ease-out';
+                            } else {
+                                logEntry.className = 'log-entry sys-log-entry';
+                            }
+                            
+                            logEntry.innerHTML = `<span style="font-family: monospace; white-space: pre;">${plane.latest_sys_log.text || ''}</span>`;
+                            intentLogBox.appendChild(logEntry);
+                            intentLogBox.scrollTop = intentLogBox.scrollHeight;
+                            
+                            if (intentLogBox.children && intentLogBox.children.length > 50) {
+                                intentLogBox.removeChild(intentLogBox.firstChild);
+                            }
+                        }
+                    }
+
+                    const emptyMarker = `<span class="empty-datum">----</span>`;
+                    const callsignVal = (plane.callsign && plane.callsign !== '----') ? plane.callsign : emptyMarker;
+                    const airlineVal = (plane.airline && plane.airline !== '----') ? plane.airline : emptyMarker;
+                    const squawkVal = (plane.squawk && plane.squawk !== '----') ? plane.squawk : emptyMarker;
+                    const targetAltVal = (plane.target_alt && plane.target_alt !== '----') ? plane.target_alt : emptyMarker;
+                    const capabilityVal = (plane.capability_summary && plane.capability_summary !== '----') ? plane.capability_summary : '';
+                    const lastBdsHitVal = (plane.last_bds_hit && plane.last_bds_hit !== '----') ? plane.last_bds_hit : '';
+                    let modeParts = [];
+                    if (plane.discretes && plane.discretes !== '----') modeParts.push(plane.discretes);
+                    if (capabilityVal) modeParts.push(capabilityVal);
+                    let discreteVal = modeParts.length > 0 ? modeParts.join(' | ') : emptyMarker;
+                    if (lastBdsHitVal) {
+                        const prefix = discreteVal === emptyMarker ? '' : `${discreteVal}<br>`;
+                        discreteVal = `${prefix}<span class="decode-tag">${lastBdsHitVal}</span>`;
+                    }
+                    const baroVal = (plane.baro && plane.baro !== '----') ? plane.baro : emptyMarker;
+                    const speedVal = (plane.speed && plane.speed !== '----') ? plane.speed + ' kt' : emptyMarker;
+                    const tasVal = (plane.tas && plane.tas !== '----') ? plane.tas + ' kt' : emptyMarker;
+                    const sweepVal = (plane.radar_sweep && plane.radar_sweep !== '----') ? plane.radar_sweep : emptyMarker;
+                    const gnssVal = (plane.gnss_qual && plane.gnss_qual !== '----') ? plane.gnss_qual : emptyMarker;
+
+                    let altVal = emptyMarker;
+                    if (plane.alt === 'GROUND') altVal = `<span style="color: #fb923c; font-weight:bold;">GROUND</span>`;
+                    else if (plane.alt !== null && plane.alt !== undefined && typeof plane.alt === 'number') altVal = plane.alt.toLocaleString() + ' ft';
+                    else if (plane.alt !== '----' && plane.alt) altVal = plane.alt + ' ft';
+
+                    let vrateVal = emptyMarker;
+                    if (plane.vert_rate !== '----' && typeof plane.vert_rate === 'number') {
+                        let vColor = plane.vert_rate > 250 ? '#4ade80' : (plane.vert_rate < -250 ? '#fb923c' : '#94a3b8');
+                        vrateVal = `<span style="color: ${vColor}; font-weight: bold;">${plane.vert_rate > 0 ? '+' : ''}${plane.vert_rate} ft/m</span>`;
+                    }
+
+                    let iasMachBuffer = [];
+                    if (plane.ias !== '----' && typeof plane.ias === 'number') iasMachBuffer.push(`${plane.ias} kt`);
+                    if (plane.mach !== '----' && typeof plane.mach === 'number') iasMachBuffer.push(`M${plane.mach.toFixed(3)}`);
+                    const iasMachVal = iasMachBuffer.length > 0 ? iasMachBuffer.join(' / ') : emptyMarker;
+
+                    let trkRateBuffer = [];
+                    if (plane.track !== '----' && typeof plane.track === 'number') trkRateBuffer.push(`${plane.track}°`);
+                    if (plane.track_rate !== '----' && typeof plane.track_rate === 'number') {
+                        trkRateBuffer.push(`<span style="color: #c084fc;">(${plane.track_rate > 0 ? '+' : ''}${plane.track_rate}°/s)</span>`);
+                    }
+                    const trackVal = trkRateBuffer.length > 0 ? trkRateBuffer.join(' ') : emptyMarker;
+                    
+                    let cprVal = emptyMarker;
+                    if (plane.lat !== '----' && plane.lon !== '----') {
+                        cprVal = `${plane.lat.toFixed(4)}, ${plane.lon.toFixed(4)}`;
+                    }
+
+                    let sensorString = '';
+                    if (plane.hazard && plane.hazard !== '----') {
+                        sensorString = `<span style="color:#ef4444; font-weight:bold; animation: text-flash 0.5s infinite alternate;">${plane.hazard}</span>`;
+                    } else {
+                        sensorString = (plane.wind && plane.wind !== '----') ? `W:${plane.wind}` : '';
+                        if (plane.sat && plane.sat !== '----') sensorString += sensorString ? ` | T:${plane.sat}` : `T:${plane.sat}`;
+                        if (!sensorString) sensorString = emptyMarker;
+                    }
+
+                    const hasActiveRa = !!(plane.tcas_ra && plane.tcas_ra !== '----' && plane.tcas_ra !== 'CLEAN');
+                    let rowClass = '';
+                    if (['7500', '7600', '7700'].includes(plane.squawk) || hasActiveRa) rowClass = 'row-emergency';
+                    const raClass = hasActiveRa ? 'status-ra' : 'status-clean';
+
+                    let row = document.getElementById('row-' + plane.icao);
+                    
+                    if (!row) {
+                        row = document.createElement('tr');
+                        row.id = 'row-' + plane.icao;
+                        for(let i=0; i<21; i++) row.appendChild(document.createElement('td')); 
+                        tableBody.appendChild(row);
+                        
+                        row.cells[12].innerHTML = `<div class="instrument-wrapper"><div class="dial-core hdg-dial"><div class="pointer-container hdg-pointer"></div></div><span class="val-text"></span></div>`;
+                        row.cells[14].innerHTML = `<div class="instrument-wrapper"><div class="dial-core bank-dial"><div class="pointer-container bank-pointer"></div></div><span class="val-text"></span></div>`;
+                        
+                        planeState[plane.icao] = { hdg: 0, roll: 0, firstPing: true };
+                    }
+
+                    row.className = rowClass;
+
+                    if (plane.is_coasting) row.classList.add('row-coasting');
+                    else row.classList.remove('row-coasting');
+
+                    row.cells[0].className = 'icao'; row.cells[0].innerHTML = plane.icao;
+                    row.cells[1].innerHTML = callsignVal;
+                    row.cells[2].className = 'airline-cell'; row.cells[2].innerHTML = airlineVal;
+                    row.cells[3].className = 'squawk-cell'; row.cells[3].innerHTML = squawkVal;
+                    row.cells[4].innerHTML = altVal;
+                    row.cells[5].className = 'intent'; row.cells[5].innerHTML = targetAltVal;
+                    row.cells[6].innerHTML = vrateVal;
+                    row.cells[7].className = 'discrete-cell'; row.cells[7].innerHTML = discreteVal;
+                    row.cells[8].className = 'baro-cell'; row.cells[8].innerHTML = baroVal;
+                    row.cells[9].innerHTML = speedVal;
+                    row.cells[10].innerHTML = tasVal;
+                    row.cells[11].innerHTML = iasMachVal;
+                    row.cells[13].innerHTML = trackVal;
+                    row.cells[15].className = raClass; row.cells[15].innerHTML = plane.tcas_ra;
+                    row.cells[16].className = 'radar-cell'; row.cells[16].innerHTML = sweepVal;
+                    row.cells[17].className = 'gnss-cell'; row.cells[17].innerHTML = gnssVal;
+                    row.cells[18].className = 'cpr-cell'; row.cells[18].innerHTML = cprVal; 
+                    row.cells[19].className = 'sensor-cell'; row.cells[19].innerHTML = sensorString;
+                    row.cells[20].style.color = plane.age > 45 ? '#f87171' : '#e2e8f0'; row.cells[20].innerHTML = plane.age + 's';
+
+                    if (!planeState[plane.icao]) {
+                        planeState[plane.icao] = { hdg: 0, roll: 0, firstPing: true };
+                    }
+                    const state = planeState[plane.icao];
+                    
+                    const hasHdg = (plane.heading !== '----' && plane.heading !== null);
+                    if (hasHdg) {
+                        let targetHdg = parseFloat(plane.heading);
+                        if (state.firstPing) {
+                            state.hdg = targetHdg; 
+                        } else {
+                            let diff = targetHdg - (state.hdg % 360);
+                            if (diff > 180) diff -= 360;
+                            else if (diff < -180) diff += 360;
+                            state.hdg += diff; 
+                        }
+                        state.hdg = ((state.hdg % 360) + 360) % 360;
+                    }
+                    
+                    const hdgWrapper = row.cells[12].querySelector('.instrument-wrapper');
+                    if (hdgWrapper) hdgWrapper.style.opacity = hasHdg ? '1' : '0.3';
+                    const hdgPointer = row.cells[12].querySelector('.hdg-pointer');
+                    if (hdgPointer) hdgPointer.style.transform = `rotate(${state.hdg}deg)`;
+                    const hdgText = row.cells[12].querySelector('.val-text');
+                    if (hdgText) hdgText.innerHTML = hasHdg ? `${plane.heading}°` : emptyMarker;
+
+                    const hasRoll = (plane.roll !== '----' && plane.roll !== null);
+                    if (hasRoll) { state.roll = parseFloat(plane.roll); } 
+                    
+                    const rollWrapper = row.cells[14].querySelector('.instrument-wrapper');
+                    if (rollWrapper) rollWrapper.style.opacity = hasRoll ? '1' : '0.3';
+                    const bankPointer = row.cells[14].querySelector('.bank-pointer');
+                    const displayRoll = Math.max(-30, Math.min(30, state.roll));
+                    if (bankPointer) bankPointer.style.transform = `rotate(${displayRoll * 1.5}deg)`;
+                    const bankText = row.cells[14].querySelector('.val-text');
+                    if (bankText) bankText.innerHTML = hasRoll ? `${Math.round(displayRoll)}°` : emptyMarker;
+
+                    state.firstPing = false;
+                });
+
+                Array.from(tableBody.children).forEach(row => {
+                    if (row.id === 'cold-start-row') return;
+                    const rowIcao = row.id.replace('row-', '');
+                    if (!activeIcaos.has(rowIcao)) {
+                        row.remove();
+                        delete planeState[rowIcao];
+                    }
+                });
+
+                if (aircraftList.length === 0 && !document.getElementById('cold-start-row')) {
+                    tableBody.innerHTML = `<tr id="cold-start-row"><td colspan="21" style="text-align: center; color: #94a3b8;">No tracked emitters within radar aperture range.</td></tr>`;
+                }
+            } catch (err) {
+                console.warn("Soft catch on Matrix Loop:", err);
+            }
+        };
+    </script>
+</body>
+</html>
