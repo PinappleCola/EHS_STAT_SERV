@@ -1295,8 +1295,8 @@
             const age1 = isWpt1 ? 0 : (e1._latency ? e1._latency.state_age : null);
             const age2 = isWpt2 ? 0 : (e2._latency ? e2._latency.state_age : null);
             
-            // If both are waypoints, always HIGH
-            if (isWpt1 && isWpt2) return { confidence: 'HIGH', ageDelta: 0, color: '#4ade80' };
+            // If both are waypoints, always HIGH (static ground truth, no temporal concern)
+            if (isWpt1 && isWpt2) return { confidence: 'HIGH', ageDelta: null, color: '#4ade80' };
             
             // If either aircraft has no latency data (never received position update)
             if (age1 === null || age2 === null) return { confidence: 'LOW', ageDelta: null, color: '#ef4444' };
