@@ -1267,7 +1267,7 @@ def serialize_telemetry_value(value):
     if isinstance(value, (dict, list, tuple)):
         try:
             return json.dumps(value, sort_keys=True)
-        except Exception:
+        except (TypeError, ValueError):
             return str(value)
     return str(value)
 
@@ -1276,7 +1276,7 @@ def queue_db_write(item, allow_drop=False):
     global telemetry_drop_count
     try:
         depth = log_queue.qsize()
-    except Exception:
+    except NotImplementedError:
         depth = 0
 
     if depth > LOG_QUEUE_WARN_THRESHOLD:
@@ -1292,7 +1292,7 @@ def queue_db_write(item, allow_drop=False):
 
 def queue_telemetry_delta(ts, icao, field, value):
     if field.startswith("_") or field not in TELEMETRY_FIELDS:
-        return True
+        return False
     return queue_db_write(("TELEMETRY", ts, icao, field, serialize_telemetry_value(value)), allow_drop=True)
 
 # --- DB Engine & Live Metrics ---
