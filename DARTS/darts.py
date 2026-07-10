@@ -901,7 +901,7 @@ class SIGINT_Triangulator:
         self.solving_sweeps = set()
         
         for f in AIRSPACE_GEOJSON.get("features", []):
-            if f.get("properties", {}).get("icon") == "RADAR":
+            if f.get("properties", {}).get("icon") in ("RADAR", "RADAR_POINT"):
                 sweep = f.get("properties", {}).get("sweep")
                 if sweep:
                     sweep_key = round(sweep, 1)
@@ -1019,7 +1019,7 @@ class SIGINT_Triangulator:
         feature = {
             "type": "Feature",
             "geometry": { "type": "Point", "coordinates": [round(lon,4), round(lat,4)] },
-            "properties": { "name": f"SSR {sweep}s", "icon": "RADAR", "sweep": sweep, "color": "rgba(16, 185, 129, 0.9)" }
+            "properties": { "name": f"SSR {sweep}s", "icon": "RADAR_POINT", "sweep": sweep, "color": "rgba(16, 185, 129, 0.9)" }
         }
         AIRSPACE_GEOJSON["features"].append(feature)
         save_airspace()
@@ -1028,6 +1028,7 @@ class SIGINT_Triangulator:
         for f in AIRSPACE_GEOJSON["features"]:
             if f.get("properties", {}).get("sweep") == sweep:
                 f["geometry"]["coordinates"] = [round(lon,4), round(lat,4)]
+                f["properties"]["icon"] = "RADAR_POINT"
                 break
         save_airspace()
 
