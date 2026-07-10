@@ -329,7 +329,7 @@ FIELD_REGISTRY = [
     # --- Additional system fields ---
     {"key": "discretes",        "label": "DISCRETES",      "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "BDS 6,2 / TC29"},
     {"key": "capability_summary","label":"CAPABILITIES",   "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "BDS 1,7"},
-    {"key": "last_bds_hit",     "label": "LAST BDS",       "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "Decoded"},
+    {"key": "last_bds_hit",     "label": "LAST BDS HIT",   "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "Decoded"},
     {"key": "supported_bds",    "label": "SUPP BDS REGS",  "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "BDS 1,7"},
     # --- Safety ---
     {"key": "tcas_ra",          "label": "TCAS RA",        "type": "text",   "unit": None,   "category": "SAFETY",         "sortable": False, "defaultVisible": True,  "source": "BDS 3,0"},
@@ -837,11 +837,11 @@ RECEIVER_ID = RUNTIME_CONFIG["receiver_id"]
 class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
     """Lightweight HTTP handler serving field registry and grid config endpoints."""
 
-    def log_message(self, format, *args):
+    def log_message(self, msg_format, *args):
         # Log 4xx/5xx only; suppress noisy 200/OPTIONS to keep console clean
         code = args[1] if len(args) > 1 else ""
         if str(code).startswith(("4", "5")):
-            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[HTTP API] {format % args}{ANSI.RESET}")
+            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[HTTP API] {msg_format % args}{ANSI.RESET}")
 
     def _send_json(self, data, status=200):
         body = json.dumps(data).encode("utf-8")

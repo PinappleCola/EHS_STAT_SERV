@@ -208,7 +208,7 @@
         <span>DATASTREAM CORE LINK: <span id="status-text" class="offline">STANDBY</span></span>
         <div style="display:flex;gap:12px;align-items:center;">
             <span class="db-counter">LEDGER DB: <span id="ledger-count-val">0</span> ROWS</span>
-            <button class="col-mgr-btn" onclick="openColumnManager()">⚙ COLUMNS</button>
+            <button class="col-mgr-btn" id="open-col-mgr-btn">⚙ COLUMNS</button>
         </div>
     </div>
 
@@ -226,7 +226,7 @@
         <div class="col-mgr-panel">
             <div class="col-mgr-header">
                 <span class="col-mgr-title">⚙ COLUMN MANAGER</span>
-                <button class="col-mgr-close" onclick="closeColumnManager()" title="Close">✕</button>
+                <button class="col-mgr-close" id="close-col-mgr-btn" title="Close">✕</button>
             </div>
             <div class="col-mgr-body">
                 <!-- Left: active columns in order -->
@@ -237,7 +237,7 @@
                 <!-- Right: all available fields with toggle -->
                 <div class="col-mgr-section">
                     <div class="col-section-title">ALL AVAILABLE FIELDS</div>
-                    <input class="col-search" id="col-search" type="text" placeholder="Search fields..." oninput="filterAvailableFields(this.value)">
+                    <input class="col-search" id="col-search" type="text" placeholder="Search fields...">
                     <div class="avail-col-list" id="avail-col-list"></div>
                 </div>
             </div>
@@ -247,11 +247,11 @@
                     <select class="sort-select" id="sort-key-select">
                         <option value="">— none —</option>
                     </select>
-                    <button class="sort-dir-btn" id="sort-dir-btn" onclick="toggleSortDir()">▲ ASC</button>
+                    <button class="sort-dir-btn" id="sort-dir-btn">▲ ASC</button>
                 </div>
                 <div class="col-mgr-actions">
-                    <button class="mgr-btn" onclick="resetConfig()">RESET DEFAULTS</button>
-                    <button class="mgr-btn primary" onclick="applyConfig()">APPLY ✓</button>
+                    <button class="mgr-btn" id="reset-config-btn">RESET DEFAULTS</button>
+                    <button class="mgr-btn primary" id="apply-config-btn">APPLY ✓</button>
                 </div>
             </div>
         </div>
@@ -836,6 +836,14 @@
         document.getElementById('col-mgr-overlay').classList.remove('open');
         tempConfig = null;
     }
+
+    // Wire up static UI button event listeners (no inline onclick in HTML)
+    document.getElementById('open-col-mgr-btn').addEventListener('click', openColumnManager);
+    document.getElementById('close-col-mgr-btn').addEventListener('click', closeColumnManager);
+    document.getElementById('sort-dir-btn').addEventListener('click', toggleSortDir);
+    document.getElementById('reset-config-btn').addEventListener('click', resetConfig);
+    document.getElementById('apply-config-btn').addEventListener('click', applyConfig);
+    document.getElementById('col-search').addEventListener('input', (e) => filterAvailableFields(e.target.value));
 
     // Close on overlay background click
     document.getElementById('col-mgr-overlay').addEventListener('click', (e) => {
