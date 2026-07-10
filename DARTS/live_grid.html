@@ -349,13 +349,13 @@
                 }
                 return cfg;
             }
-        } catch(e) { console.warn('[DART-B] Config load error:', e); }
+        } catch(e) { console.warn('[DART-B] Failed to parse stored grid configuration (localStorage may be corrupt):', e); }
         return getDefaultConfig();
     }
 
     function saveConfig(cfg) {
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
-        catch(e) { console.warn('[DART-B] Config save error (storage quota?):', e); }
+        catch(e) { console.warn('[DART-B] Failed to save grid configuration. Storage quota may be exceeded — try resetting to defaults:', e); }
     }
 
     // Active config (drives table rendering)
@@ -363,6 +363,23 @@
 
     // Working copy used while column manager is open
     let tempConfig = null;
+
+    // ============================================================
+    // HELPERS
+    // ============================================================
+
+    /** Returns true for values that represent "no data" in aircraft state. */
+    function isEmptyValue(val) {
+        return val === null || val === undefined || val === '----';
+    }
+
+    /**
+     * Formats a column label with its optional unit suffix.
+     * Used in table headers and the available-fields list.
+     */
+    function formatLabelWithUnit(label, unit) {
+        return unit ? `${label} (${unit})` : label;
+    }
 
     // ============================================================
     // TABLE HEADER RENDERING
@@ -389,8 +406,7 @@
             th.className = 'header-cell';
             th.dataset.key = key;
 
-            let label = def ? def.label : key.toUpperCase();
-            if (def && def.unit) label += ` (${def.unit})`;
+            let label = formatLabelWithUnit(def ? def.label : key.toUpperCase(), def ? def.unit : null);
 
             // Sort indicator
             if (def && def.sortable) {
@@ -399,7 +415,7 @@
                     th.classList.add('sort-active');
                     label += (activeConfig.sortDir === 'asc') ? ' ▲' : ' ▼';
                 }
-                th.onclick = () => handleHeaderSort(key);
+                th.addEventListener('click', () => handleHeaderSort(key));
             }
             th.textContent = label;
             hdrRow.appendChild(th);
@@ -659,11 +675,6 @@
     // TABLE UPDATE (called on every WebSocket message)
     // ============================================================
 
-    // Helper: treat missing/null/'----' values as "empty" for sort purposes
-    function isEmptyValue(val) {
-        return val === null || val === undefined || val === '----';
-    }
-
     function updateTable(aircraftList) {
         const tableBody = document.getElementById('aircraft-table-body');
 
@@ -822,6 +833,9 @@
 
     let dragSrcKey = null;
 
+    // Cached DOM references for the column manager overlay
+    const colMgrOverlay = document.getElementById('col-mgr-overlay');
+
     function openColumnManager() {
         // Clone active config into working copy
         tempConfig = JSON.parse(JSON.stringify(activeConfig));
@@ -829,11 +843,11 @@
         renderAvailableColList('');
         populateSortSelect();
         document.getElementById('col-search').value = '';
-        document.getElementById('col-mgr-overlay').classList.add('open');
+        colMgrOverlay.classList.add('open');
     }
 
     function closeColumnManager() {
-        document.getElementById('col-mgr-overlay').classList.remove('open');
+        colMgrOverlay.classList.remove('open');
         tempConfig = null;
     }
 
@@ -845,9 +859,9 @@
     document.getElementById('apply-config-btn').addEventListener('click', applyConfig);
     document.getElementById('col-search').addEventListener('input', (e) => filterAvailableFields(e.target.value));
 
-    // Close on overlay background click
-    document.getElementById('col-mgr-overlay').addEventListener('click', (e) => {
-        if (e.target === document.getElementById('col-mgr-overlay')) closeColumnManager();
+    // Close on overlay background click (compare against cached reference)
+    colMgrOverlay.addEventListener('click', (e) => {
+        if (e.target === colMgrOverlay) closeColumnManager();
     });
 
     // ESC key closes
@@ -1000,15 +1014,10 @@
                 toggle.textContent = isActive ? '✓' : '';
                 toggle.addEventListener('click', () => toggleField(def.key));
 
+                // Use shared formatLabelWithUnit helper for consistency with table headers
                 const labelSpan = document.createElement('span');
                 labelSpan.className = 'avail-field-label';
-                labelSpan.textContent = def.label;
-                if (def.unit) {
-                    const unitSpan = document.createElement('span');
-                    unitSpan.style.color = '#475569';
-                    unitSpan.textContent = ` (${def.unit})`;
-                    labelSpan.appendChild(unitSpan);
-                }
+                labelSpan.textContent = formatLabelWithUnit(def.label, def.unit);
 
                 const srcSpan = document.createElement('span');
                 srcSpan.className = 'avail-field-src';

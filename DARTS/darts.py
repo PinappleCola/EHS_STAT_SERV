@@ -838,10 +838,12 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
     """Lightweight HTTP handler serving field registry and grid config endpoints."""
 
     def log_message(self, msg_format, *args):
-        # Log 4xx/5xx only; suppress noisy 200/OPTIONS to keep console clean
-        code = args[1] if len(args) > 1 else ""
-        if str(code).startswith(("4", "5")):
-            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[HTTP API] {msg_format % args}{ANSI.RESET}")
+        # Log 4xx/5xx only; suppress noisy 200/OPTIONS to keep console clean.
+        # Build message safely without passing untrusted args through format string.
+        code = str(args[1]) if len(args) > 1 else ""
+        if code.startswith(("4", "5")):
+            safe_msg = " ".join(str(a) for a in args)
+            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[HTTP API] {safe_msg}{ANSI.RESET}")
 
     def _send_json(self, data, status=200):
         body = json.dumps(data).encode("utf-8")
@@ -873,8 +875,8 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"error": "Not found"}, status=404)
 
 def run_http_server():
-    """Run the DARTS HTTP API server in a background thread."""
-    server = http.server.ThreadingHTTPServer(("", HTTP_PORT), DARTSAPIHandler)
+    """Run the DARTS HTTP API server bound to localhost only (security: no LAN exposure)."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", HTTP_PORT), DARTSAPIHandler)
     server.serve_forever()
 
 # --- Reference Coordinates for Local CPR Decoding (Sydney, NSW) ---
