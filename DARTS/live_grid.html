@@ -275,7 +275,8 @@
         { key:'ias_mach',         label:'IAS / MACH',     category:'KINEMATICS',     source:'BDS 6,0',         sortable:false, defaultVisible:true              },
         { key:'ias',              label:'IAS',            category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:false, unit:'kt'    },
         { key:'mach',             label:'MACH',           category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:false             },
-        { key:'heading',          label:'MAG HDG',        category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:true,  unit:'deg'   },
+        { key:'heading',          label:'MAG HDG',        category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:false, unit:'deg'   },
+        { key:'display_heading',  label:'DISPLAY HDG',    category:'KINEMATICS',     source:'Arbitrated',      sortable:true,  defaultVisible:true,  unit:'deg'   },
         { key:'track_info',       label:'TRUE TRK / RATE',category:'KINEMATICS',     source:'BDS 5,0',         sortable:false, defaultVisible:true              },
         { key:'track',            label:'TRUE TRK',       category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:false, unit:'deg'   },
         { key:'track_rate',       label:'TRACK RATE',     category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:false, unit:'deg/s' },
@@ -309,6 +310,19 @@
         { key:'nic_baro',         label:'NIC BARO',       category:'INTEGRITY',      source:'BDS 6,2/TC29',    sortable:false, defaultVisible:false             },
         // --- Extended altitude (BDS 4,5 radio altimeter) ---
         { key:'radio_height',     label:'RADIO ALT',      category:'ALTITUDE',       source:'BDS 4,5',         sortable:true,  defaultVisible:false, unit:'ft'    },
+        // --- Deep ADS-B / Mode S / EHS fields (expert opt-in) ---
+        { key:'display_heading_source', label:'HDG SOURCE', category:'KINEMATICS',    source:'Arbitration',     sortable:false, defaultVisible:false             },
+        { key:'vert_rate_baro',   label:'BARO VR',        category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:false, unit:'ft/min'  },
+        { key:'vert_rate_inertial',label:'INERT VR',      category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:false, unit:'ft/min'  },
+        { key:'alt_mcp',          label:'ALT MCP',        category:'ALTITUDE',       source:'BDS 4,0',         sortable:true,  defaultVisible:false, unit:'ft'    },
+        { key:'alt_fms',          label:'ALT FMS',        category:'ALTITUDE',       source:'BDS 4,0',         sortable:true,  defaultVisible:false, unit:'ft'    },
+        { key:'wind_speed',       label:'WIND SPD',       category:'METEO',          source:'BDS 4,4',         sortable:true,  defaultVisible:false, unit:'kt'    },
+        { key:'wind_direction',   label:'WIND DIR',       category:'METEO',          source:'BDS 4,4',         sortable:true,  defaultVisible:false, unit:'deg'   },
+        { key:'static_pressure',  label:'STATIC P',       category:'METEO',          source:'BDS 4,4/4,5',     sortable:true,  defaultVisible:false, unit:'hPa'   },
+        { key:'turbulence_level', label:'TURB LVL',       category:'SAFETY',         source:'BDS 4,4',         sortable:true,  defaultVisible:false             },
+        { key:'msg_count',        label:'MSG COUNT',      category:'SURVEILLANCE',   source:'Sys Counter',     sortable:true,  defaultVisible:false             },
+        { key:'data_age_heading', label:'HDG AGE',        category:'SURVEILLANCE',   source:'Sys Clock',       sortable:true,  defaultVisible:false, unit:'s'     },
+        { key:'data_age_position',label:'POS AGE',        category:'SURVEILLANCE',   source:'Sys Clock',       sortable:true,  defaultVisible:false, unit:'s'     },
         // --- System timing ---
         { key:'age',              label:'AGE',            category:'SYSTEM',         source:'Sys Clock',       sortable:true,  defaultVisible:true,  unit:'s'     },
         { key:'first_seen',       label:'FIRST SEEN',     category:'SYSTEM',         source:'Sys Clock',       sortable:false, defaultVisible:false             },
@@ -526,6 +540,8 @@
                 return { html: (typeof plane.mach === 'number') ? 'M' + plane.mach.toFixed(3) : EM };
             case 'heading':
                 return { html: null, special: 'heading' };
+            case 'display_heading':
+                return { html: null, special: 'heading' };
             case 'track_info': {
                 const parts = [];
                 if (typeof plane.track === 'number') parts.push(`${plane.track}°`);
@@ -624,6 +640,24 @@
             // --- System timing: first-seen timestamp ---
             case 'first_seen':
                 return { html: (plane.first_seen && plane.first_seen !== '----') ? plane.first_seen : EM };
+            // --- Deep fields (generic number rendering) ---
+            case 'vert_rate_baro':
+            case 'vert_rate_inertial':
+            case 'alt_mcp':
+            case 'alt_fms':
+            case 'wind_speed':
+            case 'wind_direction':
+            case 'static_pressure':
+            case 'turbulence_level':
+            case 'msg_count':
+            case 'data_age_heading':
+            case 'data_age_position': {
+                const v = plane[key];
+                if (v === '----' || v === null || v === undefined) return { html: EM };
+                return { html: String(v) };
+            }
+            case 'display_heading_source':
+                return { html: (plane.display_heading_source && plane.display_heading_source !== 'none') ? `<span style="color:#a78bfa;">${plane.display_heading_source}</span>` : EM };
             default:
                 return { html: EM };
         }
@@ -647,7 +681,7 @@
         activeConfig.columns.forEach(key => {
             const td = document.createElement('td');
             td.dataset.field = key;
-            if (key === 'heading') td.innerHTML = initHeadingWidget();
+            if (key === 'heading' || key === 'display_heading') td.innerHTML = initHeadingWidget();
             else if (key === 'roll') td.innerHTML = initRollWidget();
             row.appendChild(td);
         });
@@ -669,7 +703,7 @@
             activeConfig.columns.forEach(key => {
                 const td = document.createElement('td');
                 td.dataset.field = key;
-                if (key === 'heading') td.innerHTML = initHeadingWidget();
+                if (key === 'heading' || key === 'display_heading') td.innerHTML = initHeadingWidget();
                 else if (key === 'roll') td.innerHTML = initRollWidget();
                 row.appendChild(td);
             });
@@ -704,10 +738,14 @@
     function updateHeadingWidget(td, plane) {
         if (!planeState[plane.icao]) planeState[plane.icao] = { hdg: 0, roll: 0, firstPing: true };
         const state = planeState[plane.icao];
-        const hasHdg = (plane.heading !== '----' && plane.heading !== null && plane.heading !== undefined);
+        // Use canonical display_heading when available, fall back to raw heading
+        const hdgValue = (plane.display_heading !== '----' && plane.display_heading !== null && plane.display_heading !== undefined) 
+            ? plane.display_heading 
+            : plane.heading;
+        const hasHdg = (hdgValue !== '----' && hdgValue !== null && hdgValue !== undefined);
 
         if (hasHdg) {
-            const targetHdg = parseFloat(plane.heading);
+            const targetHdg = parseFloat(hdgValue);
             if (state.firstPing) {
                 state.hdg = targetHdg;
             } else {

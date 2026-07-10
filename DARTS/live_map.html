@@ -8,9 +8,10 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=B612+Mono:wght@400;700&display=swap');
         :root { color-scheme: dark; }
         body {
-            background-color: #040811; color: #e2e8f0; font-family: 'Consolas', 'Courier New', monospace;
+            background-color: #040811; color: #e2e8f0; font-family: 'B612 Mono', 'Consolas', 'Courier New', monospace;
             margin: 0; padding: 0; overflow: hidden; width: 100vw; height: 100vh;
         }
 
@@ -117,6 +118,8 @@
             <button id="btn-db" class="btn-action btn-action-alt">[DATABASE]</button>
             <button id="btn-add-wpt" class="btn-action">[+ WPT]</button>
             <button id="btn-lock" class="btn-action">[WAYPOINT LOCK]</button>
+            <button onclick="openTagConfig()" class="btn-action" title="Ctrl+Shift+T">[TAGS]</button>
+            <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Ctrl+Shift+P">[PERF]</button>
         </div>
     </div>
 
@@ -149,10 +152,20 @@
             <input type="text" id="wpt-lat" class="wpt-input" placeholder="LAT (-33.8)" style="width: 80px;">
             <input type="text" id="wpt-lon" class="wpt-input" placeholder="LON (151.2)" style="width: 80px;">
         </div>
-        <input type="text" id="wpt-type" class="wpt-input" placeholder="TYPE (AIRPORT/VOR/FIX/RADAR)">
+        <select id="wpt-type" class="wpt-input" style="width: 100%;">
+            <option value="FIX">FIX</option>
+            <option value="AIRPORT">AIRPORT</option>
+            <option value="VOR">VOR</option>
+            <option value="RADAR">RADAR</option>
+        </select>
         <div style="display: flex; gap: 6px; margin-top: 4px;">
             <button id="btn-save-wpt" style="flex: 1; background: #10b981; border: none; color: #000; font-weight:bold; cursor: pointer; padding: 6px; border-radius:3px;">SAVE</button>
             <button id="btn-cancel-wpt" style="background: #ef4444; border: none; color: #fff; font-weight:bold; cursor: pointer; padding: 6px 10px; border-radius:3px;">X</button>
+        </div>
+        <div style="display: flex; gap: 6px; margin-top: 6px; border-top: 1px solid #1e293b; padding-top: 6px;">
+            <button onclick="useGPSLocation()" style="flex:1; background:#8b5cf6; border:none; color:#fff; font-weight:bold; cursor:pointer; padding:5px; border-radius:3px; font-size:0.8em;">📍 GPS</button>
+            <button onclick="exportWaypoints()" style="flex:1; background:#334155; border:1px solid #475569; color:#e2e8f0; font-weight:bold; cursor:pointer; padding:5px; border-radius:3px; font-size:0.8em;">EXPORT</button>
+            <button onclick="importWaypoints()" style="flex:1; background:#334155; border:1px solid #475569; color:#e2e8f0; font-weight:bold; cursor:pointer; padding:5px; border-radius:3px; font-size:0.8em;">IMPORT</button>
         </div>
     </div>
 
@@ -175,6 +188,26 @@
         const trailHistory = {};
         
         let airspaceGeoJSON = { type: "FeatureCollection", features: [] };
+
+        // --- Configurable data tag fields (Phase 8) ---
+        const MAP_TAG_FIELD_OPTIONS = ['icao','callsign','squawk','altitude','hdg_spd','speed','heading','track','vert_rate','target_alt','selected_heading'];
+        const MAP_TAG_DEFAULTS = ['icao','callsign','squawk','altitude','hdg_spd'];
+        let mapTagFields = JSON.parse(localStorage.getItem('dart_map_tag_fields') || 'null') || [...MAP_TAG_DEFAULTS];
+        function saveMapTagFields() { localStorage.setItem('dart_map_tag_fields', JSON.stringify(mapTagFields)); }
+
+        // --- Altitude color legend (Phase 5) ---
+        const ALT_COLOR_LEGEND = [
+            { label: 'GROUND', color: 'rgb(249,115,22)' },
+            { label: '< FL100', color: 'rgb(56,189,248)' },
+            { label: 'FL100-200', color: 'rgb(52,211,153)' },
+            { label: 'FL200-300', color: 'rgb(168,85,247)' },
+            { label: 'FL300-400', color: 'rgb(251,191,36)' },
+            { label: '≥ FL400', color: 'rgb(244,114,182)' },
+        ];
+
+        // --- Performance / latency counters (Phase 4) ---
+        let perfCounters = { frames: 0, lastWsTime: 0, wsLatency: 0, renderMs: 0, aircraftCount: 0 };
+        let showPerfOverlay = false;
 
         const rCanvas = document.getElementById('radar-canvas');
         const mapContainer = document.getElementById('map-container');
@@ -662,11 +695,11 @@
                         else {
                             a = parseInt(a);
                             if (!isNaN(a)) {
-                                if (a < 10000) { rC=239; gC=68; bC=68; } 
-                                else if (a < 20000) { rC=234; gC=179; bC=8; } 
-                                else if (a < 30000) { rC=34; gC=197; bC=94; } 
-                                else if (a < 40000) { rC=6; gC=182; bC=212; } 
-                                else { rC=59; gC=130; bC=246; } 
+                                if (a < 10000) { rC=56; gC=189; bC=248; }       // Sky blue - low altitude
+                                else if (a < 20000) { rC=52; gC=211; bC=153; }  // Teal/mint
+                                else if (a < 30000) { rC=168; gC=85; bC=247; }  // Purple
+                                else if (a < 40000) { rC=251; gC=191; bC=36; }  // Amber/gold
+                                else { rC=244; gC=114; bC=182; }                 // Pink - FL400+
                             }
                         }
 
@@ -698,7 +731,7 @@
                             if (['7500', '7600', '7700'].includes(p.squawk) || hasActiveRa) baseColor = '#ef4444';
                             else if (p.alt === 'GROUND') baseColor = '#f97316';
 
-                            const heading = (p.track && p.track !== '----') ? parseFloat(p.track) : 0;
+                            const heading = (p.display_heading && p.display_heading !== '----') ? parseFloat(p.display_heading) : ((p.track && p.track !== '----') ? parseFloat(p.track) : 0);
                             const gs = (p.speed && p.speed !== '----') ? parseFloat(p.speed) : 0;
 
                             rCtx.globalAlpha = isDimmed ? 0.3 : 1.0;
@@ -754,7 +787,7 @@
                             rCtx.lineWidth = 1;
                             rCtx.beginPath(); rCtx.roundRect(tagX, tagY, tagW, tagH, 4); rCtx.fill(); rCtx.stroke();
                             
-                            rCtx.font = isSelected ? "bold 11px 'Consolas', 'Courier New', monospace" : "11px 'Consolas', 'Courier New', monospace";
+                            rCtx.font = isSelected ? "bold 11px 'B612 Mono', 'Consolas', monospace" : "11px 'B612 Mono', 'Consolas', monospace";
                             const textColor = isSelected ? '#ffffff' : (p.is_coasting ? 'rgba(148, 163, 184, 0.9)' : '#38bdf8');
                             
                             let vRateSym = '≈';
@@ -767,13 +800,28 @@
                             const lblCall = (p.callsign && p.callsign !== '----') ? p.callsign : '----';
                             const lblSqk = (p.squawk && p.squawk !== '----') ? p.squawk : '----';
                             const lblAlt = (p.alt !== '----' && p.alt !== undefined) ? (typeof p.alt === 'number' ? `${p.alt.toLocaleString()} ft ${vRateSym}` : `${p.alt} ${vRateSym}`) : `---- ${vRateSym}`;
-                            const strHdg = (p.heading && p.heading !== '----') ? Math.round(p.heading) + '°' : '----';
+                            const strHdg = (p.display_heading && p.display_heading !== '----') ? Math.round(p.display_heading) + '°' : ((p.heading && p.heading !== '----') ? Math.round(p.heading) + '°' : '----');
                             const strSpd = (p.speed && p.speed !== '----') ? p.speed + ' kt' : '----';
                             
-                            const lines = [lblIcao, lblCall, lblSqk, lblAlt, `${strHdg} / ${strSpd}`];
+                            // Configurable tag fields — uses mapTagFields from config
+                            const tagFieldRenderers = {
+                                'icao': () => lblIcao,
+                                'callsign': () => lblCall,
+                                'squawk': () => lblSqk,
+                                'altitude': () => lblAlt,
+                                'hdg_spd': () => `${strHdg} / ${strSpd}`,
+                                'speed': () => strSpd,
+                                'heading': () => strHdg,
+                                'track': () => (p.track && p.track !== '----') ? Math.round(p.track) + '°T' : '----',
+                                'vert_rate': () => (typeof p.vert_rate === 'number') ? `${p.vert_rate > 0 ? '+' : ''}${p.vert_rate} fpm` : '----',
+                                'target_alt': () => (p.target_alt && p.target_alt !== '----') ? p.target_alt : '----',
+                                'selected_heading': () => (p.selected_heading && p.selected_heading !== '----') ? `SEL:${Math.round(p.selected_heading)}°` : '----',
+                            };
+                            
+                            const lines = mapTagFields.map(f => (tagFieldRenderers[f] || (() => '----'))());
                             
                             lines.forEach((line, idx) => {
-                                if (idx === 2 && (['7500', '7600', '7700'].includes(p.squawk) || hasActiveRa)) { rCtx.fillStyle = '#ef4444'; } 
+                                if (idx === mapTagFields.indexOf('squawk') && (['7500', '7600', '7700'].includes(p.squawk) || hasActiveRa)) { rCtx.fillStyle = '#ef4444'; } 
                                 else { rCtx.fillStyle = textColor; }
                                 rCtx.fillText(line, tagX + 6, tagY + 14 + (idx * 11.5));
                             });
@@ -809,12 +857,20 @@
                         
                         const midX = (pt1.x + pt2.x) / 2; const midY = (pt1.y + pt2.y) / 2;
                         
-                        rCtx.fillStyle = 'rgba(15, 23, 42, 0.95)'; rCtx.fillRect(midX - 60, midY - 25, 120, 45);
-                        rCtx.strokeStyle = '#c084fc'; rCtx.strokeRect(midX - 60, midY - 25, 120, 45);
-                        rCtx.fillStyle = '#c084fc'; rCtx.font = "bold 11px monospace";
+                        rCtx.fillStyle = 'rgba(15, 23, 42, 0.95)'; rCtx.fillRect(midX - 60, midY - 25, 135, 58);
+                        rCtx.strokeStyle = '#c084fc'; rCtx.strokeRect(midX - 60, midY - 25, 135, 58);
+                        rCtx.fillStyle = '#c084fc'; rCtx.font = "bold 11px 'B612 Mono', monospace";
                         rCtx.fillText(`HD: ${horizNm.toFixed(2)} NM`, midX - 54, midY - 10);
                         rCtx.fillText(altStr, midX - 54, midY + 2);
                         rCtx.fillText(`SD: ${slantFt.toLocaleString(undefined, {maximumFractionDigits:0})} FT`, midX - 54, midY + 14);
+                        
+                        // Hold-alt confidence indicator (Phase 6)
+                        const conf = computeHoldAltConfidence(e1, e2);
+                        const confColor = conf.confidence === 'HIGH' ? '#4ade80' : conf.confidence === 'MED' ? '#fbbf24' : '#94a3b8';
+                        rCtx.fillStyle = confColor;
+                        rCtx.font = "9px 'B612 Mono', monospace";
+                        const confText = conf.ageDelta !== null ? `${conf.confidence} Δt:${conf.ageDelta.toFixed(1)}s` : conf.confidence;
+                        rCtx.fillText(`⬤ ${confText}`, midX - 54, midY + 27);
                     }
                 }
 
@@ -858,6 +914,10 @@
 
         ws.onmessage = (event) => {
             try {
+                const wsReceiveTime = Date.now();
+                perfCounters.wsLatency = wsReceiveTime - perfCounters.lastWsTime;
+                perfCounters.lastWsTime = wsReceiveTime;
+                
                 const parsedData = JSON.parse(event.data);
                 if (parsedData.airspace) airspaceGeoJSON = parsedData.airspace;
                 
@@ -891,10 +951,154 @@
 
         // Dedicated pulse
         function pulse() {
+            const t0 = performance.now();
             renderTacticalScope(lastAircraftList);
+            perfCounters.renderMs = (performance.now() - t0).toFixed(1);
+            perfCounters.aircraftCount = lastAircraftList.length;
+            
+            // Draw altitude color legend (bottom-left)
+            const lX = 20, lY = rCanvas.height - 20 - (ALT_COLOR_LEGEND.length * 18);
+            rCtx.font = "10px 'B612 Mono', monospace";
+            ALT_COLOR_LEGEND.forEach((entry, i) => {
+                rCtx.fillStyle = entry.color;
+                rCtx.fillRect(lX, lY + i * 18, 12, 12);
+                rCtx.fillStyle = '#94a3b8';
+                rCtx.fillText(entry.label, lX + 18, lY + i * 18 + 10);
+            });
+            
+            // Draw perf overlay (bottom-right, toggleable)
+            if (showPerfOverlay) {
+                const pX = rCanvas.width - 200, pY = rCanvas.height - 80;
+                rCtx.fillStyle = 'rgba(3,7,18,0.85)';
+                rCtx.fillRect(pX, pY, 190, 70);
+                rCtx.strokeStyle = '#334155';
+                rCtx.strokeRect(pX, pY, 190, 70);
+                rCtx.fillStyle = '#94a3b8';
+                rCtx.font = "10px 'B612 Mono', monospace";
+                rCtx.fillText(`RENDER: ${perfCounters.renderMs}ms`, pX + 8, pY + 16);
+                rCtx.fillText(`WS LAT: ${perfCounters.wsLatency}ms`, pX + 8, pY + 30);
+                rCtx.fillText(`TARGETS: ${perfCounters.aircraftCount}`, pX + 8, pY + 44);
+                rCtx.fillText(`FRAMES: ${perfCounters.frames}`, pX + 8, pY + 58);
+            }
+            perfCounters.frames++;
+            
             requestAnimationFrame(pulse);
         }
         pulse();
+
+        // --- Tag Configurator UI (Phase 8) ---
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'T' && e.shiftKey && e.ctrlKey) {
+                openTagConfig();
+            }
+            if (e.key === 'P' && e.shiftKey && e.ctrlKey) {
+                showPerfOverlay = !showPerfOverlay;
+            }
+        });
+
+        function openTagConfig() {
+            let existing = document.getElementById('tag-config-modal');
+            if (existing) { existing.remove(); return; }
+            
+            const modal = document.createElement('div');
+            modal.id = 'tag-config-modal';
+            modal.style.cssText = 'position:absolute;top:80px;right:20px;width:260px;background:rgba(15,23,42,0.95);border:1px solid #38bdf8;border-radius:6px;z-index:200;padding:15px;pointer-events:auto;font-size:0.85em;';
+            
+            let html = '<div style="color:#38bdf8;font-weight:bold;margin-bottom:10px;">TAG FIELD CONFIG <span style="float:right;cursor:pointer;" onclick="this.parentElement.parentElement.remove()">✕</span></div>';
+            html += '<div style="color:#64748b;font-size:0.8em;margin-bottom:8px;">Drag to reorder. Check to enable.</div>';
+            html += '<div id="tag-field-list">';
+            
+            MAP_TAG_FIELD_OPTIONS.forEach(f => {
+                const checked = mapTagFields.includes(f) ? 'checked' : '';
+                const label = f.replace(/_/g, ' ').toUpperCase();
+                html += `<label style="display:flex;align-items:center;gap:6px;padding:4px 0;cursor:pointer;color:#e2e8f0;"><input type="checkbox" value="${f}" ${checked} onchange="toggleTagField('${f}', this.checked)"><span>${label}</span></label>`;
+            });
+            
+            html += '</div>';
+            html += '<div style="margin-top:10px;display:flex;gap:6px;">';
+            html += '<button onclick="mapTagFields=[...MAP_TAG_DEFAULTS];saveMapTagFields();this.parentElement.parentElement.remove();openTagConfig();" style="flex:1;background:#64748b;border:none;color:#fff;padding:4px;border-radius:3px;cursor:pointer;font-size:0.85em;">RESET</button>';
+            html += '<button onclick="document.getElementById(\'tag-config-modal\').remove();" style="flex:1;background:#0ea5e9;border:none;color:#fff;padding:4px;border-radius:3px;cursor:pointer;font-size:0.85em;">CLOSE</button>';
+            html += '</div>';
+            
+            modal.innerHTML = html;
+            document.body.appendChild(modal);
+        }
+
+        function toggleTagField(field, enabled) {
+            if (enabled && !mapTagFields.includes(field)) {
+                mapTagFields.push(field);
+            } else if (!enabled) {
+                mapTagFields = mapTagFields.filter(f => f !== field);
+            }
+            saveMapTagFields();
+        }
+
+        // --- Waypoint GPS + Import/Export (Phase 7) ---
+        function useGPSLocation() {
+            if (!navigator.geolocation) { alert('Geolocation not supported'); return; }
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    document.getElementById('wpt-lat').value = pos.coords.latitude.toFixed(6);
+                    document.getElementById('wpt-lon').value = pos.coords.longitude.toFixed(6);
+                },
+                (err) => { alert('GPS error: ' + err.message); },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        }
+
+        function exportWaypoints() {
+            const features = airspaceGeoJSON.features || [];
+            const blob = new Blob([JSON.stringify(features, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'waypoints_export.json';
+            a.click();
+        }
+
+        function importWaypoints() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const features = JSON.parse(evt.target.result);
+                        const arr = Array.isArray(features) ? features : (features.features || []);
+                        arr.forEach(f => {
+                            if (f.type === 'Feature' && f.geometry && f.properties) {
+                                ws.send(JSON.stringify({
+                                    action: 'add_wpt',
+                                    waypoint: {
+                                        Waypoint_Name: f.properties.name || 'IMPORTED',
+                                        LAT: f.geometry.coordinates[1],
+                                        LONG: f.geometry.coordinates[0],
+                                        type: f.properties.icon || 'FIX'
+                                    }
+                                }));
+                            }
+                        });
+                    } catch (err) { alert('Import error: ' + err.message); }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        }
+
+        // --- Hold-Alt Tool: Time-aligned measurement with confidence (Phase 6) ---
+        // Enhanced measurement display shows time delta between samples and confidence
+        function computeHoldAltConfidence(e1, e2) {
+            if (!e1 || !e2) return { confidence: 'NONE', ageDelta: null };
+            const age1 = e1._latency ? e1._latency.state_age : null;
+            const age2 = e2._latency ? e2._latency.state_age : null;
+            if (age1 === null || age2 === null) return { confidence: 'LOW', ageDelta: null };
+            const ageDelta = Math.abs(age1 - age2);
+            if (ageDelta > 10) return { confidence: 'LOW', ageDelta };
+            if (ageDelta > 5) return { confidence: 'MED', ageDelta };
+            return { confidence: 'HIGH', ageDelta };
+        }
 
     </script>
 </body>

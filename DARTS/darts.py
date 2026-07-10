@@ -21,7 +21,7 @@ import re
 import os
 import http.server
 
-APP_VERSION = "v54"
+APP_VERSION = "v55"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "runtime_config.json")
 
@@ -321,7 +321,8 @@ FIELD_REGISTRY = [
     {"key": "ias_mach",         "label": "IAS / MACH",     "type": "virtual","unit": None,   "category": "KINEMATICS",     "sortable": False, "defaultVisible": True,  "source": "BDS 6,0"},
     {"key": "ias",              "label": "IAS",            "type": "number", "unit": "kt",   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
     {"key": "mach",             "label": "MACH",           "type": "number", "unit": None,   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
-    {"key": "heading",          "label": "MAG HDG",        "type": "angle",  "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 6,0"},
+    {"key": "heading",          "label": "MAG HDG",        "type": "angle",  "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
+    {"key": "display_heading",   "label": "DISPLAY HDG",    "type": "angle",  "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "Arbitrated"},
     {"key": "track_info",       "label": "TRUE TRK / RATE","type": "virtual","unit": None,   "category": "KINEMATICS",     "sortable": False, "defaultVisible": True,  "source": "BDS 5,0"},
     {"key": "track",            "label": "TRUE TRK",       "type": "angle",  "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 5,0"},
     {"key": "track_rate",       "label": "TRACK RATE",     "type": "number", "unit": "deg/s","category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 5,0"},
@@ -356,6 +357,20 @@ FIELD_REGISTRY = [
     {"key": "humidity",         "label": "HUMIDITY",       "type": "number", "unit": "%",    "category": "METEO",          "sortable": False, "defaultVisible": False, "source": "BDS 4,4"},
     # --- Extended kinematics (BDS 6,0 inertial VR) ---
     {"key": "inertial_vr",      "label": "INERTIAL VR",    "type": "number", "unit": "ft/min", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
+    # --- Heading source provenance ---
+    {"key": "display_heading_source", "label": "HDG SOURCE", "type": "text",  "unit": None,   "category": "KINEMATICS",     "sortable": False, "defaultVisible": False, "source": "Arbitration"},
+    # --- Deep ADS-B / Mode S / EHS fields (expert opt-in) ---
+    {"key": "vert_rate_baro",   "label": "BARO VR",        "type": "number", "unit": "ft/min", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
+    {"key": "vert_rate_inertial","label": "INERT VR",      "type": "number", "unit": "ft/min", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
+    {"key": "alt_mcp",          "label": "ALT MCP",        "type": "number", "unit": "ft",   "category": "ALTITUDE",       "sortable": True,  "defaultVisible": False, "source": "BDS 4,0"},
+    {"key": "alt_fms",          "label": "ALT FMS",        "type": "number", "unit": "ft",   "category": "ALTITUDE",       "sortable": True,  "defaultVisible": False, "source": "BDS 4,0"},
+    {"key": "wind_speed",       "label": "WIND SPD",       "type": "number", "unit": "kt",   "category": "METEO",          "sortable": True,  "defaultVisible": False, "source": "BDS 4,4"},
+    {"key": "wind_direction",   "label": "WIND DIR",       "type": "number", "unit": "deg",  "category": "METEO",          "sortable": True,  "defaultVisible": False, "source": "BDS 4,4"},
+    {"key": "static_pressure",  "label": "STATIC P",       "type": "number", "unit": "hPa",  "category": "METEO",          "sortable": True,  "defaultVisible": False, "source": "BDS 4,4/4,5"},
+    {"key": "turbulence_level", "label": "TURB LVL",       "type": "number", "unit": None,   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,4"},
+    {"key": "msg_count",        "label": "MSG COUNT",      "type": "number", "unit": None,   "category": "SURVEILLANCE",   "sortable": True,  "defaultVisible": False, "source": "Sys Counter"},
+    {"key": "data_age_heading", "label": "HDG AGE",        "type": "number", "unit": "s",    "category": "SURVEILLANCE",   "sortable": True,  "defaultVisible": False, "source": "Sys Clock"},
+    {"key": "data_age_position","label": "POS AGE",        "type": "number", "unit": "s",    "category": "SURVEILLANCE",   "sortable": True,  "defaultVisible": False, "source": "Sys Clock"},
     # --- System timing ---
     {"key": "age",              "label": "AGE",            "type": "number", "unit": "s",    "category": "SYSTEM",         "sortable": True,  "defaultVisible": True,  "source": "Sys Clock"},
     {"key": "first_seen",       "label": "FIRST SEEN",     "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "Sys Clock"},
@@ -1426,6 +1441,16 @@ def update_aircraft(icao, key, value):
                 "humidity": "----",
                 # Extended kinematics — inertial VR reported separately from baro VR (BDS 6,0)
                 "inertial_vr": "----",
+                # Deep fields (expert opt-in)
+                "vert_rate_baro": "----", "vert_rate_inertial": "----",
+                "alt_mcp": "----", "alt_fms": "----",
+                "wind_speed": "----", "wind_direction": "----",
+                "static_pressure": "----", "turbulence_level": "----",
+                "msg_count": 0, "data_age_heading": "----", "data_age_position": "----",
+                # Display heading arbitration internals
+                "_display_heading": None, "_display_heading_time": 0, "_display_heading_source": "none",
+                "_track_update_time": 0, "_heading_update_time": 0, "_selected_heading_update_time": 0,
+                "_lat_update_time": 0,
                 # System timing
                 "first_seen": datetime.datetime.now().strftime('%H:%M:%S'),
                 "latest_intent": {}, "latest_db_log": {}, "latest_sys_log": {}, "last_msg_time": 0, 
@@ -1453,6 +1478,26 @@ def update_aircraft(icao, key, value):
 
         aircraft_state[icao][key] = value
         aircraft_state[icao]["last_seen"] = now
+        
+        # Track update timestamps for heading arbitration
+        if key in ("track", "heading", "selected_heading"):
+            aircraft_state[icao][f"_{key}_update_time"] = now
+        if key == "lat":
+            aircraft_state[icao]["_lat_update_time"] = now
+        
+        # Increment message counter
+        if key == "last_seen":
+            aircraft_state[icao]["msg_count"] = aircraft_state[icao].get("msg_count", 0) + 1
+        
+        # Compute data ages for instrumentation
+        hdg_t = aircraft_state[icao].get("_heading_update_time", 0)
+        trk_t = aircraft_state[icao].get("_track_update_time", 0)
+        best_hdg_t = max(hdg_t, trk_t)
+        if best_hdg_t > 0:
+            aircraft_state[icao]["data_age_heading"] = round(now - best_hdg_t, 1)
+        lat_t = aircraft_state[icao].get("_lat_update_time", 0)
+        if lat_t > 0:
+            aircraft_state[icao]["data_age_position"] = round(now - lat_t, 1)
         
         p = aircraft_state[icao]
         if key == "last_seen":
@@ -1608,8 +1653,10 @@ def process_frame(frame):
                         target_str = []
                         if bds_data.get("selected_altitude_mcp") is not None:
                             target_str.append(f"MCP:{int(bds_data['selected_altitude_mcp'])}")
+                            update_aircraft(icao, "alt_mcp", int(bds_data["selected_altitude_mcp"]))
                         if bds_data.get("selected_altitude_fms") is not None:
                             target_str.append(f"FMS:{int(bds_data['selected_altitude_fms'])}")
+                            update_aircraft(icao, "alt_fms", int(bds_data["selected_altitude_fms"]))
                         if target_str: update_aircraft(icao, "target_alt", " ".join(target_str))
                         if bds_data.get("baro_pressure_setting") is not None:
                             update_aircraft(icao, "baro", f"{round(float(bds_data['baro_pressure_setting']), 1)} hPa")
@@ -1642,11 +1689,13 @@ def process_frame(frame):
 
                         if bds_data.get("baro_vertical_rate") is not None:
                             update_aircraft(icao, "vert_rate", int(bds_data["baro_vertical_rate"]))
+                            update_aircraft(icao, "vert_rate_baro", int(bds_data["baro_vertical_rate"]))
                         elif bds_data.get("inertial_vertical_rate") is not None:
                             update_aircraft(icao, "vert_rate", int(bds_data["inertial_vertical_rate"]))
                         # Always expose inertial VR if present (opt-in column, separate from baro VR)
                         if bds_data.get("inertial_vertical_rate") is not None:
                             update_aircraft(icao, "inertial_vr", int(bds_data["inertial_vertical_rate"]))
+                            update_aircraft(icao, "vert_rate_inertial", int(bds_data["inertial_vertical_rate"]))
 
                         refresh_motion_derivatives(icao)
                     except Exception:
@@ -1668,16 +1717,21 @@ def process_frame(frame):
                         if bds_data.get("wind_speed") is not None and bds_data.get("wind_direction") is not None:
                             wind_str = f"{int(bds_data['wind_speed'])}kt@{int(round(float(bds_data['wind_direction']))) % 360}°"
                             update_aircraft(icao, "wind", wind_str)
+                            update_aircraft(icao, "wind_speed", int(bds_data["wind_speed"]))
+                            update_aircraft(icao, "wind_direction", int(round(float(bds_data["wind_direction"]))) % 360)
                         if bds_data.get("static_air_temperature") is not None:
                             update_aircraft(icao, "sat", format_temperature(bds_data["static_air_temperature"]))
                         if bds_data.get("static_pressure") is not None:
                             update_aircraft(icao, "baro", f"{int(bds_data['static_pressure'])} hPa")
+                            update_aircraft(icao, "static_pressure", int(bds_data["static_pressure"]))
                         if bds_data.get("humidity") is not None:
                             update_aircraft(icao, "humidity", round(float(bds_data["humidity"]), 1))
 
                         turb_label = turbulence_label(bds_data.get("turbulence")) if bds_data.get("turbulence") is not None else None
                         if turb_label and turb_label != "TURB NIL":
                             update_aircraft(icao, "hazard", turb_label)
+                        if bds_data.get("turbulence") is not None:
+                            update_aircraft(icao, "turbulence_level", int(bds_data["turbulence"]))
                     except Exception:
                         pass
 
@@ -1732,12 +1786,76 @@ def serial_reader_thread():
     except Exception as e: print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}Serial Interface Drop: {e}{ANSI.RESET}")
 
 
+def compute_display_heading(data, now):
+    """Canonical heading arbitration: pick the best available heading source.
+    
+    Priority (highest first):
+      1. track (true track from BDS 5,0 / DF17 velocity) — freshness < 8s
+      2. heading (magnetic heading from BDS 6,0) — freshness < 12s
+      3. selected_heading (autopilot target from BDS 6,2/TC29) — freshness < 30s
+      4. hold-last-good: retain previous display_heading
+    
+    Hysteresis: reject jump > 45° in < 0.5s unless supported by track_rate.
+    """
+    prev_hdg = data.get("_display_heading")
+    prev_time = data.get("_display_heading_time", 0)
+    prev_source = data.get("_display_heading_source", "none")
+    
+    candidates = []
+    
+    # Candidate 1: true track (most common, derived from velocity vector)
+    track_val = data.get("track")
+    track_time = data.get("_track_update_time", 0)
+    if track_val not in [None, "----"] and (now - track_time) < 8.0:
+        candidates.append(("track", float(track_val), track_time))
+    
+    # Candidate 2: magnetic heading
+    hdg_val = data.get("heading")
+    hdg_time = data.get("_heading_update_time", 0)
+    if hdg_val not in [None, "----"] and (now - hdg_time) < 12.0:
+        candidates.append(("heading", float(hdg_val), hdg_time))
+    
+    # Candidate 3: selected heading (autopilot setpoint, lowest priority)
+    sel_val = data.get("selected_heading")
+    sel_time = data.get("_selected_heading_update_time", 0)
+    if sel_val not in [None, "----"] and (now - sel_time) < 30.0:
+        candidates.append(("selected_heading", float(sel_val), sel_time))
+    
+    if not candidates:
+        # Hold-last-good fallback
+        return prev_hdg if prev_hdg is not None else "----"
+    
+    # Pick best candidate by priority order
+    best_source, best_val, best_time = candidates[0]
+    
+    # Hysteresis check: reject large jumps unless track_rate supports it
+    if prev_hdg is not None and prev_hdg != "----":
+        dt = now - prev_time
+        if dt > 0 and dt < 2.0:
+            delta = abs((best_val - prev_hdg + 180) % 360 - 180)
+            max_rate = 6.0  # degrees per second (normal turn)
+            track_rate = data.get("track_rate")
+            if track_rate not in [None, "----"]:
+                max_rate = max(max_rate, abs(float(track_rate)) * 1.5)
+            max_delta = max_rate * dt + 5.0  # Allow 5° jitter margin
+            if delta > max_delta and delta > 45.0:
+                # Reject this update, hold previous
+                return prev_hdg
+    
+    # Accept new heading
+    data["_display_heading"] = best_val
+    data["_display_heading_time"] = now
+    data["_display_heading_source"] = best_source
+    return round(best_val, 2)
+
+
 async def broadcast_state(websocket):
     global ledger_count
     
     async def send_updates():
         try:
             while True:
+                emit_time = time.time()
                 with state_lock:
                     now = time.time()
                     payload = []
@@ -1753,6 +1871,23 @@ async def broadcast_state(websocket):
                         coast_threshold = max(5.0, min(raw_sweep + 2.5, 15.0))
                         plane["is_coasting"] = age > coast_threshold
                         plane["is_identing"] = (now - data["ident_time"]) < 18
+                        
+                        # Canonical display heading arbitration
+                        plane["display_heading"] = compute_display_heading(data, now)
+                        plane["display_heading_source"] = data.get("_display_heading_source", "none")
+                        
+                        # Latency instrumentation
+                        plane["_latency"] = {
+                            "state_age": round(age, 2),
+                            "emit_time": round(emit_time, 3),
+                            "last_update": round(data["last_seen"], 3),
+                        }
+                        
+                        # Strip internal keys from emission
+                        for k in list(plane.keys()):
+                            if k.startswith("_") and k not in ["_latency"]:
+                                del plane[k]
+                        
                         payload.append(plane)
                 
                 out_data = {
