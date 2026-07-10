@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AeroMatrix Tactical Scope</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+    <style>
+        :root { color-scheme: dark; }
+        body {
+            background-color: #040811; color: #e2e8f0; font-family: 'Consolas', 'Courier New', monospace;
+            margin: 0; padding: 0; overflow: hidden; width: 100vw; height: 100vh;
+        }
+
+        .hud-top {
+            position: absolute; top: 15px; left: 20px; right: 20px; z-index: 50;
+            display: flex; justify-content: space-between; align-items: flex-start;
+            pointer-events: none; 
+        }
+        
+        .hud-panel {
+            background: rgba(3, 7, 18, 0.7); backdrop-filter: blur(4px);
+            border: 1px solid #1e293b; border-radius: 4px; padding: 10px 15px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); pointer-events: auto;
+        }
+
+        .title { color: #38bdf8; font-weight: bold; text-transform: uppercase; letter-spacing: 1.5px; font-size: 1.1em; margin-bottom: 5px; }
+        .status { font-size: 0.85em; color: #94a3b8; }
+        .online { color: #4ade80; font-weight: bold; }
+        .offline { color: #f87171; font-weight: bold; }
+        
+        .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; row-gap: 8px; }
+        .scale-text { color: #c084fc; font-weight: bold; font-size: 0.9em; letter-spacing: 1px; }
+
+        .btn-action, .map-select {
+            background-color: #0ea5e9; color: #fff; border: 1px solid #0369a1; padding: 4px 10px;
+            font-size: 0.85em; cursor: pointer; border-radius: 3px;
+            font-weight: bold; font-family: monospace; letter-spacing: 0.5px; transition: background-color 0.2s;
+        }
+        .btn-action:hover { background-color: #38bdf8; }
+        .btn-action-alt { background-color: #8b5cf6; border-color: #7c3aed; }
+        .btn-action-alt:hover { background-color: #a78bfa; }
+        
+        .map-select { background-color: #1e293b; color: #e2e8f0; border-color: #334155; outline: none; appearance: none; padding: 4px 25px 4px 10px; }
+        .map-select:hover { background-color: #334155; }
+        .btn-toggle { background-color: #64748b; border-color: #334155; }
+        .btn-toggle.active { background-color: #10b981; border-color: #047857; color: #000; }
+
+        .dual-slider { position: relative; width: 320px; height: 24px; display: flex; align-items: center; flex-shrink: 0; }
+        .slider-track { position: absolute; width: 100%; height: 5px; background: #1e293b; border-radius: 999px; z-index: 0; }
+        .dual-slider input[type=range] { position: absolute; width: 100%; top: 50%; transform: translateY(-50%); pointer-events: none; background: transparent; appearance: none; -webkit-appearance: none; z-index: 2; margin: 0; }
+        .dual-slider input[type=range]::-webkit-slider-thumb { pointer-events: auto; -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #38bdf8; cursor: pointer; box-shadow: 0 0 5px rgba(56, 189, 248, 0.8); }
+        .trail-readout { min-width: 280px; width: 280px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; margin-left: 20px; }
+
+        #db-modal {
+            display: none; position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
+            width: 700px; max-height: 60vh; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(8px);
+            border: 1px solid #38bdf8; border-radius: 6px; z-index: 100; box-shadow: 0 15px 40px rgba(0,0,0,0.9);
+            flex-direction: column; pointer-events: auto; overflow: hidden;
+        }
+        .db-header { background: #0369a1; padding: 10px 15px; font-weight: bold; color: white; display: flex; justify-content: space-between; align-items: center; }
+        .db-close { cursor: pointer; color: white; font-weight: bold; font-size: 1.2em; }
+        .db-close:hover { color: #f87171; }
+        .db-content { padding: 15px; overflow-y: auto; }
+        .db-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85em; }
+        .db-table th { background: #1e293b; padding: 8px; border-bottom: 2px solid #334155; color: #94a3b8; cursor: pointer; user-select: none; }
+        .db-table th:hover { color: #38bdf8; }
+        .db-table td { padding: 8px; border-bottom: 1px solid #1e293b; color: #e2e8f0; }
+        .db-table tr:hover { background: rgba(56, 189, 248, 0.1); }
+        
+        .type-badge { padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.9em; }
+        .type-point { background: #1e3a8a; color: #bae6fd; border: 1px solid #0284c7; }
+        .type-line { background: #14532d; color: #86efac; border: 1px solid #166534; }
+
+        #wpt-form {
+            display: none; position: absolute; top: 60px; right: 20px; background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(4px);
+            padding: 15px; border: 1px solid #38bdf8; border-radius: 6px; z-index: 100; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.9); flex-direction: column; gap: 8px; pointer-events: auto;
+        }
+        .wpt-input { background: #030712; color: #e2e8f0; border: 1px solid #1e293b; font-size: 0.9em; padding: 6px; font-family: monospace; }
+
+        #map-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; display: none; background-color: #040811; pointer-events: none; }
+        #radar-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; display: block; cursor: crosshair; }
+    </style>
+</head>
+<body>
+
+    <div class="hud-top">
+        <div class="hud-panel">
+            <div class="title">AEROMATRIX TACTICAL SCOPE</div>
+            <div class="status">MATRIX LINK: <span id="status-text" class="offline">STANDBY</span></div>
+        </div>
+        
+        <div class="hud-panel controls">
+            <span id="radar-scale" class="scale-text">AUTO RNG</span>
+            <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
+            
+            <span style="font-size: 0.8em; color: #64748b;">TRAIL:</span>
+            <div class="dual-slider">
+                <div class="slider-track"></div>
+                <input type="range" id="trail-min" min="0" max="1440" step="1" value="0">
+                <input type="range" id="trail-max" min="0" max="1440" step="1" value="1440">
+            </div>
+            <span id="trail-val" class="scale-text trail-readout" style="color: #38bdf8; text-align:center;">Δ 0m | --:--:-- - --:--:--</span>
+            
+            <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
+            
+            <select id="map-style-dropdown" class="map-select" style="display: none;">
+                <option value="carto-dark">CARTO DARK</option>
+                <option value="carto-light">CARTO LIGHT</option>
+                <option value="osm">OSM TOPO</option>
+            </select>
+            
+            <button id="btn-network" class="btn-action btn-toggle">[DATALINK: OFF-GRID]</button>
+            <button id="btn-db" class="btn-action btn-action-alt">[DATABASE]</button>
+            <button id="btn-add-wpt" class="btn-action">[+ WPT]</button>
+            <button id="btn-lock" class="btn-action">[WAYPOINT LOCK]</button>
+        </div>
+    </div>
+
+    <div id="db-modal">
+        <div class="db-header">
+            <span>SPATIAL DATABASE MANAGER</span>
+            <span class="db-close" id="btn-close-db">X</span>
+        </div>
+        <div class="db-content">
+            <table class="db-table" id="db-table">
+                <thead>
+                    <tr>
+                        <th onclick="sortTable(0)">GEOMETRY ↕</th>
+                        <th onclick="sortTable(1)">NAME ↕</th>
+                        <th onclick="sortTable(2)">ICON / CLASS ↕</th>
+                        <th>COORDINATES (LAT, LON)</th>
+                        <th>ACTION</th>
+                    </tr>
+                </thead>
+                <tbody id="db-tbody">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="wpt-form">
+        <div style="font-size: 0.8em; color: #38bdf8; font-weight: bold; margin-bottom: 2px;">INJECT CUSTOM WAYPOINT</div>
+        <input type="text" id="wpt-name" class="wpt-input" placeholder="NAME (e.g. HOME)">
+        <div style="display: flex; gap: 6px;">
+            <input type="text" id="wpt-lat" class="wpt-input" placeholder="LAT (-33.8)" style="width: 80px;">
+            <input type="text" id="wpt-lon" class="wpt-input" placeholder="LON (151.2)" style="width: 80px;">
+        </div>
+        <input type="text" id="wpt-type" class="wpt-input" placeholder="TYPE (AIRPORT/VOR/FIX/RADAR)">
+        <div style="display: flex; gap: 6px; margin-top: 4px;">
+            <button id="btn-save-wpt" style="flex: 1; background: #10b981; border: none; color: #000; font-weight:bold; cursor: pointer; padding: 6px; border-radius:3px;">SAVE</button>
+            <button id="btn-cancel-wpt" style="background: #ef4444; border: none; color: #fff; font-weight:bold; cursor: pointer; padding: 6px 10px; border-radius:3px;">X</button>
+        </div>
+    </div>
+
+    <div id="map-container"></div>
+    <canvas id="radar-canvas"></canvas>
+
+    <script>
+        const statusText = document.getElementById('status-text');
+        
+        let hoveredEntity = null;
+        let lockedEntity = null; 
+        let secondaryEntity = null; 
+        
+        let isShiftDown = false; 
+        let mouseX = 0, mouseY = 0;
+        let dragStartPos = { x: 0, y: 0 };
+        
+        let lastAircraftList = []; 
+        let renderHitboxes = []; 
+        const trailHistory = {};
+        
+        let airspaceGeoJSON = { type: "FeatureCollection", features: [] };
+
+        const rCanvas = document.getElementById('radar-canvas');
+        const mapContainer = document.getElementById('map-container');
+        const rCtx = rCanvas.getContext('2d');
+        const scaleText = document.getElementById('radar-scale');
+        
+        const REF_LAT = -33.9461; 
+        const REF_LON = 151.1772;
+        const COS_LAT = Math.cos(REF_LAT * Math.PI / 180); 
+
+        // Slider Logic
+        const trailMin = document.getElementById('trail-min');
+        const trailMax = document.getElementById('trail-max');
+        const trailVal = document.getElementById('trail-val');
+        const TRAIL_WINDOW_MAX_MINUTES = 1440;
+
+        function formatDuration(minutesValue) {
+            const totalSeconds = Math.max(0, Math.round(minutesValue * 60));
+            const days = Math.floor(totalSeconds / 86400);
+            const hours = Math.floor((totalSeconds % 86400) / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+
+            const parts = [];
+            if (days > 0) parts.push(`${days}d`);
+            if (hours > 0 || parts.length > 0) parts.push(`${String(hours).padStart(2, '0')}h`);
+            if (minutes > 0 || parts.length > 0) parts.push(`${String(minutes).padStart(2, '0')}m`);
+            parts.push(`${seconds}s`);
+            return parts.join(' ');
+        }
+
+        function updateSliderLabels() {
+            let minSlider = parseInt(trailMin.value);
+            let maxSlider = parseInt(trailMax.value);
+            if (minSlider > maxSlider) { trailMin.value = maxSlider; minSlider = maxSlider; }
+            const now = Date.now();
+            const maxAgeMs = (TRAIL_WINDOW_MAX_MINUTES - minSlider) * 60000;
+            const minAgeMs = (TRAIL_WINDOW_MAX_MINUTES - maxSlider) * 60000;
+            const fmtOpts = { hour: '2-digit', minute:'2-digit', second: '2-digit', hour12: false };
+            const spanMinutes = (maxSlider - minSlider);
+            trailVal.innerText = `Δ ${formatDuration(spanMinutes)} | ${new Date(now - maxAgeMs).toLocaleTimeString([], fmtOpts)} - ${new Date(now - minAgeMs).toLocaleTimeString([], fmtOpts)}`;
+        }
+        trailMin.addEventListener('input', updateSliderLabels);
+        trailMax.addEventListener('input', updateSliderLabels);
+        setInterval(updateSliderLabels, 60000); updateSliderLabels();
+
+        // Shift Ruler Logic
+        window.addEventListener('keydown', e => { if (e.key === 'Shift') isShiftDown = true; });
+        window.addEventListener('keyup', e => { if (e.key === 'Shift') isShiftDown = false; });
+
+        // Database Manager Logic
+        let sortCol = -1; let sortAsc = true;
+        const dbModal = document.getElementById('db-modal');
+        
+        document.getElementById('btn-db').addEventListener('click', () => { populateDbTable(); dbModal.style.display = 'flex'; });
+        document.getElementById('btn-close-db').addEventListener('click', () => dbModal.style.display = 'none');
+
+        window.sortTable = function(colIdx) {
+            if (sortCol === colIdx) { sortAsc = !sortAsc; }
+            else { sortCol = colIdx; sortAsc = true; }
+            
+            airspaceGeoJSON.features.sort((a, b) => {
+                let valA = '', valB = '';
+                const pA = a.properties || {}; const gA = a.geometry || {};
+                const pB = b.properties || {}; const gB = b.geometry || {};
+                
+                if (colIdx === 0) { valA = gA.type || ''; valB = gB.type || ''; }
+                else if (colIdx === 1) { valA = pA.name || ''; valB = pB.name || ''; }
+                else if (colIdx === 2) { valA = pA.icon || pA.type || ''; valB = pB.icon || pB.type || ''; }
+                
+                if (valA < valB) return sortAsc ? -1 : 1;
+                if (valA > valB) return sortAsc ? 1 : -1;
+                return 0;
+            });
+            populateDbTable();
+        };
+
+        function populateDbTable() {
+            const tbody = document.getElementById('db-tbody');
+            tbody.innerHTML = '';
+            
+            if (!airspaceGeoJSON.features || airspaceGeoJSON.features.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No Spatial Data Available in Memory.</td></tr>`;
+                return;
+            }
+
+            airspaceGeoJSON.features.forEach((feature, idx) => {
+                const props = feature.properties || {};
+                const geom = feature.geometry || {};
+                
+                let coordStr = 'N/A';
+                if (geom.type === 'Point' && geom.coordinates) {
+                    coordStr = `[${geom.coordinates[1].toFixed(4)}, ${geom.coordinates[0].toFixed(4)}]`;
+                } else if (geom.type === 'LineString' && geom.coordinates) {
+                    coordStr = `Vector (${geom.coordinates.length} Nodes)`;
+                }
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><span class="type-badge ${geom.type === 'Point' ? 'type-point' : 'type-line'}">${geom.type.toUpperCase()}</span></td>
+                    <td style="font-weight:bold; color:#38bdf8;">${props.name || 'UNNAMED'}</td>
+                    <td>${props.icon || props.type || 'DEFAULT'}</td>
+                    <td style="color:#94a3b8;">${coordStr}</td>
+                    <td><button style="background:#ef4444; color:white; border:none; padding:2px 8px; cursor:pointer;" onclick="deleteFeature(${idx})">DEL</button></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        window.deleteFeature = function(idx) {
+            if(confirm("Purge geometry feature from database?")) {
+                if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ action: "delete_feature", index: idx })); }
+                airspaceGeoJSON.features.splice(idx, 1);
+                populateDbTable();
+            }
+        };
+
+        // Inject Waypoint Logic
+        document.getElementById('btn-add-wpt').addEventListener('click', () => document.getElementById('wpt-form').style.display = 'flex');
+        document.getElementById('btn-cancel-wpt').addEventListener('click', () => document.getElementById('wpt-form').style.display = 'none');
+        
+        document.getElementById('btn-save-wpt').addEventListener('click', () => {
+            const Waypoint_Name = document.getElementById('wpt-name').value.trim();
+            const LAT = parseFloat(document.getElementById('wpt-lat').value);
+            const LONG = parseFloat(document.getElementById('wpt-lon').value);
+            const type = document.getElementById('wpt-type').value.trim().toUpperCase() || 'FIX';
+            
+            if (Waypoint_Name && !isNaN(LAT) && !isNaN(LONG)) {
+                const newWpt = { Waypoint_Name, LAT, LONG, type };
+                if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ action: "add_wpt", waypoint: newWpt })); }
+                
+                document.getElementById('wpt-name').value = '';
+                document.getElementById('wpt-lat').value = '';
+                document.getElementById('wpt-lon').value = '';
+                document.getElementById('wpt-type').value = '';
+                document.getElementById('wpt-form').style.display = 'none';
+            }
+        });
+
+        // --- Viewport State Engine ---
+        let networkMode = 'OFF-GRID'; 
+        let leafMap = null;
+        let isAutoView = true;
+        let manualZoomDeg = 0.5; let panX = 0; let panY = 0;
+        let isDragging = false; let lastMouse = { x: 0, y: 0 };
+
+        if (typeof L !== 'undefined') {
+            leafMap = L.map('map-container', { zoomControl: false, attributionControl: false, zoomSnap: 0, zoomAnimation: false }).setView([REF_LAT, REF_LON], 10);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(leafMap);
+        }
+
+        document.getElementById('btn-network').addEventListener('click', () => {
+            if (networkMode === 'OFF-GRID') {
+                networkMode = 'ONLINE';
+                document.getElementById('btn-network').innerText = '[DATALINK: LIVE MAP]';
+                document.getElementById('btn-network').className = 'btn-action btn-toggle active';
+                document.getElementById('map-style-dropdown').style.display = 'block';
+                mapContainer.style.display = 'block';
+                
+                rCanvas.style.pointerEvents = 'auto'; 
+                mapContainer.style.pointerEvents = 'none';
+                rCanvas.style.boxShadow = 'none'; 
+                
+                const R_MIN = Math.min(window.innerWidth / 2, window.innerHeight / 2);
+                const ppd = R_MIN / manualZoomDeg;
+                const centerLon = REF_LON - (panX / (COS_LAT * ppd));
+                const centerLat = REF_LAT + (panY / ppd);
+                const leafZoom = Math.log2((ppd * 360) / 256);
+
+                setTimeout(() => { leafMap.invalidateSize(); leafMap.setView([centerLat, centerLon], leafZoom, {animate: false}); }, 10);
+            } else {
+                networkMode = 'OFF-GRID';
+                document.getElementById('btn-network').innerText = '[DATALINK: OFF-GRID]';
+                document.getElementById('btn-network').className = 'btn-action btn-toggle';
+                document.getElementById('map-style-dropdown').style.display = 'none';
+                mapContainer.style.display = 'none';
+                rCanvas.style.boxShadow = 'inset 0 0 150px rgba(0,0,0,0.9)'; 
+                
+                isAutoView = false;
+                const center = leafMap.getCenter();
+                const ppd = (256 * Math.pow(2, leafMap.getZoom())) / 360;
+                const R_MIN = Math.min(window.innerWidth / 2, window.innerHeight / 2);
+                
+                manualZoomDeg = R_MIN / ppd;
+                panX = -(center.lng - REF_LON) * COS_LAT * ppd;
+                panY = (center.lat - REF_LAT) * ppd;
+            }
+        });
+
+        const tileLayers = {}; let currentTileLayer = null;
+        if (typeof L !== 'undefined') {
+            tileLayers['carto-dark'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+            tileLayers['carto-light'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png');
+            tileLayers['osm'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+            currentTileLayer = tileLayers['carto-dark'];
+            document.getElementById('map-style-dropdown').addEventListener('change', (e) => {
+                leafMap.removeLayer(currentTileLayer);
+                currentTileLayer = tileLayers[e.target.value].addTo(leafMap);
+            });
+        }
+
+        rCanvas.addEventListener('mousedown', e => {
+            dragStartPos = { x: e.clientX, y: e.clientY };
+            isDragging = true; 
+            isAutoView = false; 
+            lastMouse = { x: e.clientX, y: e.clientY };
+        });
+
+        rCanvas.addEventListener('mousemove', e => {
+            mouseX = e.clientX; mouseY = e.clientY;
+            
+            if (isDragging) {
+                if (networkMode === 'ONLINE') { 
+                    leafMap.panBy(L.point(lastMouse.x - e.clientX, lastMouse.y - e.clientY), {animate: false}); 
+                    const center = leafMap.getCenter();
+                    const ppd = (256 * Math.pow(2, leafMap.getZoom())) / 360;
+                    panX = -(center.lng - REF_LON) * COS_LAT * ppd;
+                    panY = (center.lat - REF_LAT) * ppd;
+                } else { 
+                    panX += (e.clientX - lastMouse.x); 
+                    panY += (e.clientY - lastMouse.y); 
+                }
+                lastMouse = { x: e.clientX, y: e.clientY };
+                hoveredEntity = null;
+                return;
+            }
+            
+            let closest = null; let minD = 18;
+            renderHitboxes.forEach(hit => { 
+                const d = Math.hypot(hit.x - e.clientX, hit.y - e.clientY); 
+                if (d < minD) { minD = d; closest = hit.id; }
+            });
+            
+            if (closest !== hoveredEntity) hoveredEntity = closest; 
+        });
+
+        rCanvas.addEventListener('mouseup', e => {
+            isDragging = false;
+            const dist = Math.hypot(e.clientX - dragStartPos.x, e.clientY - dragStartPos.y);
+            if (dist < 5) {
+                if (hoveredEntity) {
+                    if (e.ctrlKey || e.metaKey) {
+                        if (lockedEntity && lockedEntity !== hoveredEntity) secondaryEntity = hoveredEntity;
+                        else lockedEntity = hoveredEntity;
+                    } else {
+                        lockedEntity = (lockedEntity === hoveredEntity) ? null : hoveredEntity;
+                        secondaryEntity = null;
+                    }
+                } else {
+                    lockedEntity = null;
+                    secondaryEntity = null;
+                }
+            }
+        });
+        
+        rCanvas.addEventListener('mouseleave', () => { isDragging = false; hoveredEntity = null; });
+        
+        rCanvas.addEventListener('wheel', e => {
+            e.preventDefault(); isAutoView = false;
+            if (networkMode === 'ONLINE') {
+                leafMap.setZoomAround(L.point(mouseX, mouseY), leafMap.getZoom() + (e.deltaY > 0 ? -0.2 : 0.2), {animate: false});
+                const center = leafMap.getCenter();
+                const ppd = (256 * Math.pow(2, leafMap.getZoom())) / 360;
+                const R_MIN = Math.min(window.innerWidth / 2, window.innerHeight / 2);
+                manualZoomDeg = R_MIN / ppd;
+                panX = -(center.lng - REF_LON) * COS_LAT * ppd;
+                panY = (center.lat - REF_LAT) * ppd;
+            } else {
+                const oldZoom = manualZoomDeg;
+                manualZoomDeg *= (e.deltaY > 0 ? 1.15 : 0.85);
+                manualZoomDeg = Math.max(0.01, Math.min(manualZoomDeg, 10.0));
+                const scale = oldZoom / manualZoomDeg; 
+                const cx = rCanvas.width / 2; const cy = rCanvas.height / 2;
+                panX = mouseX - cx - (mouseX - cx - panX) * scale;
+                panY = mouseY - cy - (mouseY - cy - panY) * scale;
+            }
+        }, { passive: false });
+
+        document.getElementById('btn-lock').addEventListener('click', () => {
+            isAutoView = true; lockedEntity = null; secondaryEntity = null; panX = 0; panY = 0;
+            if (networkMode === 'ONLINE' && leafMap) { leafMap.setView([REF_LAT, REF_LON], 10); }
+        });
+
+        function getCanvasPoint(lat, lon, R_CX, R_CY, ppd) {
+            if (networkMode === 'ONLINE' && leafMap) {
+                const pt = leafMap.latLngToContainerPoint([lat, lon]);
+                return { x: pt.x, y: pt.y };
+            }
+            return { x: R_CX + ((lon - REF_LON) * COS_LAT * ppd), y: R_CY - ((lat - REF_LAT) * ppd) };
+        }
+
+        // ==========================================
+        // Render engine (pulsed 60 FPS)
+        // ==========================================
+        function renderTacticalScope(planes) {
+            try {
+                rCanvas.width = window.innerWidth; 
+                rCanvas.height = window.innerHeight;
+                renderHitboxes = [];
+                let occupiedRects = [];
+                
+                const R_CX = (rCanvas.width / 2) + panX;
+                const R_CY = (rCanvas.height / 2) + panY;
+                const R_MIN = Math.min(rCanvas.width/2, rCanvas.height/2);
+                
+                if (networkMode === 'OFF-GRID') {
+                    rCtx.fillStyle = '#040811'; rCtx.fillRect(0, 0, rCanvas.width, rCanvas.height);
+                } else {
+                    rCtx.clearRect(0, 0, rCanvas.width, rCanvas.height);
+                }
+                
+                let activeZoomDeg = manualZoomDeg;
+
+                if (isAutoView) {
+                    let maxDelta = 0.05; 
+                    planes.forEach(p => {
+                        if (p.lat && p.lon && p.lat !== '----' && p.lon !== '----') {
+                            const dLat = Math.abs(parseFloat(p.lat) - REF_LAT);
+                            const dLon = Math.abs(parseFloat(p.lon) - REF_LON) * COS_LAT;
+                            if (dLat > maxDelta) maxDelta = dLat;
+                            if (dLon > maxDelta) maxDelta = dLon;
+                        }
+                    });
+                    
+                    if (airspaceGeoJSON.features) {
+                        airspaceGeoJSON.features.forEach(f => {
+                            if (f.geometry && f.geometry.type === 'Point') {
+                                const dLat = Math.abs(parseFloat(f.geometry.coordinates[1]) - REF_LAT);
+                                const dLon = Math.abs(parseFloat(f.geometry.coordinates[0]) - REF_LON) * COS_LAT;
+                                if (dLat > maxDelta) maxDelta = dLat;
+                                if (dLon > maxDelta) maxDelta = dLon;
+                            }
+                        });
+                    }
+
+                    activeZoomDeg = maxDelta * 1.2; 
+                    manualZoomDeg = activeZoomDeg;
+                    panX = 0; panY = 0; 
+                    scaleText.innerText = `AUTO RNG: ±${activeZoomDeg.toFixed(2)}°`;
+                } else {
+                    if (networkMode === 'ONLINE' && leafMap) {
+                        scaleText.innerHTML = `<span style="color:#f43f5e;">MANUAL OVR:</span> ZM Lvl ${leafMap.getZoom().toFixed(1)}`;
+                    } else {
+                        scaleText.innerHTML = `<span style="color:#f43f5e;">MANUAL OVR:</span> ±${activeZoomDeg.toFixed(2)}°`;
+                    }
+                }
+
+                const ppd = R_MIN / activeZoomDeg;
+
+                if (networkMode === 'OFF-GRID') {
+                    rCtx.strokeStyle = 'rgba(56, 189, 248, 0.1)'; rCtx.lineWidth = 1;
+                    rCtx.beginPath(); rCtx.moveTo(R_CX, 0); rCtx.lineTo(R_CX, rCanvas.height); rCtx.stroke();
+                    rCtx.beginPath(); rCtx.moveTo(0, R_CY); rCtx.lineTo(rCanvas.width, R_CY); rCtx.stroke();
+                    for(let r=1; r<=5; r++) { rCtx.beginPath(); rCtx.arc(R_CX, R_CY, (R_MIN/3)*r, 0, Math.PI*2); rCtx.stroke(); }
+                }
+
+                rCtx.lineWidth = 1;
+                let entityCache = {};
+                
+                planes.forEach(p => {
+                    if (p.lat && p.lon && p.lat !== '----' && p.lon !== '----') {
+                        entityCache[p.icao] = { lat: parseFloat(p.lat), lon: parseFloat(p.lon), alt: p.alt };
+                    }
+                });
+                
+                if (airspaceGeoJSON && airspaceGeoJSON.features) {
+                    airspaceGeoJSON.features.forEach((feature, idx) => {
+                        const geom = feature.geometry;
+                        const props = feature.properties || {};
+                        if (!geom) return;
+
+                        if (geom.type === 'LineString') {
+                            rCtx.beginPath();
+                            rCtx.strokeStyle = props.color || 'rgba(16, 185, 129, 0.5)';
+                            rCtx.lineWidth = props.weight || 2;
+                            geom.coordinates.forEach((coord, idx) => {
+                                const pt = getCanvasPoint(coord[1], coord[0], R_CX, R_CY, ppd);
+                                if (idx === 0) rCtx.moveTo(pt.x, pt.y);
+                                else rCtx.lineTo(pt.x, pt.y);
+                            });
+                            rCtx.stroke();
+                            
+                            if (props.name) {
+                                const pt0 = getCanvasPoint(geom.coordinates[0][1], geom.coordinates[0][0], R_CX, R_CY, ppd);
+                                rCtx.font = "10px monospace";
+                                rCtx.fillStyle = props.color || 'rgba(16, 185, 129, 0.8)';
+                                rCtx.fillText(props.name, pt0.x + 5, pt0.y - 5);
+                            }
+                        }
+
+                        if (geom.type === 'Point') {
+                            const pt = getCanvasPoint(geom.coordinates[1], geom.coordinates[0], R_CX, R_CY, ppd);
+                            // Fail-safe: ensure we always have an iconType to prevent silent failures.
+                            const iconType = (props.icon || props.type || 'FIX').toUpperCase();
+                            const wpId = 'WPT_' + (props.name || idx);
+                            
+                            entityCache[wpId] = { lat: geom.coordinates[1], lon: geom.coordinates[0], alt: 'GROUND' };
+                            renderHitboxes.push({ id: wpId, x: pt.x, y: pt.y });
+                            
+                            const isSelected = (wpId === hoveredEntity || wpId === lockedEntity || wpId === secondaryEntity);
+                            const isDimmed = ((lockedEntity || secondaryEntity) && !isSelected);
+                            
+                            let color = isSelected ? '#38bdf8' : (props.color || 'rgba(226, 232, 240, 0.7)');
+                            
+                            rCtx.globalAlpha = isDimmed ? 0.3 : 1.0;
+                            rCtx.strokeStyle = color; rCtx.fillStyle = color; rCtx.lineWidth = 1.5;
+                            
+                            if (isSelected && !isDimmed) { rCtx.shadowBlur = 8; rCtx.shadowColor = '#38bdf8'; }
+                            
+                            if (iconType === 'RADAR') {
+                                rCtx.beginPath(); rCtx.arc(pt.x, pt.y, 6, 0, Math.PI*2); rCtx.fill();
+                                
+                                // Fallback sweep interval if the Python engine drops it.
+                                const sweepInt = props.sweep || 4.8;
+                                const now = Date.now();
+                                const beamAngle = ((now % (sweepInt * 1000)) / (sweepInt * 1000)) * Math.PI * 2;
+                                
+                                const beamLen = 200; 
+                                rCtx.beginPath();
+                                rCtx.moveTo(pt.x, pt.y);
+                                rCtx.lineTo(pt.x + Math.sin(beamAngle) * beamLen, pt.y - Math.cos(beamAngle) * beamLen);
+                                rCtx.strokeStyle = 'rgba(16, 185, 129, 0.8)';
+                                rCtx.lineWidth = 2;
+                                rCtx.stroke();
+                                
+                                rCtx.beginPath();
+                                rCtx.arc(pt.x, pt.y, beamLen, beamAngle - 0.2 - (Math.PI/2), beamAngle - (Math.PI/2));
+                                rCtx.lineTo(pt.x, pt.y);
+                                rCtx.fillStyle = 'rgba(16, 185, 129, 0.2)';
+                                rCtx.fill();
+                            } else if (iconType === 'AIRPORT') {
+                                rCtx.beginPath(); rCtx.arc(pt.x, pt.y, 5, 0, Math.PI*2); rCtx.stroke();
+                                rCtx.beginPath(); rCtx.moveTo(pt.x-8, pt.y); rCtx.lineTo(pt.x+8, pt.y); rCtx.stroke();
+                                rCtx.beginPath(); rCtx.moveTo(pt.x, pt.y-8); rCtx.lineTo(pt.x, pt.y+8); rCtx.stroke();
+                            } else if (iconType === 'VOR') {
+                                rCtx.beginPath();
+                                for (let i = 0; i < 6; i++) rCtx.lineTo(pt.x + 5 * Math.cos(i * Math.PI / 3), pt.y + 5 * Math.sin(i * Math.PI / 3));
+                                rCtx.closePath(); rCtx.stroke();
+                                rCtx.beginPath(); rCtx.arc(pt.x, pt.y, 1, 0, Math.PI*2); rCtx.fill();
+                            } else {
+                                rCtx.beginPath(); rCtx.moveTo(pt.x, pt.y - 5); rCtx.lineTo(pt.x + 5, pt.y + 3); rCtx.lineTo(pt.x - 5, pt.y + 3); rCtx.closePath(); rCtx.stroke();
+                            }
+
+                            if (props.name) { rCtx.font = "bold 9px monospace"; rCtx.fillText(props.name, pt.x + 8, pt.y + 4); }
+                            
+                            rCtx.globalAlpha = 1.0;
+                            rCtx.shadowBlur = 0;
+                        }
+                    });
+                }
+
+                const centerProj = getCanvasPoint(REF_LAT, REF_LON, R_CX, R_CY, ppd);
+                rCtx.shadowBlur = 10; rCtx.shadowColor = '#f43f5e'; rCtx.fillStyle = '#f43f5e';
+                rCtx.beginPath(); rCtx.arc(centerProj.x, centerProj.y, 2.5, 0, Math.PI*2); rCtx.fill(); rCtx.shadowBlur = 0; 
+
+                const activeIcaosList = planes.map(p => p.icao);
+                
+                const minSlider = parseInt(trailMin.value); const maxSlider = parseInt(trailMax.value);
+                const minAgeMs = (TRAIL_WINDOW_MAX_MINUTES - maxSlider) * 60000; const maxAgeMs = (TRAIL_WINDOW_MAX_MINUTES - minSlider) * 60000;
+                const timeSpan = maxAgeMs - minAgeMs || 1; 
+                const renderTime = Date.now();
+
+                Object.keys(trailHistory).forEach(icao => {
+                    const historyObj = trailHistory[icao];
+                    const history = historyObj.path;
+                    
+                    const validPoints = history.filter(pt => { const age = renderTime - pt.time; return age >= minAgeMs && age <= maxAgeMs; });
+                    if (validPoints.length < 2) return;
+
+                    const isActive = activeIcaosList.includes(icao);
+                    const isHovered = (icao === hoveredEntity || icao === lockedEntity || icao === secondaryEntity);
+                    const isDimmed = ((lockedEntity || secondaryEntity) && !isHovered);
+                    if (isDimmed) return; 
+                    
+                    for(let i = 1; i < validPoints.length; i++) {
+                        const pt1 = getCanvasPoint(validPoints[i-1].lat, validPoints[i-1].lon, R_CX, R_CY, ppd);
+                        const pt2 = getCanvasPoint(validPoints[i].lat, validPoints[i].lon, R_CX, R_CY, ppd);
+
+                        const age = renderTime - validPoints[i].time;
+                        const alpha = Math.max(0.02, 1.0 - ((age - minAgeMs) / timeSpan));
+
+                        let a = validPoints[i].alt;
+                        let rC=0, gC=255, bC=0; 
+                        if (a === 'GROUND') { rC=249; gC=115; bC=22; }
+                        else {
+                            a = parseInt(a);
+                            if (!isNaN(a)) {
+                                if (a < 10000) { rC=239; gC=68; bC=68; } 
+                                else if (a < 20000) { rC=234; gC=179; bC=8; } 
+                                else if (a < 30000) { rC=34; gC=197; bC=94; } 
+                                else if (a < 40000) { rC=6; gC=182; bC=212; } 
+                                else { rC=59; gC=130; bC=246; } 
+                            }
+                        }
+
+                        rCtx.beginPath();
+                        if (isHovered) {
+                            rCtx.strokeStyle = `rgba(${rC}, ${gC}, ${bC}, ${alpha})`;
+                            rCtx.lineWidth = 3; rCtx.shadowBlur = 6; rCtx.shadowColor = `rgba(${rC}, ${gC}, ${bC}, ${alpha})`;
+                        } else {
+                            rCtx.strokeStyle = `rgba(${rC}, ${gC}, ${bC}, ${alpha * 0.5})`;
+                            rCtx.lineWidth = 1.5; rCtx.shadowBlur = 0;
+                        }
+                        rCtx.moveTo(pt1.x, pt1.y); rCtx.lineTo(pt2.x, pt2.y); rCtx.stroke();
+                    }
+                    rCtx.shadowBlur = 0; 
+                });
+
+                planes.forEach(p => {
+                    if (p.lat && p.lon && p.lat !== '----' && p.lon !== '----') {
+                        const pt = getCanvasPoint(p.lat, p.lon, R_CX, R_CY, ppd);
+
+                        if (pt.x >= -100 && pt.x <= rCanvas.width+100 && pt.y >= -100 && pt.y <= rCanvas.height+100) {
+                            renderHitboxes.push({ id: p.icao, x: pt.x, y: pt.y });
+
+                            const isSelected = (p.icao === hoveredEntity || p.icao === lockedEntity || p.icao === secondaryEntity);
+                            const isDimmed = ((lockedEntity || secondaryEntity) && !isSelected);
+
+                            const hasActiveRa = !!(p.tcas_ra && p.tcas_ra !== '----' && p.tcas_ra !== 'CLEAN');
+                            let baseColor = '#ffcc00';
+                            if (['7500', '7600', '7700'].includes(p.squawk) || hasActiveRa) baseColor = '#ef4444';
+                            else if (p.alt === 'GROUND') baseColor = '#f97316';
+
+                            const heading = (p.track && p.track !== '----') ? parseFloat(p.track) : 0;
+                            const gs = (p.speed && p.speed !== '----') ? parseFloat(p.speed) : 0;
+
+                            rCtx.globalAlpha = isDimmed ? 0.3 : 1.0;
+
+                            if (gs > 10) {
+                                const distNm = gs * (60 / 3600); 
+                                const distDegLat = distNm / 60; 
+                                const distDegLon = distNm / (60 * COS_LAT);
+                                const hdgRad = heading * Math.PI / 180;
+                                
+                                const futureLat = parseFloat(p.lat) + (distDegLat * Math.cos(hdgRad));
+                                const futureLon = parseFloat(p.lon) + (distDegLon * Math.sin(hdgRad));
+                                const fPt = getCanvasPoint(futureLat, futureLon, R_CX, R_CY, ppd);
+
+                                rCtx.beginPath(); rCtx.moveTo(pt.x, pt.y); rCtx.lineTo(fPt.x, fPt.y);
+                                rCtx.strokeStyle = baseColor + '70'; rCtx.lineWidth = 1.5; rCtx.stroke();
+                            }
+
+                            rCtx.fillStyle = baseColor; 
+                            if (p.is_coasting) rCtx.fillStyle = baseColor + '50';
+                            else if (!isDimmed) { rCtx.shadowBlur = 8; rCtx.shadowColor = baseColor; }
+                            
+                            rCtx.save();
+                            rCtx.translate(pt.x, pt.y); rCtx.rotate((heading * Math.PI) / 180);
+                            rCtx.beginPath();
+                            rCtx.moveTo(0, -9); rCtx.lineTo(1.5, -5); rCtx.lineTo(1.5, -1); rCtx.lineTo(6.5, 3);    
+                            rCtx.lineTo(6.5, 4); rCtx.lineTo(1.5, 2.5); rCtx.lineTo(1.5, 6.5); rCtx.lineTo(4, 9);      
+                            rCtx.lineTo(4, 10); rCtx.lineTo(0, 8.5); rCtx.lineTo(-4, 10); rCtx.lineTo(-4, 9);
+                            rCtx.lineTo(-1.5, 6.5); rCtx.lineTo(-1.5, 2.5); rCtx.lineTo(-6.5, 4); rCtx.lineTo(-6.5, 3);
+                            rCtx.lineTo(-1.5, -1); rCtx.lineTo(-1.5, -5); rCtx.closePath();
+                            rCtx.fill(); rCtx.restore(); rCtx.shadowBlur = 0; rCtx.globalAlpha = 1.0;
+
+                            const tagW = 100, tagH = 65;
+                            let tagX = pt.x + 12; let tagY = pt.y - (tagH/2);
+                            let attempts = 0; let isDisplaced = false; let angle = 0; let radius = 45;
+
+                            while (occupiedRects.some(r => tagX < r.x + tagW + 4 && tagX + tagW > r.x - 4 && tagY < r.y + tagH + 4 && tagY + tagH > r.y - 4) && attempts < 15) {
+                                isDisplaced = true; angle += Math.PI / 4; radius += 6;
+                                tagX = pt.x + Math.cos(angle) * radius; tagY = pt.y + Math.sin(angle) * radius;
+                                attempts++;
+                            }
+                            occupiedRects.push({x: tagX, y: tagY});
+
+                            if (isDimmed) return; 
+
+                            if (isDisplaced) {
+                                rCtx.beginPath(); rCtx.moveTo(pt.x, pt.y); rCtx.lineTo(tagX + (tagX > pt.x ? 0 : tagW), tagY + (tagH/2));
+                                rCtx.strokeStyle = isSelected ? '#38bdf8' : 'rgba(148, 163, 184, 0.4)'; rCtx.lineWidth = 1; rCtx.stroke();
+                            }
+
+                            rCtx.fillStyle = isSelected ? 'rgba(3, 7, 18, 0.95)' : 'rgba(3, 7, 18, 0.7)';
+                            rCtx.strokeStyle = isSelected ? '#38bdf8' : 'rgba(51, 65, 85, 0.8)';
+                            rCtx.lineWidth = 1;
+                            rCtx.beginPath(); rCtx.roundRect(tagX, tagY, tagW, tagH, 4); rCtx.fill(); rCtx.stroke();
+                            
+                            rCtx.font = isSelected ? "bold 11px 'Consolas', 'Courier New', monospace" : "11px 'Consolas', 'Courier New', monospace";
+                            const textColor = isSelected ? '#ffffff' : (p.is_coasting ? 'rgba(148, 163, 184, 0.9)' : '#38bdf8');
+                            
+                            let vRateSym = '≈';
+                            if (typeof p.vert_rate === 'number') {
+                                if (p.vert_rate > 250) vRateSym = '↑';
+                                else if (p.vert_rate < -250) vRateSym = '↓';
+                            }
+                            
+                            const lblIcao = p.icao;
+                            const lblCall = (p.callsign && p.callsign !== '----') ? p.callsign : '----';
+                            const lblSqk = (p.squawk && p.squawk !== '----') ? p.squawk : '----';
+                            const lblAlt = (p.alt !== '----' && p.alt !== undefined) ? (typeof p.alt === 'number' ? `${p.alt.toLocaleString()} ft ${vRateSym}` : `${p.alt} ${vRateSym}`) : `---- ${vRateSym}`;
+                            const strHdg = (p.heading && p.heading !== '----') ? Math.round(p.heading) + '°' : '----';
+                            const strSpd = (p.speed && p.speed !== '----') ? p.speed + ' kt' : '----';
+                            
+                            const lines = [lblIcao, lblCall, lblSqk, lblAlt, `${strHdg} / ${strSpd}`];
+                            
+                            lines.forEach((line, idx) => {
+                                if (idx === 2 && (['7500', '7600', '7700'].includes(p.squawk) || hasActiveRa)) { rCtx.fillStyle = '#ef4444'; } 
+                                else { rCtx.fillStyle = textColor; }
+                                rCtx.fillText(line, tagX + 6, tagY + 14 + (idx * 11.5));
+                            });
+                        }
+                    }
+                });
+
+                if (lockedEntity && secondaryEntity) {
+                    const e1 = entityCache[lockedEntity];
+                    const e2 = entityCache[secondaryEntity];
+                    
+                    if (e1 && e2) {
+                        const pt1 = getCanvasPoint(e1.lat, e1.lon, R_CX, R_CY, ppd);
+                        const pt2 = getCanvasPoint(e2.lat, e2.lon, R_CX, R_CY, ppd);
+                        
+                        const dLat = e2.lat - e1.lat;
+                        const dLon = (e2.lon - e1.lon) * COS_LAT;
+                        const horizNm = Math.sqrt(dLat*dLat + dLon*dLon) * 60;
+                        const horizFt = horizNm * 6076.12;
+                        
+                        let dAlt = 0; let slantFt = horizFt; let altStr = "ΔV: ----";
+                        let alt1 = e1.alt === 'GROUND' ? 0 : parseInt(e1.alt);
+                        let alt2 = e2.alt === 'GROUND' ? 0 : parseInt(e2.alt);
+                        
+                        if (!isNaN(alt1) && !isNaN(alt2)) {
+                            dAlt = Math.abs(alt2 - alt1);
+                            slantFt = Math.sqrt(horizFt*horizFt + dAlt*dAlt);
+                            altStr = `ΔV: ${dAlt.toLocaleString()} FT`;
+                        }
+                        
+                        rCtx.beginPath(); rCtx.moveTo(pt1.x, pt1.y); rCtx.lineTo(pt2.x, pt2.y);
+                        rCtx.strokeStyle = '#c084fc'; rCtx.lineWidth = 2; rCtx.setLineDash([5, 5]); rCtx.stroke(); rCtx.setLineDash([]);
+                        
+                        const midX = (pt1.x + pt2.x) / 2; const midY = (pt1.y + pt2.y) / 2;
+                        
+                        rCtx.fillStyle = 'rgba(15, 23, 42, 0.95)'; rCtx.fillRect(midX - 60, midY - 25, 120, 45);
+                        rCtx.strokeStyle = '#c084fc'; rCtx.strokeRect(midX - 60, midY - 25, 120, 45);
+                        rCtx.fillStyle = '#c084fc'; rCtx.font = "bold 11px monospace";
+                        rCtx.fillText(`HD: ${horizNm.toFixed(2)} NM`, midX - 54, midY - 10);
+                        rCtx.fillText(altStr, midX - 54, midY + 2);
+                        rCtx.fillText(`SD: ${slantFt.toLocaleString(undefined, {maximumFractionDigits:0})} FT`, midX - 54, midY + 14);
+                    }
+                }
+
+                if (isShiftDown && (!lockedEntity || !secondaryEntity)) {
+                    let startLat = REF_LAT, startLon = REF_LON;
+                    let startPt = getCanvasPoint(startLat, startLon, R_CX, R_CY, ppd);
+                    
+                    if (lockedEntity && entityCache[lockedEntity]) {
+                        startLat = entityCache[lockedEntity].lat; startLon = entityCache[lockedEntity].lon; 
+                        startPt = getCanvasPoint(startLat, startLon, R_CX, R_CY, ppd);
+                    }
+                    
+                    let targetLon = REF_LON + ((mouseX - R_CX) / (COS_LAT * ppd));
+                    let targetLat = REF_LAT - ((mouseY - R_CY) / ppd);
+                    if (networkMode === 'ONLINE' && leafMap) {
+                        const ll = leafMap.containerPointToLatLng([mouseX, mouseY]);
+                        targetLat = ll.lat; targetLon = ll.lng;
+                    }
+                    
+                    let dLat = targetLat - startLat; let dLon = (targetLon - startLon) * COS_LAT;
+                    let distNm = Math.sqrt(dLat*dLat + dLon*dLon) * 60;
+                    let brg = (Math.atan2(dLon, dLat) * 180 / Math.PI);
+                    if (brg < 0) brg += 360;
+                    
+                    rCtx.beginPath(); rCtx.moveTo(startPt.x, startPt.y); rCtx.lineTo(mouseX, mouseY);
+                    rCtx.strokeStyle = '#f43f5e'; rCtx.lineWidth = 1.5; rCtx.setLineDash([4, 4]); rCtx.stroke(); rCtx.setLineDash([]);
+                    
+                    rCtx.fillStyle = 'rgba(15, 23, 42, 0.9)'; rCtx.fillRect(mouseX + 12, mouseY - 25, 115, 20);
+                    rCtx.strokeStyle = '#f43f5e'; rCtx.strokeRect(mouseX + 12, mouseY - 25, 115, 20);
+                    rCtx.fillStyle = '#f43f5e'; rCtx.font = "bold 11px monospace";
+                    rCtx.fillText(`${distNm.toFixed(1)} NM | ${Math.round(brg)}°`, mouseX + 16, mouseY - 11);
+                }
+
+            } catch (radarError) { console.warn("Radar Render Suppressed:", radarError); }
+        }
+
+        // Ingestion loop
+        const ws = new WebSocket('ws://localhost:8765');
+        ws.onopen = () => { statusText.innerText = 'ONLINE - STREAMING RAMPED'; statusText.className = 'online'; };
+        ws.onclose = () => { statusText.innerText = 'OFFLINE - CONSOLE DETACHED'; statusText.className = 'offline'; };
+
+        ws.onmessage = (event) => {
+            try {
+                const parsedData = JSON.parse(event.data);
+                if (parsedData.airspace) airspaceGeoJSON = parsedData.airspace;
+                
+                let aircraftList = Array.isArray(parsedData.airframes) ? parsedData.airframes : (Array.isArray(parsedData) ? parsedData : []);
+                lastAircraftList = aircraftList; 
+                const now = Date.now();
+
+                aircraftList.forEach(p => {
+                    if (p.lat && p.lon && p.lat !== '----' && p.lon !== '----') {
+                        if (!trailHistory[p.icao]) trailHistory[p.icao] = { path: [], lastUpdate: now };
+                        const latF = parseFloat(p.lat); const lonF = parseFloat(p.lon);
+                        const historyObj = trailHistory[p.icao];
+                        historyObj.lastUpdate = now;
+                        
+                        const history = historyObj.path;
+                        if (history.length === 0 || history[history.length - 1].lat !== latF || history[history.length - 1].lon !== lonF) {
+                            history.push({ lat: latF, lon: lonF, time: now, alt: p.alt });
+                        }
+                        if (history.length > 10000) history.shift();
+                    }
+                });
+
+                Object.keys(trailHistory).forEach(icao => {
+                    if (!aircraftList.some(p => p.icao === icao)) {
+                        if (now - trailHistory[icao].lastUpdate > 86400000) delete trailHistory[icao];
+                    }
+                });
+
+            } catch (err) { console.warn("Soft catch on Matrix Loop:", err); }
+        };
+
+        // Dedicated pulse
+        function pulse() {
+            renderTacticalScope(lastAircraftList);
+            requestAnimationFrame(pulse);
+        }
+        pulse();
+
+    </script>
+</body>
+</html>

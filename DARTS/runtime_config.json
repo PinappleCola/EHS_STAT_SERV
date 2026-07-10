@@ -1,0 +1,7 @@
+{
+    "port": "COM5",
+    "baud": 115200,
+    "ws_host": "localhost",
+    "ws_port": 8765,
+    "receiver_id": "ADSBEE-01"
+}
