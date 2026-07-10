@@ -1292,8 +1292,8 @@ def queue_db_write(item, allow_drop=False):
 
 def queue_telemetry_delta(ts, icao, field, value):
     if field.startswith("_") or field not in TELEMETRY_FIELDS:
-        return
-    queue_db_write(("TELEMETRY", ts, icao, field, serialize_telemetry_value(value)), allow_drop=True)
+        return True
+    return queue_db_write(("TELEMETRY", ts, icao, field, serialize_telemetry_value(value)), allow_drop=True)
 
 # --- DB Engine & Live Metrics ---
 DB_PATH = os.path.join(BASE_DIR, "TELEMETRY.db")
@@ -1386,7 +1386,8 @@ def archivist_loop():
                     if telemetry_batch: db_cursor.executemany("INSERT INTO telemetry (ts, icao, field, value) VALUES (?, ?, ?, ?)", telemetry_batch)
                     db_conn.commit()
                     telemetry_last_logged.update(telemetry_updates)
-            except Exception: pass
+            except Exception as e:
+                print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}Archivist DB write failed: {e}{ANSI.RESET}")
 
 
 def handle_entry_gate(icao):
