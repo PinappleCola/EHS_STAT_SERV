@@ -1790,13 +1790,21 @@ def compute_display_heading(data, now):
     """Canonical heading arbitration: pick the best available heading source.
     
     Priority (highest first):
-      1. track (true track from BDS 5,0 / DF17 velocity) — freshness < 8s
-      2. heading (magnetic heading from BDS 6,0) — freshness < 12s
-      3. selected_heading (autopilot target from BDS 6,2/TC29) — freshness < 30s
+      1. track (true track from BDS 5,0 / DF17 velocity) — freshness < TRACK_FRESHNESS_S
+      2. heading (magnetic heading from BDS 6,0) — freshness < HEADING_FRESHNESS_S
+      3. selected_heading (autopilot target from BDS 6,2/TC29) — freshness < SEL_HDG_FRESHNESS_S
       4. hold-last-good: retain previous display_heading
     
-    Hysteresis: reject jump > 45° in < 0.5s unless supported by track_rate.
+    Hysteresis: reject jump > 45° in < HYSTERESIS_WINDOW_S unless supported by track_rate.
     """
+    # --- Tuning constants ---
+    TRACK_FRESHNESS_S = 8.0
+    HEADING_FRESHNESS_S = 12.0
+    SEL_HDG_FRESHNESS_S = 30.0
+    HYSTERESIS_WINDOW_S = 2.0
+    MAX_NORMAL_TURN_RATE = 6.0  # degrees/second (standard rate turn ~3°/s, allow 2x)
+    HEADING_JITTER_MARGIN = 5.0  # degrees tolerance on top of rate-based limit
+
     prev_hdg = data.get("_display_heading")
     prev_time = data.get("_display_heading_time", 0)
     prev_source = data.get("_display_heading_source", "none")
@@ -1806,19 +1814,19 @@ def compute_display_heading(data, now):
     # Candidate 1: true track (most common, derived from velocity vector)
     track_val = data.get("track")
     track_time = data.get("_track_update_time", 0)
-    if track_val not in [None, "----"] and (now - track_time) < 8.0:
+    if track_val not in [None, "----"] and (now - track_time) < TRACK_FRESHNESS_S:
         candidates.append(("track", float(track_val), track_time))
     
     # Candidate 2: magnetic heading
     hdg_val = data.get("heading")
     hdg_time = data.get("_heading_update_time", 0)
-    if hdg_val not in [None, "----"] and (now - hdg_time) < 12.0:
+    if hdg_val not in [None, "----"] and (now - hdg_time) < HEADING_FRESHNESS_S:
         candidates.append(("heading", float(hdg_val), hdg_time))
     
     # Candidate 3: selected heading (autopilot setpoint, lowest priority)
     sel_val = data.get("selected_heading")
     sel_time = data.get("_selected_heading_update_time", 0)
-    if sel_val not in [None, "----"] and (now - sel_time) < 30.0:
+    if sel_val not in [None, "----"] and (now - sel_time) < SEL_HDG_FRESHNESS_S:
         candidates.append(("selected_heading", float(sel_val), sel_time))
     
     if not candidates:
@@ -1831,13 +1839,13 @@ def compute_display_heading(data, now):
     # Hysteresis check: reject large jumps unless track_rate supports it
     if prev_hdg is not None and prev_hdg != "----":
         dt = now - prev_time
-        if dt > 0 and dt < 2.0:
+        if dt > 0 and dt < HYSTERESIS_WINDOW_S:
             delta = abs((best_val - prev_hdg + 180) % 360 - 180)
-            max_rate = 6.0  # degrees per second (normal turn)
+            max_rate = MAX_NORMAL_TURN_RATE
             track_rate = data.get("track_rate")
             if track_rate not in [None, "----"]:
                 max_rate = max(max_rate, abs(float(track_rate)) * 1.5)
-            max_delta = max_rate * dt + 5.0  # Allow 5° jitter margin
+            max_delta = max_rate * dt + HEADING_JITTER_MARGIN
             if delta > max_delta and delta > 45.0:
                 # Reject this update, hold previous
                 return prev_hdg
