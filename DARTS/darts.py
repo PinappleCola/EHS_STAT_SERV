@@ -902,10 +902,16 @@ class SIGINT_Triangulator:
     accuracy — positions become a "hotspot" that tightens with each new hit.
     """
     MAX_HITS_PER_RADAR = 5000
-    SOLVE_TRIGGER_NEW = 12       # Hits needed for first lock
-    SOLVE_TRIGGER_REFINE = 50    # New hits before re-solving an existing radar
-    STALENESS_TIMEOUT = 600      # Seconds with no hits before health decays
-    OUTLIER_THRESHOLD = 45       # Bearing error degrees to reject a point
+    MAX_PERSISTED_HITS = 2000     # Subset persisted to DB to manage size
+    SOLVE_TRIGGER_NEW = 12        # Hits needed for first lock
+    SOLVE_TRIGGER_REFINE = 50     # New hits before re-solving an existing radar
+    STALENESS_TIMEOUT = 600       # Seconds with no hits before health decays
+    STALENESS_CHECK_INTERVAL = 120  # Seconds between background staleness checks
+    OUTLIER_THRESHOLD = 45        # Bearing error degrees to reject a point
+    # Convergence weight parameters
+    MAX_POSITION_WEIGHT = 0.9     # Max trust in accumulated position
+    BASE_WEIGHT = 0.5             # Starting trust for first solve
+    CONVERGENCE_RATE = 0.02       # Weight increase per successful solve
 
     def __init__(self):
         self.paint_buffer = []
@@ -981,7 +987,7 @@ class SIGINT_Triangulator:
                 return
             bearing_json = json.dumps(list(radar["bearing_sectors"]))
             # Only persist the last 2000 hits to keep DB size manageable
-            history_json = json.dumps(radar["hit_history"][-2000:])
+            history_json = json.dumps(radar["hit_history"][-self.MAX_PERSISTED_HITS:])
             with db_lock:
                 db_cursor.execute("""INSERT OR REPLACE INTO radar_registry
                     (sweep_key, lat, lon, health, total_hits, total_solves, bearing_coverage, hit_history, last_hit_time)
@@ -1147,7 +1153,7 @@ class SIGINT_Triangulator:
 
                     # Weighted average: more solves = trust accumulated position more
                     # But always allow some pull toward new solution
-                    weight_old = min(0.9, 0.5 + (solves * 0.02))
+                    weight_old = min(self.MAX_POSITION_WEIGHT, self.BASE_WEIGHT + (solves * self.CONVERGENCE_RATE))
                     weight_new = 1.0 - weight_old
                     new_lat = (old_lat * weight_old) + (fine_best[0] * weight_new)
                     new_lon = (old_lon * weight_old) + (fine_best[1] * weight_new)
@@ -1896,7 +1902,7 @@ async def main():
 def sigint_staleness_loop():
     """Periodic background check to decay radars with no recent hits."""
     while True:
-        time.sleep(120)
+        time.sleep(SIGINT_Triangulator.STALENESS_CHECK_INTERVAL)
         sigint.run_staleness_check()
 
 
