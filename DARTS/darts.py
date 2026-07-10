@@ -149,6 +149,22 @@ def decode_bds40_payload(payload_int):
     if (payload_int >> (55 - 26)) & 0x1:
         result["baro_pressure_setting"] = (((payload_int >> (55 - 38)) & 0xFFF) * 0.1) + 800.0
 
+    if (payload_int >> (55 - 47)) & 0x1:
+        result["mcp_fcu_mode_active"] = True
+        result["vnav_mode"] = bool((payload_int >> (55 - 48)) & 0x1)
+        result["altitude_hold_mode"] = bool((payload_int >> (55 - 49)) & 0x1)
+        result["approach_mode"] = bool((payload_int >> (55 - 50)) & 0x1)
+
+    if (payload_int >> (55 - 53)) & 0x1:
+        source_raw = (payload_int >> (55 - 55)) & 0x3
+        source_map = {
+            0: "UNKNOWN",
+            1: "AIRCRAFT ALT",
+            2: "FCU/MCP",
+            3: "FMS",
+        }
+        result["target_altitude_source"] = source_map.get(source_raw, "UNKNOWN")
+
     return result
 
 def is_bds50_payload(payload_int):
@@ -308,6 +324,7 @@ FIELD_REGISTRY = [
     {"key": "callsign",         "label": "CALLSIGN",       "type": "text",   "unit": None,   "category": "IDENTIFICATION", "sortable": True,  "defaultVisible": True,  "source": "DF17 TC:1-4"},
     {"key": "airline",          "label": "AIRLINE",        "type": "text",   "unit": None,   "category": "IDENTIFICATION", "sortable": True,  "defaultVisible": True,  "source": "DB Lookup"},
     {"key": "squawk",           "label": "SQUAWK",         "type": "text",   "unit": None,   "category": "IDENTIFICATION", "sortable": True,  "defaultVisible": True,  "source": "DF11 / DF21"},
+    {"key": "air_ground",       "label": "AIR/GROUND",     "type": "text",   "unit": None,   "category": "IDENTIFICATION", "sortable": True,  "defaultVisible": False, "source": "DF17 TC / Mode S"},
     # --- Altitude ---
     {"key": "alt",              "label": "ALTITUDE",       "type": "number", "unit": "ft",   "category": "ALTITUDE",       "sortable": True,  "defaultVisible": True,  "source": "DF17 / DF20"},
     {"key": "target_alt",       "label": "TARGET ALT",     "type": "text",   "unit": "ft",   "category": "ALTITUDE",       "sortable": False, "defaultVisible": True,  "source": "BDS 4,0"},
@@ -335,6 +352,10 @@ FIELD_REGISTRY = [
     # --- Safety ---
     {"key": "tcas_ra",          "label": "TCAS RA",        "type": "text",   "unit": None,   "category": "SAFETY",         "sortable": False, "defaultVisible": True,  "source": "BDS 3,0"},
     {"key": "hazard",           "label": "HAZARD",         "type": "text",   "unit": None,   "category": "SAFETY",         "sortable": False, "defaultVisible": False, "source": "BDS 4,4/4,5"},
+    {"key": "wind_shear_level", "label": "WS LEVEL",       "type": "number", "unit": None,   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,5"},
+    {"key": "microburst_level", "label": "MB LEVEL",       "type": "number", "unit": None,   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,5"},
+    {"key": "icing_level",      "label": "ICING LEVEL",    "type": "number", "unit": None,   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,5"},
+    {"key": "wake_vortex_level","label": "WV LEVEL",       "type": "number", "unit": None,   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,5"},
     # --- Surveillance ---
     {"key": "radar_sweep",      "label": "RADAR SWEEP",    "type": "text",   "unit": "s",    "category": "SURVEILLANCE",   "sortable": False, "defaultVisible": True,  "source": "Δt(Burst) Calc"},
     # --- Position ---
@@ -348,6 +369,13 @@ FIELD_REGISTRY = [
     {"key": "sat",              "label": "SAT TEMP",       "type": "text",   "unit": "°C",   "category": "METEO",          "sortable": False, "defaultVisible": False, "source": "BDS 4,4/4,5"},
     # --- Integrity / accuracy (BDS 6,2 / TC29) ---
     {"key": "selected_heading", "label": "SEL HDG",        "type": "number", "unit": "deg",  "category": "INTEGRITY",      "sortable": True,  "defaultVisible": False, "source": "BDS 6,2/TC29"},
+    {"key": "selected_alt_source","label":"SEL ALT SRC",   "type": "text",   "unit": None,   "category": "INTEGRITY",      "sortable": False, "defaultVisible": False, "source": "BDS 6,2/BDS 4,0"},
+    {"key": "autopilot_mode",   "label": "AUTOPILOT",      "type": "text",   "unit": None,   "category": "INTEGRITY",      "sortable": False, "defaultVisible": False, "source": "BDS 6,2"},
+    {"key": "vnav_mode",        "label": "VNAV MODE",      "type": "text",   "unit": None,   "category": "INTEGRITY",      "sortable": False, "defaultVisible": False, "source": "BDS 4,0/6,2"},
+    {"key": "alt_hold_mode",    "label": "ALT HOLD",       "type": "text",   "unit": None,   "category": "INTEGRITY",      "sortable": False, "defaultVisible": False, "source": "BDS 4,0/6,2"},
+    {"key": "approach_mode",    "label": "APP MODE",       "type": "text",   "unit": None,   "category": "INTEGRITY",      "sortable": False, "defaultVisible": False, "source": "BDS 4,0/6,2"},
+    {"key": "lnav_mode",        "label": "LNAV MODE",      "type": "text",   "unit": None,   "category": "INTEGRITY",      "sortable": False, "defaultVisible": False, "source": "BDS 6,2"},
+    {"key": "tcas_operational", "label": "TCAS OPER",      "type": "text",   "unit": None,   "category": "INTEGRITY",      "sortable": False, "defaultVisible": False, "source": "BDS 6,2"},
     {"key": "nac_p",            "label": "NACp",           "type": "number", "unit": None,   "category": "INTEGRITY",      "sortable": True,  "defaultVisible": False, "source": "BDS 6,2/TC29"},
     {"key": "sil",              "label": "SIL",            "type": "number", "unit": None,   "category": "INTEGRITY",      "sortable": True,  "defaultVisible": False, "source": "BDS 6,2/TC29"},
     {"key": "nic_baro",         "label": "NIC BARO",       "type": "text",   "unit": None,   "category": "INTEGRITY",      "sortable": False, "defaultVisible": False, "source": "BDS 6,2/TC29"},
@@ -355,6 +383,7 @@ FIELD_REGISTRY = [
     {"key": "radio_height",     "label": "RADIO ALT",      "type": "number", "unit": "ft",   "category": "ALTITUDE",       "sortable": True,  "defaultVisible": False, "source": "BDS 4,5"},
     # --- Extended meteorology (BDS 4,4) ---
     {"key": "humidity",         "label": "HUMIDITY",       "type": "number", "unit": "%",    "category": "METEO",          "sortable": False, "defaultVisible": False, "source": "BDS 4,4"},
+    {"key": "meteo_source",     "label": "METEO SRC",      "type": "text",   "unit": None,   "category": "METEO",          "sortable": False, "defaultVisible": False, "source": "BDS 4,4"},
     # --- Extended kinematics (BDS 6,0 inertial VR) ---
     {"key": "inertial_vr",      "label": "INERTIAL VR",    "type": "number", "unit": "ft/min", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
     # --- Heading source provenance ---
@@ -371,6 +400,10 @@ FIELD_REGISTRY = [
     {"key": "msg_count",        "label": "MSG COUNT",      "type": "number", "unit": None,   "category": "SURVEILLANCE",   "sortable": True,  "defaultVisible": False, "source": "Sys Counter"},
     {"key": "data_age_heading", "label": "HDG AGE",        "type": "number", "unit": "s",    "category": "SURVEILLANCE",   "sortable": True,  "defaultVisible": False, "source": "Sys Clock"},
     {"key": "data_age_position","label": "POS AGE",        "type": "number", "unit": "s",    "category": "SURVEILLANCE",   "sortable": True,  "defaultVisible": False, "source": "Sys Clock"},
+    {"key": "rssi_dbfs",        "label": "RSSI",           "type": "number", "unit": "dBFS", "category": "SURVEILLANCE",   "sortable": True,  "defaultVisible": False, "source": "ADSBee Beast"},
+    {"key": "threat_icao",      "label": "RA THREAT ICAO", "type": "text",   "unit": None,   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 3,0"},
+    {"key": "threat_range_nm",  "label": "RA THREAT RNG",  "type": "number", "unit": "NM",   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 3,0"},
+    {"key": "threat_bearing_deg","label":"RA THREAT BRG",  "type": "number", "unit": "deg",  "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 3,0"},
     # --- System timing ---
     {"key": "age",              "label": "AGE",            "type": "number", "unit": "s",    "category": "SYSTEM",         "sortable": True,  "defaultVisible": True,  "source": "Sys Clock"},
     {"key": "first_seen",       "label": "FIRST SEEN",     "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "Sys Clock"},
@@ -719,6 +752,20 @@ def format_temperature(temp_c):
 def turbulence_label(level):
     labels = {0: "TURB NIL", 1: "TURB LGT", 2: "TURB MOD", 3: "TURB SEV"}
     return labels.get(level)
+
+def hazard_level_label(level):
+    labels = {0: "NIL", 1: "LIGHT", 2: "MOD", 3: "SEV"}
+    return labels.get(level)
+
+def bds44_fom_label(value):
+    labels = {
+        0: "INVALID",
+        1: "INS",
+        2: "GNSS",
+        3: "DME/DME",
+        4: "VOR/DME",
+    }
+    return labels.get(value, "RESERVED")
 
 def build_hazard_summary(decoded_data):
     labels = {
@@ -1429,16 +1476,20 @@ def update_aircraft(icao, key, value):
                 "tas": "----", "ias": "----", "mach": "----", "vert_rate": "----",
                 "heading": "----", "track": "----", "track_rate": "----", "roll": "----",
                 "target_alt": "----", "baro": "----", "squawk": "----", "tcas_ra": "CLEAN",
+                "air_ground": "----",
                 "ident_time": 0, "wind": "----", "sat": "----", "discretes": "HAND", "hazard": "----",       
                 "gnss_qual": "----", "radar_sweep": "----", "raw_sweep_interval": 1.5,
                 "capability_summary": "----", "supported_bds": [], "last_bds_hit": "----",
                 "lat": "----", "lon": "----",
                 # Extended integrity / accuracy (BDS 6,2 / TC29)
                 "selected_heading": "----", "nac_p": "----", "sil": "----", "nic_baro": "----",
+                "selected_alt_source": "----",
+                "autopilot_mode": "----", "vnav_mode": "----", "alt_hold_mode": "----",
+                "approach_mode": "----", "lnav_mode": "----", "tcas_operational": "----",
                 # Extended altitude (BDS 4,5)
                 "radio_height": "----",
                 # Extended meteorology (BDS 4,4)
-                "humidity": "----",
+                "humidity": "----", "meteo_source": "----",
                 # Extended kinematics — inertial VR reported separately from baro VR (BDS 6,0)
                 "inertial_vr": "----",
                 # Deep fields (expert opt-in)
@@ -1446,7 +1497,10 @@ def update_aircraft(icao, key, value):
                 "alt_mcp": "----", "alt_fms": "----",
                 "wind_speed": "----", "wind_direction": "----",
                 "static_pressure": "----", "turbulence_level": "----",
+                "wind_shear_level": "----", "microburst_level": "----", "icing_level": "----", "wake_vortex_level": "----",
+                "threat_icao": "----", "threat_range_nm": "----", "threat_bearing_deg": "----",
                 "msg_count": 0, "data_age_heading": "----", "data_age_position": "----",
+                "rssi_dbfs": "----",
                 # Display heading arbitration internals
                 "_display_heading": None, "_display_heading_time": 0, "_display_heading_source": "none",
                 "_track_update_time": 0, "_heading_update_time": 0, "_selected_heading_update_time": 0,
@@ -1524,6 +1578,7 @@ def update_aircraft(icao, key, value):
 def process_frame(frame):
     if len(frame) < 8: return 
     frame_type = frame[0]
+    rssi_byte = frame[7] if len(frame) > 7 else 0
     payload = binascii.hexlify(frame[8:]).decode('ascii').upper()
     
     if frame_type == 0x33:
@@ -1533,6 +1588,11 @@ def process_frame(frame):
                 icao = decoded["icao"].upper()
                 handle_entry_gate(icao)
                 update_aircraft(icao, "last_seen", time.time())
+                if rssi_byte > 0:
+                    try:
+                        update_aircraft(icao, "rssi_dbfs", round(20.0 * math.log10(rssi_byte / 255.0), 1))
+                    except Exception:
+                        pass
 
                 with state_lock:
                     known_state = aircraft_state.get(icao, {}).copy()
@@ -1541,6 +1601,10 @@ def process_frame(frame):
                 if callsign is not None: update_aircraft(icao, "callsign", str(callsign).strip())
                 alt = decoded.get("altitude") or decoded.get("alt")
                 if alt is not None: update_aircraft(icao, "alt", alt)
+                if alt == "GROUND":
+                    update_aircraft(icao, "air_ground", "GROUND")
+                elif alt not in [None, "----"]:
+                    update_aircraft(icao, "air_ground", "AIR")
                 if decoded.get("squawk") is not None: update_aircraft(icao, "squawk", decoded["squawk"])
                 speed = decoded.get("groundspeed") or decoded.get("gs")
                 if speed is not None: update_aircraft(icao, "speed", speed)
@@ -1576,7 +1640,11 @@ def process_frame(frame):
                         tactical_cs = decode_baudot_string(mb_bin)
                         if tactical_cs: update_aircraft(icao, "callsign", tactical_cs)
                         
+                    elif 5 <= tc <= 8:
+                        update_aircraft(icao, "air_ground", "GROUND")
+
                     elif 9 <= tc <= 18:
+                        update_aircraft(icao, "air_ground", "AIR")
                         try:
                             is_odd = mb_bin[21] == "1"
                             pos = bare_metal_cpr_local(mb_bin, is_odd, RECEIVER_LAT, RECEIVER_LON)
@@ -1592,6 +1660,7 @@ def process_frame(frame):
                             if tc29_data.get("selected_altitude") is not None:
                                 source = tc29_data.get("selected_altitude_source", "N/A")
                                 update_aircraft(icao, "target_alt", f"{source}:{int(tc29_data['selected_altitude'])}ft")
+                                update_aircraft(icao, "selected_alt_source", source)
                             if tc29_data.get("baro_pressure_setting") is not None:
                                 update_aircraft(icao, "baro", f"{round(float(tc29_data['baro_pressure_setting']), 1)} hPa")
 
@@ -1612,6 +1681,18 @@ def process_frame(frame):
                                 update_aircraft(icao, "sil", int(tc29_data["sil"]))
                             if tc29_data.get("nic_baro") is not None:
                                 update_aircraft(icao, "nic_baro", int(tc29_data["nic_baro"]))
+                            if tc29_data.get("autopilot") is not None:
+                                update_aircraft(icao, "autopilot_mode", "ON" if tc29_data["autopilot"] else "OFF")
+                            if tc29_data.get("vnav_mode") is not None:
+                                update_aircraft(icao, "vnav_mode", "ON" if tc29_data["vnav_mode"] else "OFF")
+                            if tc29_data.get("altitude_hold_mode") is not None:
+                                update_aircraft(icao, "alt_hold_mode", "ON" if tc29_data["altitude_hold_mode"] else "OFF")
+                            if tc29_data.get("approach_mode") is not None:
+                                update_aircraft(icao, "approach_mode", "ON" if tc29_data["approach_mode"] else "OFF")
+                            if tc29_data.get("lnav_mode") is not None:
+                                update_aircraft(icao, "lnav_mode", "ON" if tc29_data["lnav_mode"] else "OFF")
+                            if tc29_data.get("tcas_operational") is not None:
+                                update_aircraft(icao, "tcas_operational", "ON" if tc29_data["tcas_operational"] else "OFF")
 
                             target_hash, target_log = build_target_state_log(icao, tc29_data)
                             if target_hash and target_log:
@@ -1660,6 +1741,16 @@ def process_frame(frame):
                         if target_str: update_aircraft(icao, "target_alt", " ".join(target_str))
                         if bds_data.get("baro_pressure_setting") is not None:
                             update_aircraft(icao, "baro", f"{round(float(bds_data['baro_pressure_setting']), 1)} hPa")
+                        if bds_data.get("mcp_fcu_mode_active"):
+                            update_aircraft(icao, "autopilot_mode", "MCP/FCU")
+                            if bds_data.get("vnav_mode") is not None:
+                                update_aircraft(icao, "vnav_mode", "ON" if bds_data["vnav_mode"] else "OFF")
+                            if bds_data.get("altitude_hold_mode") is not None:
+                                update_aircraft(icao, "alt_hold_mode", "ON" if bds_data["altitude_hold_mode"] else "OFF")
+                            if bds_data.get("approach_mode") is not None:
+                                update_aircraft(icao, "approach_mode", "ON" if bds_data["approach_mode"] else "OFF")
+                        if bds_data.get("target_altitude_source") is not None:
+                            update_aircraft(icao, "selected_alt_source", bds_data["target_altitude_source"])
                     except Exception: pass
 
                 elif bds_type == "BDS50":
@@ -1705,6 +1796,12 @@ def process_frame(frame):
                     try:
                         ra_summary = summarise_tcas_ra(bds_data)
                         update_aircraft(icao, "tcas_ra", ra_summary)
+                        if bds_data.get("threat_icao"):
+                            update_aircraft(icao, "threat_icao", bds_data.get("threat_icao"))
+                        if bds_data.get("threat_range_nm") is not None:
+                            update_aircraft(icao, "threat_range_nm", round(float(bds_data["threat_range_nm"]), 1))
+                        if bds_data.get("threat_bearing_deg") is not None:
+                            update_aircraft(icao, "threat_bearing_deg", int(bds_data["threat_bearing_deg"]))
 
                         ra_hash, ra_log = build_tcas_ra_log(icao, bds_data)
                         if ra_hash and ra_log:
@@ -1714,6 +1811,8 @@ def process_frame(frame):
 
                 elif bds_type == "BDS44":
                     try:
+                        if bds_data.get("figure_of_merit") is not None:
+                            update_aircraft(icao, "meteo_source", bds44_fom_label(int(bds_data["figure_of_merit"])))
                         if bds_data.get("wind_speed") is not None and bds_data.get("wind_direction") is not None:
                             wind_str = f"{int(bds_data['wind_speed'])}kt@{int(round(float(bds_data['wind_direction']))) % 360}°"
                             update_aircraft(icao, "wind", wind_str)
@@ -1747,6 +1846,14 @@ def process_frame(frame):
                         hazard_summary = build_hazard_summary(bds_data)
                         if hazard_summary != "----":
                             update_aircraft(icao, "hazard", hazard_summary)
+                        if bds_data.get("wind_shear") is not None:
+                            update_aircraft(icao, "wind_shear_level", int(bds_data["wind_shear"]))
+                        if bds_data.get("microburst") is not None:
+                            update_aircraft(icao, "microburst_level", int(bds_data["microburst"]))
+                        if bds_data.get("icing") is not None:
+                            update_aircraft(icao, "icing_level", int(bds_data["icing"]))
+                        if bds_data.get("wake_vortex") is not None:
+                            update_aircraft(icao, "wake_vortex_level", int(bds_data["wake_vortex"]))
                     except Exception:
                         pass
 

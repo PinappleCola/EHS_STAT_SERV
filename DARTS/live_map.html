@@ -17,8 +17,8 @@
 
         .hud-top {
             position: absolute; top: 15px; left: 20px; right: 20px; z-index: 50;
-            display: flex; justify-content: space-between; align-items: flex-start;
-            pointer-events: none; 
+            display: flex; justify-content: flex-start; align-items: center;
+            pointer-events: none;
         }
         
         .hud-panel {
@@ -32,7 +32,7 @@
         .online { color: #4ade80; font-weight: bold; }
         .offline { color: #f87171; font-weight: bold; }
         
-        .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; row-gap: 8px; }
+        .controls { display: flex; gap: 10px; align-items: center; flex-wrap: nowrap; width: 100%; overflow-x: auto; }
         .scale-text { color: #c084fc; font-weight: bold; font-size: 0.9em; letter-spacing: 1px; }
 
         .btn-action, .map-select {
@@ -49,11 +49,13 @@
         .btn-toggle { background-color: #64748b; border-color: #334155; }
         .btn-toggle.active { background-color: #10b981; border-color: #047857; color: #000; }
 
-        .dual-slider { position: relative; width: 320px; height: 24px; display: flex; align-items: center; flex-shrink: 0; margin: 0 14px; }
-        .slider-track { position: absolute; width: 100%; height: 5px; background: #1e293b; border-radius: 999px; z-index: 0; }
+        .dual-slider { position: relative; width: 520px; height: 28px; display: flex; align-items: center; flex-shrink: 0; margin: 0 8px; }
+        .slider-track { position: absolute; width: 100%; height: 6px; background: #1e293b; border-radius: 999px; z-index: 0; }
         .dual-slider input[type=range] { position: absolute; width: 100%; top: 50%; transform: translateY(-50%); pointer-events: none; background: transparent; appearance: none; -webkit-appearance: none; z-index: 2; margin: 0; }
-        .dual-slider input[type=range]::-webkit-slider-thumb { pointer-events: auto; -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #38bdf8; cursor: pointer; box-shadow: 0 0 5px rgba(56, 189, 248, 0.8); }
-        .trail-readout { min-width: 280px; width: 280px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; margin-left: 14px; }
+        .dual-slider input[type=range]::-webkit-slider-thumb { pointer-events: auto; -webkit-appearance: none; height: 20px; width: 20px; border-radius: 4px; background: #38bdf8; border: 1px solid #0ea5e9; cursor: pointer; box-shadow: 0 0 7px rgba(56, 189, 248, 0.9); }
+        .dual-slider input[type=range]::-moz-range-thumb { pointer-events: auto; height: 20px; width: 20px; border-radius: 4px; background: #38bdf8; border: 1px solid #0ea5e9; cursor: pointer; box-shadow: 0 0 7px rgba(56, 189, 248, 0.9); }
+        .trail-readout { min-width: 290px; width: 290px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; margin-left: 8px; }
+        .timecode-input { width: 84px; background:#030712; color:#e2e8f0; border:1px solid #334155; border-radius:3px; padding:3px 6px; font-size:0.8em; font-family:monospace; }
 
         #db-modal {
             display: none; position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
@@ -89,21 +91,20 @@
 <body>
 
     <div class="hud-top">
-        <div class="hud-panel">
-            <div class="title">AEROMATRIX TACTICAL SCOPE</div>
-            <div class="status">MATRIX LINK: <span id="status-text" class="offline">STANDBY</span></div>
-        </div>
-        
         <div class="hud-panel controls">
+            <span class="title" style="margin:0;white-space:nowrap;">AEROMATRIX TACTICAL SCOPE</span>
+            <span class="status" style="white-space:nowrap;">LINK: <span id="status-text" class="offline">STANDBY</span></span>
             <span id="radar-scale" class="scale-text">AUTO RNG</span>
             <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
             
-            <span style="font-size: 0.8em; color: #64748b; margin-right: 6px;">TRAIL:</span>
+            <span style="font-size: 0.8em; color: #64748b; margin-right: 4px;">TRAIL WINDOW:</span>
+            <input id="trail-start-code" class="timecode-input" type="text" value="00:00:00" title="Range start HH:MM:SS">
             <div class="dual-slider">
                 <div class="slider-track"></div>
-                <input type="range" id="trail-min" min="0" max="1440" step="1" value="0">
-                <input type="range" id="trail-max" min="0" max="1440" step="1" value="1440">
+                <input type="range" id="trail-min" min="0" max="1440" step="0.1" value="0">
+                <input type="range" id="trail-max" min="0" max="1440" step="0.1" value="1440">
             </div>
+            <input id="trail-end-code" class="timecode-input" type="text" value="23:59:59" title="Range end HH:MM:SS">
             <span id="trail-val" class="scale-text trail-readout" style="color: #38bdf8; text-align:center;">Δ 0m | --:--:-- - --:--:--</span>
             
             <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
@@ -114,12 +115,13 @@
                 <option value="osm">OSM TOPO</option>
             </select>
             
-            <button id="btn-network" class="btn-action btn-toggle">[DATALINK: OFF-GRID]</button>
-            <button id="btn-db" class="btn-action btn-action-alt">[DATABASE]</button>
-            <button id="btn-add-wpt" class="btn-action">[+ WPT]</button>
-            <button id="btn-lock" class="btn-action">[WAYPOINT LOCK]</button>
-            <button onclick="openTagConfig()" class="btn-action" title="Ctrl+Shift+T">[TAGS]</button>
-            <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Ctrl+Shift+P">[PERF]</button>
+            <button id="btn-network" class="btn-action btn-toggle">Map Link: Off-grid</button>
+            <button id="btn-db" class="btn-action btn-action-alt">Spatial DB</button>
+            <button id="btn-add-wpt" class="btn-action">Add Waypoint</button>
+            <button id="btn-lock" class="btn-action">Center/Unlock</button>
+            <button id="btn-clean-snap" class="btn-action">Clean Snapshot</button>
+            <button onclick="openTagConfig()" class="btn-action" title="Ctrl+Shift+T">Tag Fields</button>
+            <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Ctrl+Shift+P">Perf Overlay</button>
         </div>
     </div>
 
@@ -186,6 +188,7 @@
         let lastAircraftList = []; 
         let renderHitboxes = []; 
         const trailHistory = {};
+        const entityCache = {};
         
         let airspaceGeoJSON = { type: "FeatureCollection", features: [] };
 
@@ -196,6 +199,7 @@
             {key:'callsign',        label:'CALLSIGN',        category:'IDENTIFICATION'},
             {key:'airline',          label:'AIRLINE',         category:'IDENTIFICATION'},
             {key:'squawk',           label:'SQUAWK',          category:'IDENTIFICATION'},
+            {key:'air_ground',       label:'AIR/GROUND',      category:'IDENTIFICATION'},
             {key:'alt',              label:'ALTITUDE',        category:'ALTITUDE'},
             {key:'target_alt',       label:'TARGET ALT',      category:'ALTITUDE'},
             {key:'alt_mcp',          label:'ALT MCP',         category:'ALTITUDE'},
@@ -218,12 +222,27 @@
             {key:'baro',             label:'BARO SET',        category:'SYSTEM'},
             {key:'tcas_ra',          label:'TCAS RA',         category:'SAFETY'},
             {key:'hazard',           label:'HAZARD',          category:'SAFETY'},
+            {key:'wind_shear_level', label:'WS LEVEL',        category:'SAFETY'},
+            {key:'microburst_level', label:'MB LEVEL',        category:'SAFETY'},
+            {key:'icing_level',      label:'ICING LEVEL',     category:'SAFETY'},
+            {key:'wake_vortex_level',label:'WV LEVEL',        category:'SAFETY'},
+            {key:'threat_icao',      label:'RA THREAT ICAO',  category:'SAFETY'},
+            {key:'threat_range_nm',  label:'RA THREAT RNG',   category:'SAFETY'},
+            {key:'threat_bearing_deg',label:'RA THREAT BRG',  category:'SAFETY'},
             {key:'wind',             label:'WIND',            category:'METEO'},
             {key:'sat',              label:'SAT TEMP',        category:'METEO'},
             {key:'humidity',         label:'HUMIDITY',        category:'METEO'},
+            {key:'meteo_source',     label:'METEO SRC',       category:'METEO'},
             {key:'lat',              label:'LATITUDE',        category:'POSITION'},
             {key:'lon',              label:'LONGITUDE',       category:'POSITION'},
             {key:'gnss_qual',        label:'GNSS QUAL',       category:'POSITION'},
+            {key:'selected_alt_source',label:'SEL ALT SRC',   category:'INTEGRITY'},
+            {key:'autopilot_mode',   label:'AUTOPILOT',       category:'INTEGRITY'},
+            {key:'vnav_mode',        label:'VNAV MODE',       category:'INTEGRITY'},
+            {key:'alt_hold_mode',    label:'ALT HOLD',        category:'INTEGRITY'},
+            {key:'approach_mode',    label:'APP MODE',        category:'INTEGRITY'},
+            {key:'lnav_mode',        label:'LNAV MODE',       category:'INTEGRITY'},
+            {key:'tcas_operational', label:'TCAS OPER',       category:'INTEGRITY'},
             {key:'nac_p',            label:'NACp',            category:'INTEGRITY'},
             {key:'sil',              label:'SIL',             category:'INTEGRITY'},
             {key:'age',              label:'AGE',             category:'SYSTEM'},
@@ -231,6 +250,7 @@
             {key:'radar_sweep',      label:'RADAR SWEEP',     category:'SURVEILLANCE'},
             {key:'data_age_heading', label:'HDG AGE',         category:'SURVEILLANCE'},
             {key:'data_age_position',label:'POS AGE',         category:'SURVEILLANCE'},
+            {key:'rssi_dbfs',        label:'RSSI',            category:'SURVEILLANCE'},
         ];
         const MAP_TAG_FIELD_KEYS = MAP_TAG_FIELD_OPTIONS.map(f => f.key);
         const MAP_TAG_DEFAULTS = ['icao','callsign','squawk','alt','hdg_spd'];
@@ -285,7 +305,11 @@
         const trailMin = document.getElementById('trail-min');
         const trailMax = document.getElementById('trail-max');
         const trailVal = document.getElementById('trail-val');
+        const trailStartCode = document.getElementById('trail-start-code');
+        const trailEndCode = document.getElementById('trail-end-code');
         const TRAIL_WINDOW_MAX_MINUTES = 1440;
+        const MIN_TRAIL_SPAN_MINUTES = 0.1;
+        let suppressTimecodeSync = false;
 
         function formatDuration(minutesValue) {
             const totalSeconds = Math.max(0, Math.round(minutesValue * 60));
@@ -302,19 +326,70 @@
             return parts.join(' ');
         }
 
-        function updateSliderLabels() {
-            let minSlider = parseInt(trailMin.value);
-            let maxSlider = parseInt(trailMax.value);
-            if (minSlider > maxSlider) { trailMin.value = maxSlider; minSlider = maxSlider; }
+        function formatHmsFromMinutes(v) {
+            const seconds = Math.max(0, Math.round(Number(v) * 60));
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
+
+        function parseHmsToMinutes(input) {
+            if (!input) return null;
+            const m = String(input).trim().match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+            if (!m) return null;
+            const h = Number(m[1]), mm = Number(m[2]), s = Number(m[3]);
+            if (h > 23 || mm > 59 || s > 59) return null;
+            return (h * 3600 + mm * 60 + s) / 60;
+        }
+
+        function clampTrailRange() {
+            let minSlider = parseFloat(trailMin.value);
+            let maxSlider = parseFloat(trailMax.value);
+            if (minSlider > maxSlider - MIN_TRAIL_SPAN_MINUTES) {
+                if (document.activeElement === trailMin) minSlider = maxSlider - MIN_TRAIL_SPAN_MINUTES;
+                else maxSlider = minSlider + MIN_TRAIL_SPAN_MINUTES;
+            }
+            minSlider = Math.max(0, Math.min(TRAIL_WINDOW_MAX_MINUTES, minSlider));
+            maxSlider = Math.max(0, Math.min(TRAIL_WINDOW_MAX_MINUTES, maxSlider));
+            trailMin.value = minSlider.toFixed(1);
+            trailMax.value = maxSlider.toFixed(1);
+            return { minSlider, maxSlider };
+        }
+
+        function updateSliderLabels(syncInputs = true) {
+            const { minSlider, maxSlider } = clampTrailRange();
             const now = Date.now();
             const maxAgeMs = (TRAIL_WINDOW_MAX_MINUTES - minSlider) * 60000;
             const minAgeMs = (TRAIL_WINDOW_MAX_MINUTES - maxSlider) * 60000;
             const fmtOpts = { hour: '2-digit', minute:'2-digit', second: '2-digit', hour12: false };
             const spanMinutes = (maxSlider - minSlider);
             trailVal.innerText = `Δ ${formatDuration(spanMinutes)} | ${new Date(now - maxAgeMs).toLocaleTimeString([], fmtOpts)} - ${new Date(now - minAgeMs).toLocaleTimeString([], fmtOpts)}`;
+            if (syncInputs && !suppressTimecodeSync) {
+                trailStartCode.value = formatHmsFromMinutes(minSlider);
+                trailEndCode.value = formatHmsFromMinutes(maxSlider);
+            }
         }
-        trailMin.addEventListener('input', updateSliderLabels);
-        trailMax.addEventListener('input', updateSliderLabels);
+        trailMin.addEventListener('input', () => updateSliderLabels(true));
+        trailMax.addEventListener('input', () => updateSliderLabels(true));
+        function applyTimecodeInput(inputEl, isStart) {
+            const parsed = parseHmsToMinutes(inputEl.value);
+            if (parsed === null) {
+                inputEl.style.borderColor = '#ef4444';
+                return;
+            }
+            inputEl.style.borderColor = '#334155';
+            suppressTimecodeSync = true;
+            if (isStart) trailMin.value = parsed.toFixed(1);
+            else trailMax.value = parsed.toFixed(1);
+            updateSliderLabels(false);
+            suppressTimecodeSync = false;
+            updateSliderLabels(true);
+        }
+        trailStartCode.addEventListener('change', () => applyTimecodeInput(trailStartCode, true));
+        trailEndCode.addEventListener('change', () => applyTimecodeInput(trailEndCode, false));
+        trailStartCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyTimecodeInput(trailStartCode, true); });
+        trailEndCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyTimecodeInput(trailEndCode, false); });
         setInterval(updateSliderLabels, 60000); updateSliderLabels();
 
         // Shift Ruler Logic
@@ -425,7 +500,7 @@
         document.getElementById('btn-network').addEventListener('click', () => {
             if (networkMode === 'OFF-GRID') {
                 networkMode = 'ONLINE';
-                document.getElementById('btn-network').innerText = '[DATALINK: LIVE MAP]';
+                document.getElementById('btn-network').innerText = 'Map Link: Live map';
                 document.getElementById('btn-network').className = 'btn-action btn-toggle active';
                 document.getElementById('map-style-dropdown').style.display = 'block';
                 mapContainer.style.display = 'block';
@@ -443,7 +518,7 @@
                 setTimeout(() => { leafMap.invalidateSize(); leafMap.setView([centerLat, centerLon], leafZoom, {animate: false}); }, 10);
             } else {
                 networkMode = 'OFF-GRID';
-                document.getElementById('btn-network').innerText = '[DATALINK: OFF-GRID]';
+                document.getElementById('btn-network').innerText = 'Map Link: Off-grid';
                 document.getElementById('btn-network').className = 'btn-action btn-toggle';
                 document.getElementById('map-style-dropdown').style.display = 'none';
                 mapContainer.style.display = 'none';
@@ -554,6 +629,77 @@
             if (networkMode === 'ONLINE' && leafMap) { leafMap.setView([REF_LAT, REF_LON], 10); }
         });
 
+        function getProjectionParamsForSnapshot(planes, width, height) {
+            const R_CX = (width / 2) + panX;
+            const R_CY = (height / 2) + panY;
+            const R_MIN = Math.min(width / 2, height / 2);
+            let activeZoomDeg = manualZoomDeg;
+            if (isAutoView) {
+                let maxDelta = 0.05;
+                planes.forEach(p => {
+                    if (p.lat && p.lon && p.lat !== '----' && p.lon !== '----') {
+                        const dLat = Math.abs(parseFloat(p.lat) - REF_LAT);
+                        const dLon = Math.abs(parseFloat(p.lon) - REF_LON) * COS_LAT;
+                        if (dLat > maxDelta) maxDelta = dLat;
+                        if (dLon > maxDelta) maxDelta = dLon;
+                    }
+                });
+                activeZoomDeg = maxDelta * 1.2;
+            }
+            return { R_CX, R_CY, ppd: R_MIN / activeZoomDeg };
+        }
+
+        function exportCleanSnapshot() {
+            const snapCanvas = document.createElement('canvas');
+            snapCanvas.width = rCanvas.width;
+            snapCanvas.height = rCanvas.height;
+            const sctx = snapCanvas.getContext('2d');
+            const { R_CX, R_CY, ppd } = getProjectionParamsForSnapshot(lastAircraftList, snapCanvas.width, snapCanvas.height);
+            const renderTime = Date.now();
+            const minSlider = parseFloat(trailMin.value);
+            const maxSlider = parseFloat(trailMax.value);
+            const minAgeMs = (TRAIL_WINDOW_MAX_MINUTES - maxSlider) * 60000;
+            const maxAgeMs = (TRAIL_WINDOW_MAX_MINUTES - minSlider) * 60000;
+            const timeSpan = maxAgeMs - minAgeMs || 1;
+            const getPoint = (lat, lon) => ({ x: R_CX + ((lon - REF_LON) * COS_LAT * ppd), y: R_CY - ((lat - REF_LAT) * ppd) });
+
+            Object.values(trailHistory).forEach(historyObj => {
+                const validPoints = historyObj.path.filter(pt => { const age = renderTime - pt.time; return age >= minAgeMs && age <= maxAgeMs; });
+                if (validPoints.length < 2) return;
+                for (let i = 1; i < validPoints.length; i++) {
+                    const p1 = getPoint(validPoints[i - 1].lat, validPoints[i - 1].lon);
+                    const p2 = getPoint(validPoints[i].lat, validPoints[i].lon);
+                    const age = renderTime - validPoints[i].time;
+                    const alpha = Math.max(0.04, 1.0 - ((age - minAgeMs) / timeSpan));
+                    let a = validPoints[i].alt;
+                    let rC = 0, gC = 255, bC = 0;
+                    if (a === 'GROUND') { rC = 249; gC = 115; bC = 22; }
+                    else {
+                        a = parseInt(a);
+                        if (!isNaN(a)) {
+                            if (a < 10000) { rC = 56; gC = 189; bC = 248; }
+                            else if (a < 20000) { rC = 52; gC = 211; bC = 153; }
+                            else if (a < 30000) { rC = 168; gC = 85; bC = 247; }
+                            else if (a < 40000) { rC = 251; gC = 191; bC = 36; }
+                            else { rC = 244; gC = 114; bC = 182; }
+                        }
+                    }
+                    sctx.beginPath();
+                    sctx.strokeStyle = `rgba(${rC}, ${gC}, ${bC}, ${alpha})`;
+                    sctx.lineWidth = 1.8;
+                    sctx.moveTo(p1.x, p1.y);
+                    sctx.lineTo(p2.x, p2.y);
+                    sctx.stroke();
+                }
+            });
+
+            const a = document.createElement('a');
+            a.href = snapCanvas.toDataURL('image/png');
+            a.download = `clean_snapshot_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+            a.click();
+        }
+        document.getElementById('btn-clean-snap').addEventListener('click', exportCleanSnapshot);
+
         function getCanvasPoint(lat, lon, R_CX, R_CY, ppd) {
             if (networkMode === 'ONLINE' && leafMap) {
                 const pt = leafMap.latLngToContainerPoint([lat, lon]);
@@ -628,11 +774,26 @@
                 }
 
                 rCtx.lineWidth = 1;
-                let entityCache = {};
+                const renderNow = Date.now();
                 
                 planes.forEach(p => {
                     if (p.lat && p.lon && p.lat !== '----' && p.lon !== '----') {
-                        entityCache[p.icao] = { lat: parseFloat(p.lat), lon: parseFloat(p.lon), alt: p.alt, _latency: p._latency || null };
+                        entityCache[p.icao] = {
+                            ...(entityCache[p.icao] || {}),
+                            lat: parseFloat(p.lat),
+                            lon: parseFloat(p.lon),
+                            alt: p.alt,
+                            _latency: p._latency || null,
+                            _lastPosSeenMs: renderNow,
+                            _isWaypoint: false
+                        };
+                    } else if (entityCache[p.icao]) {
+                        entityCache[p.icao] = {
+                            ...entityCache[p.icao],
+                            alt: p.alt,
+                            _latency: p._latency || entityCache[p.icao]._latency || null,
+                            _isWaypoint: false
+                        };
                     }
                 });
                 
@@ -667,7 +828,7 @@
                             const iconType = (props.icon || props.type || 'FIX').toUpperCase();
                             const wpId = 'WPT_' + (props.name || idx);
                             
-                            entityCache[wpId] = { lat: geom.coordinates[1], lon: geom.coordinates[0], alt: 'GROUND', _latency: null };
+                            entityCache[wpId] = { lat: geom.coordinates[1], lon: geom.coordinates[0], alt: 'GROUND', _latency: null, _isWaypoint: true, _lastPosSeenMs: renderNow };
                             renderHitboxes.push({ id: wpId, x: pt.x, y: pt.y });
                             
                             const isSelected = (wpId === hoveredEntity || wpId === lockedEntity || wpId === secondaryEntity);
@@ -727,8 +888,18 @@
                 rCtx.beginPath(); rCtx.arc(centerProj.x, centerProj.y, 2.5, 0, Math.PI*2); rCtx.fill(); rCtx.shadowBlur = 0; 
 
                 const activeIcaosList = planes.map(p => p.icao);
+                const getRenderablePos = (plane) => {
+                    if (plane.lat && plane.lon && plane.lat !== '----' && plane.lon !== '----') {
+                        return { lat: parseFloat(plane.lat), lon: parseFloat(plane.lon), stalePos: false };
+                    }
+                    const cached = entityCache[plane.icao];
+                    if (!cached || cached._isWaypoint) return null;
+                    const ageMs = renderNow - (cached._lastPosSeenMs || 0);
+                    if (ageMs > 15000) return null;
+                    return { lat: cached.lat, lon: cached.lon, stalePos: true };
+                };
                 
-                const minSlider = parseInt(trailMin.value); const maxSlider = parseInt(trailMax.value);
+                const minSlider = parseFloat(trailMin.value); const maxSlider = parseFloat(trailMax.value);
                 const minAgeMs = (TRAIL_WINDOW_MAX_MINUTES - maxSlider) * 60000; const maxAgeMs = (TRAIL_WINDOW_MAX_MINUTES - minSlider) * 60000;
                 const timeSpan = maxAgeMs - minAgeMs || 1; 
                 const renderTime = Date.now();
@@ -780,8 +951,9 @@
                 });
 
                 planes.forEach(p => {
-                    if (p.lat && p.lon && p.lat !== '----' && p.lon !== '----') {
-                        const pt = getCanvasPoint(p.lat, p.lon, R_CX, R_CY, ppd);
+                    const renderPos = getRenderablePos(p);
+                    if (renderPos) {
+                        const pt = getCanvasPoint(renderPos.lat, renderPos.lon, R_CX, R_CY, ppd);
 
                         if (pt.x >= -100 && pt.x <= rCanvas.width+100 && pt.y >= -100 && pt.y <= rCanvas.height+100) {
                             renderHitboxes.push({ id: p.icao, x: pt.x, y: pt.y });
@@ -805,8 +977,8 @@
                                 const distDegLon = distNm / (60 * COS_LAT);
                                 const hdgRad = heading * Math.PI / 180;
                                 
-                                const futureLat = parseFloat(p.lat) + (distDegLat * Math.cos(hdgRad));
-                                const futureLon = parseFloat(p.lon) + (distDegLon * Math.sin(hdgRad));
+                                const futureLat = renderPos.lat + (distDegLat * Math.cos(hdgRad));
+                                const futureLon = renderPos.lon + (distDegLon * Math.sin(hdgRad));
                                 const fPt = getCanvasPoint(futureLat, futureLon, R_CX, R_CY, ppd);
 
                                 rCtx.beginPath(); rCtx.moveTo(pt.x, pt.y); rCtx.lineTo(fPt.x, fPt.y);
@@ -816,6 +988,7 @@
                             rCtx.fillStyle = baseColor; 
                             if (p.is_coasting) rCtx.fillStyle = baseColor + '50';
                             else if (!isDimmed) { rCtx.shadowBlur = 8; rCtx.shadowColor = baseColor; }
+                            if (renderPos.stalePos) rCtx.fillStyle = baseColor + '90';
                             
                             rCtx.save();
                             rCtx.translate(pt.x, pt.y); rCtx.rotate((heading * Math.PI) / 180);
@@ -846,6 +1019,7 @@
                                 'callsign': () => (p.callsign && p.callsign !== '----') ? p.callsign : '----',
                                 'airline': () => (p.airline && p.airline !== '----') ? p.airline : '----',
                                 'squawk': () => (p.squawk && p.squawk !== '----') ? p.squawk : '----',
+                                'air_ground': () => (p.air_ground && p.air_ground !== '----') ? p.air_ground : '----',
                                 'alt': () => lblAlt,
                                 'target_alt': () => (p.target_alt && p.target_alt !== '----') ? p.target_alt : '----',
                                 'alt_mcp': () => (p.alt_mcp && p.alt_mcp !== '----') ? p.alt_mcp : '----',
@@ -868,12 +1042,27 @@
                                 'baro': () => (p.baro && p.baro !== '----') ? p.baro + ' hPa' : '----',
                                 'tcas_ra': () => (p.tcas_ra && p.tcas_ra !== '----') ? p.tcas_ra : '----',
                                 'hazard': () => (p.hazard && p.hazard !== '----') ? p.hazard : '----',
+                                'wind_shear_level': () => (p.wind_shear_level !== undefined && p.wind_shear_level !== null && p.wind_shear_level !== '----') ? `WS:${p.wind_shear_level}` : '----',
+                                'microburst_level': () => (p.microburst_level !== undefined && p.microburst_level !== null && p.microburst_level !== '----') ? `MB:${p.microburst_level}` : '----',
+                                'icing_level': () => (p.icing_level !== undefined && p.icing_level !== null && p.icing_level !== '----') ? `ICE:${p.icing_level}` : '----',
+                                'wake_vortex_level': () => (p.wake_vortex_level !== undefined && p.wake_vortex_level !== null && p.wake_vortex_level !== '----') ? `WV:${p.wake_vortex_level}` : '----',
+                                'threat_icao': () => (p.threat_icao && p.threat_icao !== '----') ? p.threat_icao : '----',
+                                'threat_range_nm': () => (p.threat_range_nm !== undefined && p.threat_range_nm !== null && p.threat_range_nm !== '----') ? `${p.threat_range_nm} NM` : '----',
+                                'threat_bearing_deg': () => (p.threat_bearing_deg !== undefined && p.threat_bearing_deg !== null && p.threat_bearing_deg !== '----') ? `${p.threat_bearing_deg}°` : '----',
                                 'wind': () => (p.wind && p.wind !== '----') ? p.wind : '----',
                                 'sat': () => (p.sat && p.sat !== '----') ? p.sat + '°C' : '----',
                                 'humidity': () => (p.humidity && p.humidity !== '----') ? p.humidity + '%' : '----',
+                                'meteo_source': () => (p.meteo_source && p.meteo_source !== '----') ? p.meteo_source : '----',
                                 'lat': () => (p.lat && p.lat !== '----') ? parseFloat(p.lat).toFixed(4) : '----',
                                 'lon': () => (p.lon && p.lon !== '----') ? parseFloat(p.lon).toFixed(4) : '----',
                                 'gnss_qual': () => (p.gnss_qual && p.gnss_qual !== '----') ? p.gnss_qual : '----',
+                                'selected_alt_source': () => (p.selected_alt_source && p.selected_alt_source !== '----') ? p.selected_alt_source : '----',
+                                'autopilot_mode': () => (p.autopilot_mode && p.autopilot_mode !== '----') ? p.autopilot_mode : '----',
+                                'vnav_mode': () => (p.vnav_mode && p.vnav_mode !== '----') ? p.vnav_mode : '----',
+                                'alt_hold_mode': () => (p.alt_hold_mode && p.alt_hold_mode !== '----') ? p.alt_hold_mode : '----',
+                                'approach_mode': () => (p.approach_mode && p.approach_mode !== '----') ? p.approach_mode : '----',
+                                'lnav_mode': () => (p.lnav_mode && p.lnav_mode !== '----') ? p.lnav_mode : '----',
+                                'tcas_operational': () => (p.tcas_operational && p.tcas_operational !== '----') ? p.tcas_operational : '----',
                                 'nac_p': () => (p.nac_p && p.nac_p !== '----') ? 'NACp:' + p.nac_p : '----',
                                 'sil': () => (p.sil && p.sil !== '----') ? 'SIL:' + p.sil : '----',
                                 'age': () => (p.age !== undefined && p.age !== '----') ? p.age + 's' : '----',
@@ -881,9 +1070,11 @@
                                 'radar_sweep': () => (p.radar_sweep && p.radar_sweep !== '----') ? p.radar_sweep + 's' : '----',
                                 'data_age_heading': () => (p.data_age_heading && p.data_age_heading !== '----') ? p.data_age_heading + 's' : '----',
                                 'data_age_position': () => (p.data_age_position && p.data_age_position !== '----') ? p.data_age_position + 's' : '----',
+                                'rssi_dbfs': () => (p.rssi_dbfs !== undefined && p.rssi_dbfs !== '----') ? `${p.rssi_dbfs} dBFS` : '----',
                             };
                             
-                            const lines = mapTagFields.map(f => (tagFieldRenderers[f] || (() => '----'))());
+                            const lineEntries = mapTagFields.map(f => ({ key: f, text: (tagFieldRenderers[f] || (() => '----'))() }));
+                            const lines = lineEntries.map(e => e.text);
                             
                             // Dynamic box sizing: no box if zero fields
                             if (lines.length === 0) return;
@@ -925,10 +1116,10 @@
                             rCtx.font = isSelected ? "bold 11px 'B612 Mono', 'Consolas', monospace" : "11px 'B612 Mono', 'Consolas', monospace";
                             const textColor = isSelected ? '#ffffff' : (p.is_coasting ? 'rgba(148, 163, 184, 0.9)' : '#38bdf8');
                             
-                            lines.forEach((line, idx) => {
-                                if (idx === mapTagFields.indexOf('squawk') && (['7500', '7600', '7700'].includes(p.squawk) || hasActiveRa)) { rCtx.fillStyle = '#ef4444'; } 
+                            lineEntries.forEach((entry, idx) => {
+                                if (entry.key === 'squawk' && (['7500', '7600', '7700'].includes(p.squawk) || hasActiveRa)) { rCtx.fillStyle = '#ef4444'; }
                                 else { rCtx.fillStyle = textColor; }
-                                rCtx.fillText(line, tagX + padX, tagY + padY + 7 + (idx * lineHeight));
+                                rCtx.fillText(entry.text, tagX + padX, tagY + padY + 7 + (idx * lineHeight));
                             });
                         }
                     }
@@ -1289,8 +1480,8 @@
             if (!e1 || !e2) return { confidence: 'NONE', ageDelta: null, color: '#94a3b8' };
             
             // Waypoints are always "fresh" (static ground truth) — treat as age 0
-            const isWpt1 = e1._latency === null && e1.alt === 'GROUND';
-            const isWpt2 = e2._latency === null && e2.alt === 'GROUND';
+            const isWpt1 = !!e1._isWaypoint;
+            const isWpt2 = !!e2._isWaypoint;
             
             const age1 = isWpt1 ? 0 : (e1._latency ? e1._latency.state_age : null);
             const age2 = isWpt2 ? 0 : (e2._latency ? e2._latency.state_age : null);
