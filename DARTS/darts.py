@@ -1252,6 +1252,7 @@ TELEMETRY_FIELDS = {
 }
 telemetry_last_logged = {}
 log_queue_warn_state = {"depth": 0, "telemetry_drop": 0}
+telemetry_drop_count = 0
 
 
 def emit_throttled_warning(key, message):
@@ -1272,6 +1273,7 @@ def serialize_telemetry_value(value):
 
 
 def queue_db_write(item, allow_drop=False):
+    global telemetry_drop_count
     try:
         depth = log_queue.qsize()
     except Exception:
@@ -1280,7 +1282,8 @@ def queue_db_write(item, allow_drop=False):
     if depth > LOG_QUEUE_WARN_THRESHOLD:
         emit_throttled_warning("depth", f"DB write queue depth {depth} exceeds {LOG_QUEUE_WARN_THRESHOLD}. Archivist lagging.")
         if allow_drop:
-            emit_throttled_warning("telemetry_drop", f"Dropping telemetry deltas while queue remains above {LOG_QUEUE_WARN_THRESHOLD}.")
+            telemetry_drop_count += 1
+            emit_throttled_warning("telemetry_drop", f"Dropping telemetry deltas while queue remains above {LOG_QUEUE_WARN_THRESHOLD}. Total dropped: {telemetry_drop_count}.")
             return False
 
     log_queue.put_nowait(item)
