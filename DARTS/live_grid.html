@@ -216,7 +216,7 @@
         <table id="main-table">
             <thead id="main-thead"></thead>
             <tbody id="aircraft-table-body">
-                <tr id="cold-start-row"><td colspan="99" style="text-align:center;color:#10b981;font-weight:bold;">System cold-start. Synchronizing register array...</td></tr>
+                <tr id="cold-start-row"><td colspan="34" style="text-align:center;color:#10b981;font-weight:bold;">System cold-start. Synchronizing register array...</td></tr>
             </tbody>
         </table>
     </div>
@@ -349,13 +349,13 @@
                 }
                 return cfg;
             }
-        } catch(e) { console.warn('[DART-B] Failed to parse stored grid configuration (localStorage may be corrupt) — falling back to defaults:', e); }
+        } catch(e) { console.warn('[DART-B] Failed to load saved grid configuration, using defaults instead. Clear browser storage if the issue persists.', e); }
         return getDefaultConfig();
     }
 
     function saveConfig(cfg) {
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
-        catch(e) { console.warn('[DART-B] Failed to save grid configuration (storage quota exceeded?) — use the RESET DEFAULTS button in the column manager to clear saved state:', e); }
+        catch(e) { console.warn('[DART-B] Failed to save grid configuration. This may indicate insufficient storage quota.', e); }
     }
 
     // Active config (drives table rendering)
@@ -690,7 +690,8 @@
             const dir = activeConfig.sortDir === 'desc' ? -1 : 1;
             sorted.sort((a, b) => {
                 const va = a[sk], vb = b[sk];
-                // Empty values always sort to the bottom
+                // Empty/null values always sort to the bottom regardless of direction,
+                // keeping known data visible at the top in both asc and desc modes.
                 if (isEmptyValue(va) && isEmptyValue(vb)) return 0;
                 if (isEmptyValue(va)) return 1;
                 if (isEmptyValue(vb)) return -1;
@@ -733,7 +734,7 @@
         });
 
         if (aircraftList.length === 0 && !document.getElementById('cold-start-row')) {
-            tableBody.innerHTML = `<tr id="cold-start-row"><td colspan="99" style="text-align:center;color:#94a3b8;">No tracked emitters within radar aperture range.</td></tr>`;
+            tableBody.innerHTML = `<tr id="cold-start-row"><td colspan="${activeConfig.columns.length}" style="text-align:center;color:#94a3b8;">No tracked emitters within radar aperture range.</td></tr>`;
         }
     }
 
@@ -1083,7 +1084,7 @@
         // Rebuild table header and clear rows (repopulated on next WS tick)
         rebuildTableHeader();
         const tb = document.getElementById('aircraft-table-body');
-        tb.innerHTML = `<tr id="cold-start-row"><td colspan="99" style="text-align:center;color:#94a3b8;">Applying new layout...</td></tr>`;
+        tb.innerHTML = `<tr id="cold-start-row"><td colspan="${activeConfig.columns.length}" style="text-align:center;color:#94a3b8;">Applying new layout...</td></tr>`;
         // Clear planeState so instrument widgets reinitialise
         Object.keys(planeState).forEach(k => delete planeState[k]);
 

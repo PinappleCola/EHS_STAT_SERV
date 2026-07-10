@@ -839,8 +839,12 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, msg_format, *args):
         # Log 4xx/5xx only; suppress noisy 200/OPTIONS to keep console clean.
-        # Convert args to strings safely without using the format string with request data.
-        code = str(args[1]) if len(args) > 1 else ""
+        # BaseHTTPRequestHandler passes (request_line, status_code, size) as args.
+        # Extract status code defensively; fall back to full args string if layout differs.
+        try:
+            code = str(args[1]) if len(args) > 1 else ""
+        except Exception:
+            code = ""
         if code.startswith(("4", "5")):
             log_msg = " ".join(str(a) for a in args)
             print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[HTTP API] {log_msg}{ANSI.RESET}")
