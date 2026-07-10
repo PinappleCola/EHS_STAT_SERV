@@ -839,11 +839,11 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, msg_format, *args):
         # Log 4xx/5xx only; suppress noisy 200/OPTIONS to keep console clean.
-        # Build message safely without passing untrusted args through format string.
+        # Convert args to strings safely without using the format string with request data.
         code = str(args[1]) if len(args) > 1 else ""
         if code.startswith(("4", "5")):
-            safe_msg = " ".join(str(a) for a in args)
-            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[HTTP API] {safe_msg}{ANSI.RESET}")
+            log_msg = " ".join(str(a) for a in args)
+            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[HTTP API] {log_msg}{ANSI.RESET}")
 
     def _send_json(self, data, status=200):
         body = json.dumps(data).encode("utf-8")
@@ -876,8 +876,11 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
 
 def run_http_server():
     """Run the DARTS HTTP API server bound to localhost only (security: no LAN exposure)."""
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", HTTP_PORT), DARTSAPIHandler)
-    server.serve_forever()
+    try:
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", HTTP_PORT), DARTSAPIHandler)
+        server.serve_forever()
+    except OSError as e:
+        print(f"{ANSI.RED}[DARTS] HTTP API server failed to start on port {HTTP_PORT}: {e}{ANSI.RESET}")
 
 # --- Reference Coordinates for Local CPR Decoding (Sydney, NSW) ---
 RECEIVER_LAT = -33.8688

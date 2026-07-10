@@ -349,13 +349,13 @@
                 }
                 return cfg;
             }
-        } catch(e) { console.warn('[DART-B] Failed to parse stored grid configuration (localStorage may be corrupt):', e); }
+        } catch(e) { console.warn('[DART-B] Failed to parse stored grid configuration (localStorage may be corrupt) — falling back to defaults:', e); }
         return getDefaultConfig();
     }
 
     function saveConfig(cfg) {
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); }
-        catch(e) { console.warn('[DART-B] Failed to save grid configuration. Storage quota may be exceeded — try resetting to defaults:', e); }
+        catch(e) { console.warn('[DART-B] Failed to save grid configuration (storage quota exceeded?) — use the RESET DEFAULTS button in the column manager to clear saved state:', e); }
     }
 
     // Active config (drives table rendering)
@@ -823,7 +823,7 @@
             });
 
         } catch(err) {
-            console.warn('Soft catch on Matrix Loop:', err);
+            console.warn('[DART-B] Failed to process WebSocket message:', err);
         }
     };
 
