@@ -261,6 +261,7 @@
         { key:'callsign',         label:'CALLSIGN',       category:'IDENTIFICATION', source:'DF17 TC:1-4',     sortable:true,  defaultVisible:true  },
         { key:'airline',          label:'AIRLINE',        category:'IDENTIFICATION', source:'DB Lookup',       sortable:true,  defaultVisible:true  },
         { key:'squawk',           label:'SQUAWK',         category:'IDENTIFICATION', source:'DF11 / DF21',     sortable:true,  defaultVisible:true  },
+        { key:'air_ground',       label:'AIR/GROUND',     category:'IDENTIFICATION', source:'DF17 TC / Mode S',sortable:true,  defaultVisible:false },
         // --- Altitude ---
         { key:'alt',              label:'ALTITUDE',       category:'ALTITUDE',       source:'DF17 / DF20',     sortable:true,  defaultVisible:true,  unit:'ft'    },
         { key:'target_alt',       label:'TARGET ALT',     category:'ALTITUDE',       source:'BDS 4,0',         sortable:false, defaultVisible:true  },
@@ -291,6 +292,13 @@
         // --- Safety ---
         { key:'tcas_ra',          label:'TCAS RA',        category:'SAFETY',         source:'BDS 3,0',         sortable:false, defaultVisible:true              },
         { key:'hazard',           label:'HAZARD',         category:'SAFETY',         source:'BDS 4,4/4,5',     sortable:false, defaultVisible:false             },
+        { key:'wind_shear_level', label:'WS LEVEL',       category:'SAFETY',         source:'BDS 4,5',         sortable:true,  defaultVisible:false             },
+        { key:'microburst_level', label:'MB LEVEL',       category:'SAFETY',         source:'BDS 4,5',         sortable:true,  defaultVisible:false             },
+        { key:'icing_level',      label:'ICING LEVEL',    category:'SAFETY',         source:'BDS 4,5',         sortable:true,  defaultVisible:false             },
+        { key:'wake_vortex_level',label:'WV LEVEL',       category:'SAFETY',         source:'BDS 4,5',         sortable:true,  defaultVisible:false             },
+        { key:'threat_icao',      label:'RA THREAT ICAO', category:'SAFETY',         source:'BDS 3,0',         sortable:true,  defaultVisible:false             },
+        { key:'threat_range_nm',  label:'RA THREAT RNG',  category:'SAFETY',         source:'BDS 3,0',         sortable:true,  defaultVisible:false, unit:'NM'  },
+        { key:'threat_bearing_deg',label:'RA THREAT BRG', category:'SAFETY',         source:'BDS 3,0',         sortable:true,  defaultVisible:false, unit:'deg' },
         // --- Surveillance ---
         { key:'radar_sweep',      label:'RADAR SWEEP',    category:'SURVEILLANCE',   source:'Δt(Burst) Calc',  sortable:false, defaultVisible:true,  unit:'s'     },
         // --- Position ---
@@ -303,8 +311,16 @@
         { key:'wind',             label:'WIND',           category:'METEO',          source:'BDS 4,4 Calc',    sortable:false, defaultVisible:false             },
         { key:'sat',              label:'SAT TEMP',       category:'METEO',          source:'BDS 4,4/4,5',     sortable:false, defaultVisible:false, unit:'°C'    },
         { key:'humidity',         label:'HUMIDITY',       category:'METEO',          source:'BDS 4,4',         sortable:false, defaultVisible:false, unit:'%'     },
+        { key:'meteo_source',     label:'METEO SRC',      category:'METEO',          source:'BDS 4,4',         sortable:false, defaultVisible:false             },
         // --- Integrity / accuracy (BDS 6,2 / TC29) — opt-in ---
         { key:'selected_heading', label:'SEL HDG',        category:'INTEGRITY',      source:'BDS 6,2/TC29',    sortable:true,  defaultVisible:false, unit:'deg'   },
+        { key:'selected_alt_source',label:'SEL ALT SRC',  category:'INTEGRITY',      source:'BDS 6,2/BDS 4,0', sortable:false, defaultVisible:false             },
+        { key:'autopilot_mode',   label:'AUTOPILOT',      category:'INTEGRITY',      source:'BDS 6,2',         sortable:false, defaultVisible:false             },
+        { key:'vnav_mode',        label:'VNAV MODE',      category:'INTEGRITY',      source:'BDS 4,0/6,2',     sortable:false, defaultVisible:false             },
+        { key:'alt_hold_mode',    label:'ALT HOLD',       category:'INTEGRITY',      source:'BDS 4,0/6,2',     sortable:false, defaultVisible:false             },
+        { key:'approach_mode',    label:'APP MODE',       category:'INTEGRITY',      source:'BDS 4,0/6,2',     sortable:false, defaultVisible:false             },
+        { key:'lnav_mode',        label:'LNAV MODE',      category:'INTEGRITY',      source:'BDS 6,2',         sortable:false, defaultVisible:false             },
+        { key:'tcas_operational', label:'TCAS OPER',      category:'INTEGRITY',      source:'BDS 6,2',         sortable:false, defaultVisible:false             },
         { key:'nac_p',            label:'NACp',           category:'INTEGRITY',      source:'BDS 6,2/TC29',    sortable:true,  defaultVisible:false             },
         { key:'sil',              label:'SIL',            category:'INTEGRITY',      source:'BDS 6,2/TC29',    sortable:true,  defaultVisible:false             },
         { key:'nic_baro',         label:'NIC BARO',       category:'INTEGRITY',      source:'BDS 6,2/TC29',    sortable:false, defaultVisible:false             },
@@ -323,6 +339,7 @@
         { key:'msg_count',        label:'MSG COUNT',      category:'SURVEILLANCE',   source:'Sys Counter',     sortable:true,  defaultVisible:false             },
         { key:'data_age_heading', label:'HDG AGE',        category:'SURVEILLANCE',   source:'Sys Clock',       sortable:true,  defaultVisible:false, unit:'s'     },
         { key:'data_age_position',label:'POS AGE',        category:'SURVEILLANCE',   source:'Sys Clock',       sortable:true,  defaultVisible:false, unit:'s'     },
+        { key:'rssi_dbfs',        label:'RSSI',           category:'SURVEILLANCE',   source:'ADSBee Beast',    sortable:true,  defaultVisible:false, unit:'dBFS'  },
         // --- System timing ---
         { key:'age',              label:'AGE',            category:'SYSTEM',         source:'Sys Clock',       sortable:true,  defaultVisible:true,  unit:'s'     },
         { key:'first_seen',       label:'FIRST SEEN',     category:'SYSTEM',         source:'Sys Clock',       sortable:false, defaultVisible:false             },
@@ -338,19 +355,20 @@
     // width is stored. Sized to fit the widest expected value + header.
     // ============================================================
     const FIELD_DEFAULT_WIDTHS = {
-        icao: 72,   callsign: 88,    airline: 148,  squawk: 66,
+        icao: 72,   callsign: 88,    airline: 148,  squawk: 66, air_ground: 96,
         alt: 96,    target_alt: 114, vert_rate: 104,
         sys_mode: 158, baro: 92,     speed: 74,     tas: 66,
         ias_mach: 134, ias: 64,      mach: 68,      heading: 104,
         track_info: 130, track: 68,  track_rate: 90, roll: 104,
         inertial_vr: 104,
         discretes: 104, capability_summary: 106, last_bds_hit: 84, supported_bds: 148,
-        tcas_ra: 104, hazard: 108,
+        tcas_ra: 104, hazard: 108, wind_shear_level: 84, microburst_level: 84, icing_level: 92, wake_vortex_level: 84, threat_icao: 118, threat_range_nm: 108, threat_bearing_deg: 108,
         radar_sweep: 106, gnss_qual: 106,
         latlon: 164, lat: 90, lon: 94,
-        meteo: 148, wind: 92, sat: 72, humidity: 72,
-        selected_heading: 88, nac_p: 72, sil: 56, nic_baro: 76,
+        meteo: 148, wind: 92, sat: 72, humidity: 72, meteo_source: 92,
+        selected_heading: 88, selected_alt_source: 108, autopilot_mode: 94, vnav_mode: 88, alt_hold_mode: 88, approach_mode: 88, lnav_mode: 88, tcas_operational: 88, nac_p: 72, sil: 56, nic_baro: 76,
         radio_height: 84,
+        rssi_dbfs: 72,
         age: 56, first_seen: 78,
     };
 
@@ -499,6 +517,7 @@
     // CELL RENDERERS
     // ============================================================
     const EM = `<span class="empty-datum">----</span>`;
+    const HAZARD_LEVEL_LABELS = ['NIL', 'LIGHT', 'MOD', 'SEV'];
 
     function renderCell(key, plane) {
         switch(key) {
@@ -510,6 +529,8 @@
                 return { html: (plane.airline && plane.airline !== '----') ? plane.airline : EM, cls: 'airline-cell' };
             case 'squawk':
                 return { html: (plane.squawk && plane.squawk !== '----') ? plane.squawk : EM, cls: 'squawk-cell' };
+            case 'air_ground':
+                return { html: (plane.air_ground && plane.air_ground !== '----') ? plane.air_ground : EM };
             case 'alt': {
                 let html = EM;
                 if (plane.alt === 'GROUND') html = `<span style="color:#fb923c;font-weight:bold;">GROUND</span>`;
@@ -612,6 +633,8 @@
                 return { html: (plane.wind && plane.wind !== '----') ? plane.wind : EM };
             case 'sat':
                 return { html: (plane.sat && plane.sat !== '----') ? plane.sat : EM };
+            case 'meteo_source':
+                return { html: (plane.meteo_source && plane.meteo_source !== '----') ? plane.meteo_source : EM };
             case 'age': {
                 const color = plane.age > 45 ? '#f87171' : '#e2e8f0';
                 return { html: plane.age + 's', style: `color:${color}` };
@@ -619,6 +642,15 @@
             // --- Extended integrity / accuracy (BDS 6,2 / TC29) ---
             case 'selected_heading':
                 return { html: (typeof plane.selected_heading === 'number') ? `${Math.round(plane.selected_heading)}°` : EM, cls: 'intent' };
+            case 'selected_alt_source':
+                return { html: (plane.selected_alt_source && plane.selected_alt_source !== '----') ? plane.selected_alt_source : EM };
+            case 'autopilot_mode':
+            case 'vnav_mode':
+            case 'alt_hold_mode':
+            case 'approach_mode':
+            case 'lnav_mode':
+            case 'tcas_operational':
+                return { html: (plane[key] && plane[key] !== '----') ? plane[key] : EM };
             case 'nac_p':
                 return { html: (plane.nac_p !== null && plane.nac_p !== undefined && plane.nac_p !== '----') ? `NACp:${plane.nac_p}` : EM };
             case 'sil':
@@ -656,6 +688,22 @@
                 if (v === '----' || v === null || v === undefined) return { html: EM };
                 return { html: String(v) };
             }
+            case 'wind_shear_level':
+            case 'microburst_level':
+            case 'icing_level':
+            case 'wake_vortex_level': {
+                const v = plane[key];
+                if (v === '----' || v === null || v === undefined) return { html: EM };
+                return { html: HAZARD_LEVEL_LABELS[v] !== undefined ? HAZARD_LEVEL_LABELS[v] : String(v) };
+            }
+            case 'threat_icao':
+                return { html: (plane.threat_icao && plane.threat_icao !== '----') ? plane.threat_icao : EM };
+            case 'threat_range_nm':
+                return { html: (typeof plane.threat_range_nm === 'number') ? `${plane.threat_range_nm.toFixed(1)} NM` : EM };
+            case 'threat_bearing_deg':
+                return { html: (typeof plane.threat_bearing_deg === 'number') ? `${plane.threat_bearing_deg}°` : EM };
+            case 'rssi_dbfs':
+                return { html: (typeof plane.rssi_dbfs === 'number') ? `${plane.rssi_dbfs.toFixed(1)} dBFS` : EM };
             case 'display_heading_source':
                 return { html: (plane.display_heading_source && plane.display_heading_source !== 'none') ? `<span style="color:#a78bfa;">${plane.display_heading_source}</span>` : EM };
             default:
