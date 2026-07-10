@@ -1,6 +1,6 @@
 # ==========================================
 # DART-B CORE
-# APP VERSION: v53
+# APP VERSION: v54
 # ENTRYPOINT FILE: darts.py
 # NOTE: The filename is retained for compatibility. Runtime versioning lives in
 # the APP_VERSION constant below so comments and behavior cannot drift apart.
@@ -21,7 +21,7 @@ import re
 import os
 import http.server
 
-APP_VERSION = "v53"
+APP_VERSION = "v54"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "runtime_config.json")
 
@@ -312,7 +312,7 @@ FIELD_REGISTRY = [
     {"key": "alt",              "label": "ALTITUDE",       "type": "number", "unit": "ft",   "category": "ALTITUDE",       "sortable": True,  "defaultVisible": True,  "source": "DF17 / DF20"},
     {"key": "target_alt",       "label": "TARGET ALT",     "type": "text",   "unit": "ft",   "category": "ALTITUDE",       "sortable": False, "defaultVisible": True,  "source": "BDS 4,0"},
     # --- Kinematics ---
-    {"key": "vert_rate",        "label": "VERT RATE",      "type": "number", "unit": "ft/m", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 6,0"},
+    {"key": "vert_rate",        "label": "VERT RATE",      "type": "number", "unit": "ft/min", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 6,0"},
     # sys_mode and baro are placed here so the default column order matches the original live grid layout
     {"key": "sys_mode",         "label": "SYS MODE",       "type": "virtual","unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": True,  "source": "BDS 4,0/6,2/4,8"},
     {"key": "baro",             "label": "BARO SET",       "type": "text",   "unit": "hPa",  "category": "SYSTEM",         "sortable": False, "defaultVisible": True,  "source": "BDS 4,0"},
@@ -345,8 +345,20 @@ FIELD_REGISTRY = [
     {"key": "meteo",            "label": "METEO / SENSORS","type": "virtual","unit": None,   "category": "METEO",          "sortable": False, "defaultVisible": True,  "source": "BDS4,4 + Calc"},
     {"key": "wind",             "label": "WIND",           "type": "text",   "unit": None,   "category": "METEO",          "sortable": False, "defaultVisible": False, "source": "BDS 4,4 Calc"},
     {"key": "sat",              "label": "SAT TEMP",       "type": "text",   "unit": "°C",   "category": "METEO",          "sortable": False, "defaultVisible": False, "source": "BDS 4,4/4,5"},
+    # --- Integrity / accuracy (BDS 6,2 / TC29) ---
+    {"key": "selected_heading", "label": "SEL HDG",        "type": "number", "unit": "deg",  "category": "INTEGRITY",      "sortable": True,  "defaultVisible": False, "source": "BDS 6,2/TC29"},
+    {"key": "nac_p",            "label": "NACp",           "type": "number", "unit": None,   "category": "INTEGRITY",      "sortable": True,  "defaultVisible": False, "source": "BDS 6,2/TC29"},
+    {"key": "sil",              "label": "SIL",            "type": "number", "unit": None,   "category": "INTEGRITY",      "sortable": True,  "defaultVisible": False, "source": "BDS 6,2/TC29"},
+    {"key": "nic_baro",         "label": "NIC BARO",       "type": "text",   "unit": None,   "category": "INTEGRITY",      "sortable": False, "defaultVisible": False, "source": "BDS 6,2/TC29"},
+    # --- Extended altitude (BDS 4,5) ---
+    {"key": "radio_height",     "label": "RADIO ALT",      "type": "number", "unit": "ft",   "category": "ALTITUDE",       "sortable": True,  "defaultVisible": False, "source": "BDS 4,5"},
+    # --- Extended meteorology (BDS 4,4) ---
+    {"key": "humidity",         "label": "HUMIDITY",       "type": "number", "unit": "%",    "category": "METEO",          "sortable": False, "defaultVisible": False, "source": "BDS 4,4"},
+    # --- Extended kinematics (BDS 6,0 inertial VR) ---
+    {"key": "inertial_vr",      "label": "INERTIAL VR",    "type": "number", "unit": "ft/min", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
     # --- System timing ---
     {"key": "age",              "label": "AGE",            "type": "number", "unit": "s",    "category": "SYSTEM",         "sortable": True,  "defaultVisible": True,  "source": "Sys Clock"},
+    {"key": "first_seen",       "label": "FIRST SEEN",     "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "Sys Clock"},
 ]
 
 def decode_bds17_payload(payload_int):
@@ -1084,8 +1096,6 @@ class SIGINT_Triangulator:
                     fine_min_var = var
                     fine_best = (test_lat, test_lon)
 
-        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[SIGINT DEBUG] {sweep_interval}s Solver Complete. Variance: {round(fine_min_var, 2)}{ANSI.RESET}")
-
         with self.lock:
             if fine_min_var < 500:
                 if sweep_interval in self.active_radars:
@@ -1408,6 +1418,16 @@ def update_aircraft(icao, key, value):
                 "gnss_qual": "----", "radar_sweep": "----", "raw_sweep_interval": 1.5,
                 "capability_summary": "----", "supported_bds": [], "last_bds_hit": "----",
                 "lat": "----", "lon": "----",
+                # Extended integrity / accuracy (BDS 6,2 / TC29)
+                "selected_heading": "----", "nac_p": "----", "sil": "----", "nic_baro": "----",
+                # Extended altitude (BDS 4,5)
+                "radio_height": "----",
+                # Extended meteorology (BDS 4,4)
+                "humidity": "----",
+                # Extended kinematics — inertial VR reported separately from baro VR (BDS 6,0)
+                "inertial_vr": "----",
+                # System timing
+                "first_seen": datetime.datetime.now().strftime('%H:%M:%S'),
                 "latest_intent": {}, "latest_db_log": {}, "latest_sys_log": {}, "last_msg_time": 0, 
                 "current_burst_start": 0, "last_seen": now, "first_seen_time": now
             }
@@ -1538,6 +1558,16 @@ def process_frame(frame):
                             if quality_summary != "----":
                                 update_aircraft(icao, "gnss_qual", quality_summary)
 
+                            # Expose integrity fields individually as opt-in columns
+                            if tc29_data.get("selected_heading") is not None:
+                                update_aircraft(icao, "selected_heading", round(float(tc29_data["selected_heading"]), 1))
+                            if tc29_data.get("nac_p") is not None:
+                                update_aircraft(icao, "nac_p", int(tc29_data["nac_p"]))
+                            if tc29_data.get("sil") is not None:
+                                update_aircraft(icao, "sil", int(tc29_data["sil"]))
+                            if tc29_data.get("nic_baro") is not None:
+                                update_aircraft(icao, "nic_baro", int(tc29_data["nic_baro"]))
+
                             target_hash, target_log = build_target_state_log(icao, tc29_data)
                             if target_hash and target_log:
                                 update_aircraft(icao, "latest_sys_log", {"hash": target_hash, "text": target_log})
@@ -1614,6 +1644,9 @@ def process_frame(frame):
                             update_aircraft(icao, "vert_rate", int(bds_data["baro_vertical_rate"]))
                         elif bds_data.get("inertial_vertical_rate") is not None:
                             update_aircraft(icao, "vert_rate", int(bds_data["inertial_vertical_rate"]))
+                        # Always expose inertial VR if present (opt-in column, separate from baro VR)
+                        if bds_data.get("inertial_vertical_rate") is not None:
+                            update_aircraft(icao, "inertial_vr", int(bds_data["inertial_vertical_rate"]))
 
                         refresh_motion_derivatives(icao)
                     except Exception:
@@ -1639,6 +1672,8 @@ def process_frame(frame):
                             update_aircraft(icao, "sat", format_temperature(bds_data["static_air_temperature"]))
                         if bds_data.get("static_pressure") is not None:
                             update_aircraft(icao, "baro", f"{int(bds_data['static_pressure'])} hPa")
+                        if bds_data.get("humidity") is not None:
+                            update_aircraft(icao, "humidity", round(float(bds_data["humidity"]), 1))
 
                         turb_label = turbulence_label(bds_data.get("turbulence")) if bds_data.get("turbulence") is not None else None
                         if turb_label and turb_label != "TURB NIL":
@@ -1652,6 +1687,8 @@ def process_frame(frame):
                             update_aircraft(icao, "sat", format_temperature(bds_data["static_air_temperature"]))
                         if bds_data.get("static_pressure") is not None:
                             update_aircraft(icao, "baro", f"{int(bds_data['static_pressure'])} hPa")
+                        if bds_data.get("radio_height") is not None:
+                            update_aircraft(icao, "radio_height", int(bds_data["radio_height"]))
 
                         hazard_summary = build_hazard_summary(bds_data)
                         if hazard_summary != "----":
