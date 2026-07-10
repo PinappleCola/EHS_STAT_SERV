@@ -3,10 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <title>DART-B Live Grid</title>
+    <!-- B612 Mono: designed by Airbus/ENAC for aircraft cockpit displays.
+         Highly legible at small sizes, truly monospaced, technical/aeronautical feel. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=B612+Mono:ital@0;1&display=swap" rel="stylesheet">
     <style>
         :root { color-scheme: dark; }
         body {
-            background-color: #0b0b0d; color: #e2e8f0; font-family: 'Consolas', 'Courier New', monospace;
+            background-color: #0b0b0d; color: #e2e8f0; font-family: 'B612 Mono', 'Courier New', monospace;
             margin: 12px; display: flex; flex-direction: column; height: 97vh; overflow: hidden;
         }
         h2 { color: #38bdf8; border-bottom: 2px solid #334155; padding-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-size: 1.3em; margin-top: 5px; flex-shrink: 0; }
@@ -15,15 +20,22 @@
         .offline { color: #f87171; font-weight: bold; }
         .db-counter { color: #c084fc; font-weight: bold; letter-spacing: 0.5px; }
 
-        .table-container { flex: 2; overflow-y: auto; margin-bottom: 10px; border-radius: 4px; border: 1px solid #1e293b; }
-        table { width: 100%; border-collapse: collapse; background-color: #0d1117; }
-        th, td { padding: 8px 4px; text-align: left; font-size: 0.75em; vertical-align: middle; color: #f1f5f9; white-space: nowrap; }
-        th { background-color: #030712; color: #38bdf8; font-weight: bold; border-bottom: 2px solid #1e293b; text-transform: uppercase; position: sticky; top: 0; z-index: 10; cursor: default; }
+        .table-container { flex: 1; overflow: auto; margin-bottom: 10px; border-radius: 4px; border: 1px solid #1e293b; }
+        table { border-collapse: collapse; background-color: #0d1117; }
+        th, td { padding: 8px 4px; text-align: left; font-size: 0.75em; vertical-align: middle; color: #f1f5f9; white-space: nowrap; font-family: 'B612 Mono', 'Courier New', monospace; }
+        th { background-color: #030712; color: #38bdf8; font-weight: bold; border-bottom: 2px solid #1e293b; text-transform: uppercase; position: sticky; top: 0; z-index: 10; cursor: default; overflow: visible; box-sizing: border-box; padding-right: 10px; }
         th.sortable { cursor: pointer; user-select: none; }
         th.sortable:hover { color: #7dd3fc; }
         th.sort-active { color: #f97316 !important; }
         tr { border-bottom: 1px solid #1e293b; transition: background-color 0.1s ease; }
         tr:hover { background-color: #1e293b; }
+
+        /* Column resize handle — absolutely positioned at right edge of each header cell */
+        .resize-handle {
+            position: absolute; right: 0; top: 0; bottom: 0; width: 6px;
+            cursor: col-resize; background: transparent; z-index: 15;
+        }
+        .resize-handle:hover, .resize-handle.col-resizing { background: rgba(56,189,248,0.45); }
 
         .origin-cell { font-size: 0.65em; color: #8b5cf6; text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 0px !important; border-bottom: none !important; font-weight: normal; }
         .header-cell { padding-top: 4px !important; }
@@ -173,32 +185,6 @@
         .mgr-btn:hover { border-color: #64748b; color: #e2e8f0; }
         .mgr-btn.primary { border-color: #38bdf8; color: #38bdf8; }
         .mgr-btn.primary:hover { background: rgba(56,189,248,0.1); }
-
-        /* --- Intercept panel (unchanged) --- */
-        .intercept-panel {
-            flex: 1; min-height: 250px;
-            background-color: #030712; border: 1px solid #1e293b; border-left: 4px solid #c084fc;
-            border-radius: 4px; padding: 10px; display: flex; flex-direction: column;
-            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.5);
-        }
-        .intercept-title { color: #c084fc; font-size: 0.8em; font-weight: bold; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
-        .intercept-log { flex: 1; overflow-y: auto; font-size: 0.8em; color: #94a3b8; line-height: 1.5; padding-right: 5px; scroll-behavior: smooth; }
-        .intercept-log::-webkit-scrollbar { width: 6px; }
-        .intercept-log::-webkit-scrollbar-track { background: #0f172a; border-radius: 3px; }
-        .intercept-log::-webkit-scrollbar-thumb { background: #c084fc; border-radius: 3px; }
-
-        .log-entry { margin-bottom: 4px; border-bottom: 1px dashed #1e293b; padding-bottom: 2px; animation: pulse-entry 2s ease-out; }
-        .db-log-entry { border-bottom: 1px dashed #064e3b; animation: pulse-db 2s ease-out; }
-        .sys-log-entry { border-bottom: 1px dashed #0284c7; animation: pulse-sys 2s ease-out; }
-
-        .ts-badge { color: #64748b; font-family: monospace; margin-right: 6px; }
-        .icao-badge { color: #fbbf24; font-weight: bold; }
-        .bds-badge { color: #c084fc; font-weight: bold; }
-        .hex-payload { color: #22d3ee; font-weight: bold; }
-
-        @keyframes pulse-entry { 0% { color: #fff; background-color: rgba(192, 132, 252, 0.2); } 100% { color: #94a3b8; background-color: transparent; } }
-        @keyframes pulse-db { 0% { color: #fff; background-color: rgba(74, 222, 128, 0.2); } 100% { background-color: transparent; } }
-        @keyframes pulse-sys { 0% { color: #fff; background-color: rgba(56, 189, 248, 0.2); } 100% { background-color: transparent; } }
     </style>
 </head>
 <body>
@@ -250,17 +236,11 @@
                     <button class="sort-dir-btn" id="sort-dir-btn">▲ ASC</button>
                 </div>
                 <div class="col-mgr-actions">
+                    <button class="mgr-btn" id="reset-widths-btn">RESET WIDTHS</button>
                     <button class="mgr-btn" id="reset-config-btn">RESET DEFAULTS</button>
                     <button class="mgr-btn primary" id="apply-config-btn">APPLY ✓</button>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <div class="intercept-panel">
-        <div class="intercept-title">DART-B - Intent Shadow Monitor & Registry</div>
-        <div class="intercept-log" id="intent-log-box">
-            <div style="color:#475569;font-style:italic;">Awaiting RF Payloads...</div>
         </div>
     </div>
 
@@ -297,6 +277,8 @@
         { key:'track',            label:'TRUE TRK',       category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:false, unit:'deg'   },
         { key:'track_rate',       label:'TRACK RATE',     category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:false, unit:'deg/s' },
         { key:'roll',             label:'BANK INDEX',     category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:true,  unit:'deg'   },
+        // --- Extended kinematics (opt-in) ---
+        { key:'inertial_vr',      label:'INERTIAL VR',    category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:false, unit:'ft/m'  },
         // --- Additional system fields ---
         { key:'discretes',        label:'DISCRETES',      category:'SYSTEM',         source:'BDS 6,2 / TC29',  sortable:false, defaultVisible:false             },
         { key:'capability_summary',label:'CAPABILITIES',  category:'SYSTEM',         source:'BDS 1,7',         sortable:false, defaultVisible:false             },
@@ -316,8 +298,17 @@
         { key:'meteo',            label:'METEO / SENSORS',category:'METEO',          source:'BDS4,4 + Calc',   sortable:false, defaultVisible:true              },
         { key:'wind',             label:'WIND',           category:'METEO',          source:'BDS 4,4 Calc',    sortable:false, defaultVisible:false             },
         { key:'sat',              label:'SAT TEMP',       category:'METEO',          source:'BDS 4,4/4,5',     sortable:false, defaultVisible:false, unit:'°C'    },
+        { key:'humidity',         label:'HUMIDITY',       category:'METEO',          source:'BDS 4,4',         sortable:false, defaultVisible:false, unit:'%'     },
+        // --- Integrity / accuracy (BDS 6,2 / TC29) — opt-in ---
+        { key:'selected_heading', label:'SEL HDG',        category:'INTEGRITY',      source:'BDS 6,2/TC29',    sortable:true,  defaultVisible:false, unit:'deg'   },
+        { key:'nac_p',            label:'NACp',           category:'INTEGRITY',      source:'BDS 6,2/TC29',    sortable:true,  defaultVisible:false             },
+        { key:'sil',              label:'SIL',            category:'INTEGRITY',      source:'BDS 6,2/TC29',    sortable:true,  defaultVisible:false             },
+        { key:'nic_baro',         label:'NIC BARO',       category:'INTEGRITY',      source:'BDS 6,2/TC29',    sortable:false, defaultVisible:false             },
+        // --- Extended altitude (BDS 4,5 radio altimeter) ---
+        { key:'radio_height',     label:'RADIO ALT',      category:'ALTITUDE',       source:'BDS 4,5',         sortable:true,  defaultVisible:false, unit:'ft'    },
         // --- System timing ---
         { key:'age',              label:'AGE',            category:'SYSTEM',         source:'Sys Clock',       sortable:true,  defaultVisible:true,  unit:'s'     },
+        { key:'first_seen',       label:'FIRST SEEN',     category:'SYSTEM',         source:'Sys Clock',       sortable:false, defaultVisible:false             },
     ];
 
     // Build lookup map
@@ -325,7 +316,31 @@
     FIELD_DEFS.forEach(f => FIELD_MAP[f.key] = f);
 
     // ============================================================
+    // FIELD DEFAULT WIDTHS
+    // Content-aware minimum column widths (px). Applied when no manual
+    // width is stored. Sized to fit the widest expected value + header.
+    // ============================================================
+    const FIELD_DEFAULT_WIDTHS = {
+        icao: 72,   callsign: 88,    airline: 148,  squawk: 66,
+        alt: 96,    target_alt: 114, vert_rate: 104,
+        sys_mode: 158, baro: 92,     speed: 74,     tas: 66,
+        ias_mach: 134, ias: 64,      mach: 68,      heading: 104,
+        track_info: 130, track: 68,  track_rate: 90, roll: 104,
+        inertial_vr: 104,
+        discretes: 104, capability_summary: 106, last_bds_hit: 84, supported_bds: 148,
+        tcas_ra: 104, hazard: 108,
+        radar_sweep: 106, gnss_qual: 106,
+        latlon: 164, lat: 90, lon: 94,
+        meteo: 148, wind: 92, sat: 72, humidity: 72,
+        selected_heading: 88, nac_p: 72, sil: 56, nic_baro: 76,
+        radio_height: 84,
+        age: 56, first_seen: 78,
+    };
+
+    // ============================================================
     // CONFIG MANAGEMENT — localStorage persistence
+    // Persists: columns (order + visibility), sortKey, sortDir,
+    // and columnWidths (per-key pixel widths for manual resize).
     // ============================================================
     const STORAGE_KEY = 'dart_grid_config_v1';
 
@@ -333,7 +348,8 @@
         return {
             columns: FIELD_DEFS.filter(f => f.defaultVisible).map(f => f.key),
             sortKey: null,
-            sortDir: 'asc'
+            sortDir: 'asc',
+            columnWidths: {}   // key → manual pixel width; empty = use FIELD_DEFAULT_WIDTHS
         };
     }
 
@@ -347,6 +363,8 @@
                     cfg.columns = cfg.columns.filter(k => FIELD_MAP[k]);
                     if (cfg.columns.length === 0) return getDefaultConfig();
                 }
+                // Back-fill columnWidths for configs saved before this feature
+                if (!cfg.columnWidths || typeof cfg.columnWidths !== 'object') cfg.columnWidths = {};
                 return cfg;
             }
         } catch(e) { console.warn('[DART-B] Failed to load saved grid configuration, using defaults instead. Clear browser storage if the issue persists.', e); }
@@ -394,17 +412,25 @@
             const th = document.createElement('th');
             th.className = 'origin-cell';
             th.textContent = (FIELD_MAP[key] && FIELD_MAP[key].source) || '';
+            // Apply matching min-width to keep origin row aligned with header row
+            const w = (activeConfig.columnWidths && activeConfig.columnWidths[key]) || FIELD_DEFAULT_WIDTHS[key] || 80;
+            th.style.minWidth = w + 'px';
             srcRow.appendChild(th);
         });
         thead.appendChild(srcRow);
 
-        // Row 2: column header labels
+        // Row 2: column header labels (with sort indicators and resize handles)
         const hdrRow = document.createElement('tr');
         activeConfig.columns.forEach(key => {
             const def = FIELD_MAP[key];
             const th = document.createElement('th');
             th.className = 'header-cell';
             th.dataset.key = key;
+
+            // Apply content-aware or manually-set column width
+            const w = (activeConfig.columnWidths && activeConfig.columnWidths[key]) || FIELD_DEFAULT_WIDTHS[key] || 80;
+            th.style.minWidth = w + 'px';
+            th.style.width = w + 'px';
 
             let label = formatLabelWithUnit(def ? def.label : key.toUpperCase(), def ? def.unit : null);
 
@@ -418,6 +444,24 @@
                 th.addEventListener('click', () => handleHeaderSort(key));
             }
             th.textContent = label;
+
+            // Draggable resize handle — positioned at right edge of th
+            const rh = document.createElement('div');
+            rh.className = 'resize-handle';
+            rh.title = 'Drag to resize column';
+            rh.addEventListener('mousedown', (e) => {
+                _colKey = key;
+                _colStartX = e.clientX;
+                _colStartW = th.getBoundingClientRect().width;
+                _colResizing = true;
+                rh.classList.add('col-resizing');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+                e.stopPropagation();
+            });
+            th.appendChild(rh);
+
             hdrRow.appendChild(th);
         });
         thead.appendChild(hdrRow);
@@ -553,6 +597,30 @@
                 const color = plane.age > 45 ? '#f87171' : '#e2e8f0';
                 return { html: plane.age + 's', style: `color:${color}` };
             }
+            // --- Extended integrity / accuracy (BDS 6,2 / TC29) ---
+            case 'selected_heading':
+                return { html: (typeof plane.selected_heading === 'number') ? `${Math.round(plane.selected_heading)}°` : EM, cls: 'intent' };
+            case 'nac_p':
+                return { html: (plane.nac_p !== null && plane.nac_p !== undefined && plane.nac_p !== '----') ? `NACp:${plane.nac_p}` : EM };
+            case 'sil':
+                return { html: (plane.sil !== null && plane.sil !== undefined && plane.sil !== '----') ? `SIL:${plane.sil}` : EM };
+            case 'nic_baro':
+                return { html: (plane.nic_baro !== null && plane.nic_baro !== undefined && plane.nic_baro !== '----') ? (plane.nic_baro ? 'BARO✓' : 'BARO✗') : EM };
+            // --- Extended altitude: radio altimeter (BDS 4,5) ---
+            case 'radio_height':
+                return { html: (typeof plane.radio_height === 'number') ? `${plane.radio_height} ft` : EM };
+            // --- Extended meteorology: humidity (BDS 4,4) ---
+            case 'humidity':
+                return { html: (typeof plane.humidity === 'number') ? `${plane.humidity.toFixed(1)}%` : EM, cls: 'sensor-cell' };
+            // --- Extended kinematics: inertial vertical rate (BDS 6,0) ---
+            case 'inertial_vr': {
+                if (typeof plane.inertial_vr !== 'number') return { html: EM };
+                const c = plane.inertial_vr > 250 ? '#4ade80' : (plane.inertial_vr < -250 ? '#fb923c' : '#94a3b8');
+                return { html: `<span style="color:${c};">${plane.inertial_vr > 0 ? '+' : ''}${plane.inertial_vr} ft/m</span>` };
+            }
+            // --- System timing: first-seen timestamp ---
+            case 'first_seen':
+                return { html: (plane.first_seen && plane.first_seen !== '----') ? plane.first_seen : EM };
             default:
                 return { html: EM };
         }
@@ -741,13 +809,39 @@
     // ============================================================
     // WEBSOCKET
     // ============================================================
+    // --- DATA PIPELINE & TIMEOUT / "GREY" MODEL ---
+    //
+    // PIPELINE (ingest → frontend):
+    //   1. ADSBee 1090 feeds Beast-raw frames over serial at ~115200 baud.
+    //   2. serial_reader_thread() parses Beast frames and calls process_frame().
+    //   3. process_frame() decodes the ADS-B/Mode-S payload via pyModeS/bare-metal
+    //      CPR math and updates aircraft_state[icao] fields immediately (no buffering).
+    //   4. broadcast_state() (WebSocket coroutine) wakes every 1 second, snapshots
+    //      aircraft_state under state_lock, annotates age/is_coasting, and sends the
+    //      full airframes array to all connected clients.
+    //   5. Frontend ws.onmessage() receives the snapshot and calls updateTable(),
+    //      which diffs and repaints only changed cells to avoid layout thrash.
+    //
+    // STALENESS / "GREY" BEHAVIOUR:
+    //   - Each aircraft track has a "coast threshold":
+    //       coast_threshold = max(5.0 s, min(raw_sweep_interval + 2.5 s, 15.0 s))
+    //     where raw_sweep_interval is the measured SSR radar sweep period.
+    //     Default (unknown sweep): coast_threshold = 5.0 s.
+    //   - When age > coast_threshold, is_coasting = true → the row gets
+    //     the .row-coasting class (opacity: 0.35, CSS transition 2.5 s).
+    //   - Individual fields do NOT have per-field staleness: each field retains
+    //     its last decoded value until a new decode updates it. The whole row dims.
+    //   - After 60 s of silence a farewell event is logged and the row stays
+    //     greyed. After a further ~4 s reaper tick the track is deleted entirely.
+    //
+    // LATENCY:
+    //   - Hot path (serial → aircraft_state update) is synchronous & sub-millisecond.
+    //   - Frontend receives a fresh snapshot every 1 second from the backend.
+    //   - No debouncing or batching is applied; each WS message triggers one render pass.
+    // ============================================================
     const tableBody = document.getElementById('aircraft-table-body');
     const statusText = document.getElementById('status-text');
-    const intentLogBox = document.getElementById('intent-log-box');
     const ledgerCountVal = document.getElementById('ledger-count-val');
-
-    const seenIntents = new Set();
-    let isFirstIntent = true;
 
     const ws = new WebSocket('ws://localhost:8765');
     ws.onopen = () => { statusText.innerText = 'ONLINE - STREAMING RAMPED'; statusText.className = 'online'; };
@@ -769,59 +863,6 @@
 
             // Update grid
             updateTable(aircraftList);
-
-            // Intercept / intent log (unchanged logic)
-            aircraftList.forEach(plane => {
-                if (!plane || !plane.icao) return;
-
-                if (plane.latest_intent && plane.latest_intent.hex) {
-                    const intentHash = plane.latest_intent.icao + '_' + plane.latest_intent.hex;
-                    if (!seenIntents.has(intentHash)) {
-                        seenIntents.add(intentHash);
-                        if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
-                        const logEntry = document.createElement('div');
-                        logEntry.className = 'log-entry';
-                        logEntry.innerHTML = `> <span class="ts-badge">[${plane.latest_intent.time || ''}]</span> INTENT CAPTURE: <span class="icao-badge">${plane.latest_intent.icao || '----'}</span> broadcasted <span class="bds-badge">${plane.latest_intent.bds || ''}</span> payload [<span class="hex-payload">${plane.latest_intent.hex}</span>]`;
-                        intentLogBox.appendChild(logEntry);
-                        intentLogBox.scrollTop = intentLogBox.scrollHeight;
-                    }
-                }
-
-                if (plane.latest_db_log && plane.latest_db_log.hash) {
-                    if (!seenIntents.has(plane.latest_db_log.hash)) {
-                        seenIntents.add(plane.latest_db_log.hash);
-                        if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
-                        const logEntry = document.createElement('div');
-                        logEntry.className = 'log-entry db-log-entry';
-                        logEntry.innerHTML = `<span style="color:#4ade80;font-family:monospace;white-space:pre;">${plane.latest_db_log.text || ''}</span>`;
-                        intentLogBox.appendChild(logEntry);
-                        intentLogBox.scrollTop = intentLogBox.scrollHeight;
-                    }
-                }
-
-                if (plane.latest_sys_log && plane.latest_sys_log.hash) {
-                    if (!seenIntents.has(plane.latest_sys_log.hash)) {
-                        seenIntents.add(plane.latest_sys_log.hash);
-                        if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
-                        const logEntry = document.createElement('div');
-                        const safeHash = String(plane.latest_sys_log.hash);
-                        if (safeHash.includes('gate_')) logEntry.className = 'log-entry db-log-entry';
-                        else if (safeHash.includes('cpr_')) {
-                            logEntry.className = 'log-entry';
-                            logEntry.style.borderBottom = '1px dashed #c084fc';
-                            logEntry.style.animation = 'pulse-entry 2s ease-out';
-                        } else {
-                            logEntry.className = 'log-entry sys-log-entry';
-                        }
-                        logEntry.innerHTML = `<span style="font-family:monospace;white-space:pre;">${plane.latest_sys_log.text || ''}</span>`;
-                        intentLogBox.appendChild(logEntry);
-                        intentLogBox.scrollTop = intentLogBox.scrollHeight;
-                        if (intentLogBox.children && intentLogBox.children.length > 50) {
-                            intentLogBox.removeChild(intentLogBox.firstChild);
-                        }
-                    }
-                }
-            });
 
         } catch(err) {
             console.warn('[DART-B] Failed to process WebSocket message:', err);
@@ -856,6 +897,7 @@
     document.getElementById('open-col-mgr-btn').addEventListener('click', openColumnManager);
     document.getElementById('close-col-mgr-btn').addEventListener('click', closeColumnManager);
     document.getElementById('sort-dir-btn').addEventListener('click', toggleSortDir);
+    document.getElementById('reset-widths-btn').addEventListener('click', resetColumnWidths);
     document.getElementById('reset-config-btn').addEventListener('click', resetConfig);
     document.getElementById('apply-config-btn').addEventListener('click', applyConfig);
     document.getElementById('col-search').addEventListener('input', (e) => filterAvailableFields(e.target.value));
@@ -1089,6 +1131,61 @@
         Object.keys(planeState).forEach(k => delete planeState[k]);
 
         closeColumnManager();
+    }
+
+    // ============================================================
+    // COLUMN RESIZE — draggable resize handles on header cells
+    // Widths are persisted in activeConfig.columnWidths (localStorage).
+    // ============================================================
+    let _colResizing = false;  // true while a drag is in progress
+    let _colKey = null;        // key of column being resized
+    let _colStartX = 0;        // mouse X at drag start
+    let _colStartW = 0;        // column width at drag start (px)
+    let _colCurW = 0;          // live width during drag
+
+    document.addEventListener('mousemove', (e) => {
+        if (!_colResizing) return;
+        const delta = e.clientX - _colStartX;
+        _colCurW = Math.max(40, Math.round(_colStartW + delta));
+        // Apply width live to the header th for instant feedback
+        const th = document.querySelector(`th.header-cell[data-key="${_colKey}"]`);
+        if (th) {
+            th.style.width = _colCurW + 'px';
+            th.style.minWidth = _colCurW + 'px';
+        }
+        // Keep origin-row cell aligned
+        const srcThs = document.querySelectorAll(`th.origin-cell`);
+        const hdrThs = document.querySelectorAll(`th.header-cell`);
+        hdrThs.forEach((hth, i) => {
+            if (hth.dataset.key === _colKey && srcThs[i]) {
+                srcThs[i].style.minWidth = _colCurW + 'px';
+            }
+        });
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!_colResizing) return;
+        _colResizing = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.querySelectorAll('.resize-handle.col-resizing').forEach(h => h.classList.remove('col-resizing'));
+        if (_colKey && _colCurW > 0) {
+            if (!activeConfig.columnWidths) activeConfig.columnWidths = {};
+            activeConfig.columnWidths[_colKey] = _colCurW;
+            saveConfig(activeConfig);
+        }
+        _colKey = null;
+        _colCurW = 0;
+    });
+
+    /**
+     * Clears all manually-set column widths and reverts to content-aware defaults.
+     * Can be triggered from the column manager or called programmatically.
+     */
+    function resetColumnWidths() {
+        activeConfig.columnWidths = {};
+        saveConfig(activeConfig);
+        rebuildTableHeader();
     }
 
     // ============================================================
