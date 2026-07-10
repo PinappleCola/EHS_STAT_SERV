@@ -921,7 +921,7 @@ class SIGINT_Triangulator:
 
         # Load persisted radar state from GeoJSON (DB load happens after db_conn init)
         for f in AIRSPACE_GEOJSON.get("features", []):
-            if f.get("properties", {}).get("icon") == "RADAR":
+            if f.get("properties", {}).get("icon") in ("RADAR", "RADAR_POINT"):
                 sweep = f.get("properties", {}).get("sweep")
                 if sweep:
                     sweep_key = round(sweep, 1)
@@ -1240,7 +1240,7 @@ class SIGINT_Triangulator:
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [round(lon, 4), round(lat, 4)]},
             "properties": {
-                "name": f"SSR {sweep}s", "icon": "RADAR", "sweep": sweep,
+                "name": f"SSR {sweep}s", "icon": "RADAR_POINT", "sweep": sweep,
                 "color": "rgba(16, 185, 129, 0.9)",
                 "confidence_km": confidence_km,
                 "total_hits": hits,
@@ -1258,6 +1258,7 @@ class SIGINT_Triangulator:
         for f in AIRSPACE_GEOJSON["features"]:
             if f.get("properties", {}).get("sweep") == sweep:
                 f["geometry"]["coordinates"] = [round(lon, 4), round(lat, 4)]
+                f["properties"]["icon"] = "RADAR_POINT"
                 f["properties"]["confidence_km"] = confidence_km
                 f["properties"]["total_hits"] = hits
                 f["properties"]["bearing_coverage"] = f"{coverage}/36"
