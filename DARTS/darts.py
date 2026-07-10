@@ -1253,13 +1253,18 @@ TELEMETRY_FIELDS = {
 telemetry_last_logged = {}
 log_queue_warn_state = {"depth": 0, "telemetry_drop": 0}
 telemetry_drop_count = 0
+log_queue_warn_lock = threading.Lock()
 
 
 def emit_throttled_warning(key, message):
     now = time.time()
-    last_emit = log_queue_warn_state.get(key, 0)
-    if now - last_emit >= LOG_QUEUE_WARN_INTERVAL:
-        log_queue_warn_state[key] = now
+    should_emit = False
+    with log_queue_warn_lock:
+        last_emit = log_queue_warn_state.get(key, 0)
+        if now - last_emit >= LOG_QUEUE_WARN_INTERVAL:
+            log_queue_warn_state[key] = now
+            should_emit = True
+    if should_emit:
         print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}WARNING: {message}{ANSI.RESET}")
 
 
@@ -1282,8 +1287,10 @@ def queue_db_write(item, allow_drop=False):
     if depth > LOG_QUEUE_WARN_THRESHOLD:
         emit_throttled_warning("depth", f"DB write queue depth {depth} exceeds {LOG_QUEUE_WARN_THRESHOLD}. Archivist lagging.")
         if allow_drop:
-            telemetry_drop_count += 1
-            emit_throttled_warning("telemetry_drop", f"Dropping telemetry deltas while queue remains above {LOG_QUEUE_WARN_THRESHOLD}. Total dropped: {telemetry_drop_count}.")
+            with log_queue_warn_lock:
+                telemetry_drop_count += 1
+                dropped = telemetry_drop_count
+            emit_throttled_warning("telemetry_drop", f"Dropping telemetry deltas while queue remains above {LOG_QUEUE_WARN_THRESHOLD}. Total dropped: {dropped}.")
             return False
 
     log_queue.put_nowait(item)
