@@ -19,7 +19,6 @@ import sqlite3
 import queue
 import re
 import os
-import random
 
 APP_VERSION = "v53"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -893,33 +892,14 @@ def save_airspace():
 
 # ==========================================
 # --- Active Tracking SIGINT System ---
-# --- Persistent Convergent Radar Tracker ---
 # ==========================================
 class SIGINT_Triangulator:
-    """
-    Locates spinning radar emitters by correlating aircraft paint timestamps
-    with known lat/lon positions. Accumulates data over time for convergent
-    accuracy — positions become a "hotspot" that tightens with each new hit.
-    """
-    MAX_HITS_PER_RADAR = 5000
-    MAX_PERSISTED_HITS = 2000     # Subset persisted to DB to manage size
-    SOLVE_TRIGGER_NEW = 12        # Hits needed for first lock
-    SOLVE_TRIGGER_REFINE = 50     # New hits before re-solving an existing radar
-    STALENESS_TIMEOUT = 600       # Seconds with no hits before health decays
-    STALENESS_CHECK_INTERVAL = 120  # Seconds between background staleness checks
-    OUTLIER_THRESHOLD = 45        # Bearing error degrees to reject a point
-    # Convergence weight parameters
-    MAX_POSITION_WEIGHT = 0.9     # Max trust in accumulated position
-    BASE_WEIGHT = 0.5             # Starting trust for first solve
-    CONVERGENCE_RATE = 0.02       # Weight increase per successful solve
-
     def __init__(self):
-        self.paint_buffer = []
+        self.paint_buffer = [] 
         self.lock = threading.Lock()
-        self.active_radars = {}       # {sweep_rounded: {lat, lon, health, hits, solves, bearing_sectors, last_hit_time, unsolved_new}}
+        self.active_radars = {} 
         self.solving_sweeps = set()
-
-        # Load persisted radar state from GeoJSON (DB load happens after db_conn init)
+        
         for f in AIRSPACE_GEOJSON.get("features", []):
             if f.get("properties", {}).get("icon") in ("RADAR", "RADAR_POINT"):
                 sweep = f.get("properties", {}).get("sweep")
@@ -928,296 +908,101 @@ class SIGINT_Triangulator:
                     self.active_radars[sweep_key] = {
                         "lat": f["geometry"]["coordinates"][1],
                         "lon": f["geometry"]["coordinates"][0],
-                        "health": 100,
-                        "hits": 0,
-                        "solves": 0,
-                        "bearing_sectors": set(),
-                        "last_hit_time": time.time(),
-                        "unsolved_new": 0,
-                        "hit_history": [],
+                        "health": 100
                     }
-
-    def load_from_db(self, db_cursor_ref, db_lock_ref):
-        """Load accumulated radar state from SQLite after DB is initialized."""
-        try:
-            with db_lock_ref:
-                db_cursor_ref.execute("""CREATE TABLE IF NOT EXISTS radar_registry
-                    (sweep_key REAL PRIMARY KEY, lat REAL, lon REAL, health INTEGER,
-                     total_hits INTEGER, total_solves INTEGER, bearing_coverage TEXT,
-                     hit_history TEXT, last_hit_time REAL)""")
-                db_cursor_ref.connection.commit()
-
-                db_cursor_ref.execute("SELECT sweep_key, lat, lon, health, total_hits, total_solves, bearing_coverage, hit_history, last_hit_time FROM radar_registry")
-                rows = db_cursor_ref.fetchall()
-                for row in rows:
-                    sweep_key = round(row[0], 1)
-                    bearing_sectors = set()
-                    if row[6]:
-                        try: bearing_sectors = set(json.loads(row[6]))
-                        except: pass
-                    hit_history = []
-                    if row[7]:
-                        try: hit_history = json.loads(row[7])
-                        except: pass
-
-                    self.active_radars[sweep_key] = {
-                        "lat": row[1],
-                        "lon": row[2],
-                        "health": row[3],
-                        "hits": row[4],
-                        "solves": row[5],
-                        "bearing_sectors": bearing_sectors,
-                        "last_hit_time": row[8] if row[8] else time.time(),
-                        "unsolved_new": 0,
-                        "hit_history": hit_history[-self.MAX_HITS_PER_RADAR:],
-                    }
-                    # Sync GeoJSON
-                    self.update_geojson(sweep_key, row[1], row[2])
-
-                if rows:
-                    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}[SIGINT INIT] Loaded {len(rows)} radar emitter(s) from database.{ANSI.RESET}")
-        except Exception as e:
-            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[SIGINT INIT] DB load error: {e}{ANSI.RESET}")
-
-    def save_to_db(self, sweep_key):
-        """Persist a single radar's state to SQLite."""
-        try:
-            radar = self.active_radars.get(sweep_key)
-            if not radar:
-                return
-            bearing_json = json.dumps(list(radar["bearing_sectors"]))
-            # Only persist the last 2000 hits to keep DB size manageable
-            history_json = json.dumps(radar["hit_history"][-self.MAX_PERSISTED_HITS:])
-            with db_lock:
-                db_cursor.execute("""INSERT OR REPLACE INTO radar_registry
-                    (sweep_key, lat, lon, health, total_hits, total_solves, bearing_coverage, hit_history, last_hit_time)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (sweep_key, radar["lat"], radar["lon"], radar["health"],
-                     radar["hits"], radar["solves"], bearing_json, history_json, radar["last_hit_time"]))
-                db_conn.commit()
-        except Exception as e:
-            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[SIGINT DB] Save error for {sweep_key}s: {e}{ANSI.RESET}")
-
-    def get_confidence_radius_km(self, sweep_key):
-        """Returns estimated position accuracy in km based on data quality."""
-        radar = self.active_radars.get(sweep_key)
-        if not radar:
-            return 999
-        hits = radar["hits"]
-        coverage = len(radar["bearing_sectors"])  # out of 36 sectors (10° each)
-        coverage_factor = max(0.3, coverage / 36.0)
-        if hits < 50:
-            return round(15.0 / coverage_factor, 1)
-        elif hits < 200:
-            return round(5.0 / coverage_factor, 1)
-        elif hits < 1000:
-            return round(2.0 / coverage_factor, 1)
-        else:
-            return round(0.5 / coverage_factor, 1)
 
     def log_paint(self, icao, lat, lon, time_hit, sweep_interval):
-        if not (3.5 < sweep_interval < 15.0):
-            return
+        if not (3.5 < sweep_interval < 15.0): return
         sweep_rounded = round(sweep_interval, 1)
-
+        
         with self.lock:
-            paint_point = {"icao": icao, "lat": lat, "lon": lon, "time": time_hit, "raw_sweep": sweep_interval}
-            self.paint_buffer.append(paint_point)
-            if len(self.paint_buffer) > 1500:
-                self.paint_buffer.pop(0)
+            self.paint_buffer.append({"icao": icao, "lat": lat, "lon": lon, "time": time_hit, "raw_sweep": sweep_interval})
+            if len(self.paint_buffer) > 1000: self.paint_buffer.pop(0)
+            
+            # Prevent thread explosion if solver is already running for this sweep
+            if sweep_rounded in self.solving_sweeps: return 
 
-            # If we already track this radar, add to its persistent history
-            if sweep_rounded in self.active_radars:
-                radar = self.active_radars[sweep_rounded]
-                # Outlier rejection: if we have a position, reject points with absurd bearing error
-                if radar["hits"] > 50:
-                    brg = math.degrees(math.atan2(lon - radar["lon"], lat - radar["lat"])) % 360
-                    sector = int(brg // 10)
-                    expected_brg = ((time_hit % sweep_interval) / sweep_interval) * 360
-                    diff = (brg - expected_brg) % 360
-                    if diff > 180:
-                        diff = 360 - diff
-                    if diff > self.OUTLIER_THRESHOLD:
-                        return  # Reject this point as noise
-                    radar["bearing_sectors"].add(sector)
-                else:
-                    brg = math.degrees(math.atan2(lon - radar["lon"], lat - radar["lat"])) % 360
-                    radar["bearing_sectors"].add(int(brg // 10))
-
-                radar["hit_history"].append(paint_point)
-                if len(radar["hit_history"]) > self.MAX_HITS_PER_RADAR:
-                    radar["hit_history"] = radar["hit_history"][-self.MAX_HITS_PER_RADAR:]
-                radar["hits"] += 1
-                radar["last_hit_time"] = time_hit
-                radar["unsolved_new"] += 1
-
-                # Trigger periodic re-solve with full history
-                if radar["unsolved_new"] >= self.SOLVE_TRIGGER_REFINE:
-                    if sweep_rounded not in self.solving_sweeps:
-                        self.solving_sweeps.add(sweep_rounded)
-                        radar["unsolved_new"] = 0
-                        points_for_solve = list(radar["hit_history"])
-                        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}[SIGINT REFINE] Re-solving {sweep_rounded}s with {len(points_for_solve)} accumulated hits. Coverage: {len(radar['bearing_sectors'])}/36 sectors.{ANSI.RESET}")
-                        threading.Thread(target=self.solve_radar_origin, args=(points_for_solve, sweep_rounded), daemon=True).start()
-            else:
-                # No existing radar — accumulate in buffer for initial detection
-                cluster = [p for p in self.paint_buffer if abs(p["raw_sweep"] - sweep_interval) <= 0.15]
-
-                if len(cluster) >= self.SOLVE_TRIGGER_NEW:
-                    if sweep_rounded not in self.solving_sweeps:
-                        self.solving_sweeps.add(sweep_rounded)
-                        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}[SIGINT MATH] Firing initial tracker for {sweep_rounded}s sweep. ({len(cluster)} hits){ANSI.RESET}")
-                        threading.Thread(target=self.solve_radar_origin, args=(list(cluster), sweep_rounded), daemon=True).start()
-                        # Strip used points from buffer
-                        self.paint_buffer = [p for p in self.paint_buffer if p not in cluster]
+            cluster = [p for p in self.paint_buffer if abs(p["raw_sweep"] - sweep_interval) <= 0.15]
+            
+            # Restored 12 point gate to reject immediate noise.
+            if len(cluster) >= 12:
+                self.solving_sweeps.add(sweep_rounded)
+                print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}[SIGINT MATH] Firing active tracker for {sweep_rounded}s sweep. ({len(cluster)} hits){ANSI.RESET}")
+                threading.Thread(target=self.solve_radar_origin, args=(cluster, sweep_rounded), daemon=True).start()
+                
+                # Strip used points to prevent immediate re-triggering
+                self.paint_buffer = [p for p in self.paint_buffer if p not in cluster]
 
     def solve_radar_origin(self, points, sweep_interval):
-        """
-        Two-pass grid search with adaptive resolution.
-        More accumulated hits + higher confidence = tighter search grid.
-        """
         avg_lat = sum(p["lat"] for p in points) / len(points)
         avg_lon = sum(p["lon"] for p in points) / len(points)
-
+        
+        # If tracking an active radar, center the coarse search on the known coordinates.
         with self.lock:
-            is_existing = sweep_interval in self.active_radars
-            if is_existing:
+            if sweep_interval in self.active_radars:
                 avg_lat = self.active_radars[sweep_interval]["lat"]
                 avg_lon = self.active_radars[sweep_interval]["lon"]
-                total_hits = self.active_radars[sweep_interval]["hits"]
-            else:
-                total_hits = len(points)
-
-        # Adaptive resolution: tighter grid as we accumulate more data
-        if total_hits < 100:
-            coarse_step = 0.1     # ~11km
-            coarse_range = 10     # ±1 degree
-            fine_step = 0.01      # ~1.1km
-            fine_range = 10
-        elif total_hits < 500:
-            coarse_step = 0.05    # ~5.5km
-            coarse_range = 6      # ±0.3 degree
-            fine_step = 0.005     # ~550m
-            fine_range = 10
-        elif total_hits < 2000:
-            coarse_step = 0.02    # ~2.2km
-            coarse_range = 5      # ±0.1 degree
-            fine_step = 0.002     # ~220m
-            fine_range = 10
-        else:
-            coarse_step = 0.01    # ~1.1km
-            coarse_range = 5      # ±0.05 degree
-            fine_step = 0.001     # ~111m
-            fine_range = 10
-
-        # Sample points for performance — use all if < 500, otherwise random sample
-        solve_points = points
-        if len(points) > 500:
-            solve_points = random.sample(points, 500)
-
-        # --- Coarse pass ---
+        
         best_point = (avg_lat, avg_lon)
         min_variance = float('inf')
-
-        for dLat in [x * coarse_step for x in range(-coarse_range, coarse_range + 1)]:
-            for dLon in [x * coarse_step for x in range(-coarse_range, coarse_range + 1)]:
+        
+        step = 0.1
+        for dLat in [x * step for x in range(-10, 11)]:
+            for dLon in [x * step for x in range(-10, 11)]:
                 test_lat = avg_lat + dLat
                 test_lon = avg_lon + dLon
-                var = self.calculate_variance(test_lat, test_lon, solve_points, sweep_interval)
+                var = self.calculate_variance(test_lat, test_lon, points, sweep_interval)
                 if var < min_variance:
                     min_variance = var
                     best_point = (test_lat, test_lon)
-
-        # --- Fine pass ---
+                    
+        fine_step = 0.01
         fine_min_var = min_variance
         fine_best = best_point
-        for dLat in [x * fine_step for x in range(-fine_range, fine_range + 1)]:
-            for dLon in [x * fine_step for x in range(-fine_range, fine_range + 1)]:
+        for dLat in [x * fine_step for x in range(-10, 11)]:
+            for dLon in [x * fine_step for x in range(-10, 11)]:
                 test_lat = best_point[0] + dLat
                 test_lon = best_point[1] + dLon
-                var = self.calculate_variance(test_lat, test_lon, solve_points, sweep_interval)
+                var = self.calculate_variance(test_lat, test_lon, points, sweep_interval)
                 if var < fine_min_var:
                     fine_min_var = var
                     fine_best = (test_lat, test_lon)
 
-        confidence_km = self.get_confidence_radius_km(sweep_interval)
-        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[SIGINT DEBUG] {sweep_interval}s Solver Complete. Variance: {round(fine_min_var, 2)} | Points: {len(points)} | Est. Accuracy: ±{confidence_km}km{ANSI.RESET}")
+        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[SIGINT DEBUG] {sweep_interval}s Solver Complete. Variance: {round(fine_min_var, 2)}{ANSI.RESET}")
 
         with self.lock:
             if fine_min_var < 500:
                 if sweep_interval in self.active_radars:
-                    radar = self.active_radars[sweep_interval]
-                    old_lat = radar["lat"]
-                    old_lon = radar["lon"]
-                    solves = radar["solves"] + 1
-
-                    # Weighted average: more solves = trust accumulated position more
-                    # But always allow some pull toward new solution
-                    weight_old = min(self.MAX_POSITION_WEIGHT, self.BASE_WEIGHT + (solves * self.CONVERGENCE_RATE))
-                    weight_new = 1.0 - weight_old
-                    new_lat = (old_lat * weight_old) + (fine_best[0] * weight_new)
-                    new_lon = (old_lon * weight_old) + (fine_best[1] * weight_new)
-
-                    radar["lat"] = new_lat
-                    radar["lon"] = new_lon
-                    radar["health"] = 100
-                    radar["solves"] = solves
-
-                    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.MAGENTA}[SIGINT CONVERGE] {sweep_interval}s Emitter refined (solve #{solves}). Accuracy: ±{confidence_km}km. Bearing coverage: {len(radar['bearing_sectors'])}/36{ANSI.RESET}")
+                    # Center of Mass refinement.
+                    old_lat = self.active_radars[sweep_interval]["lat"]
+                    old_lon = self.active_radars[sweep_interval]["lon"]
+                    new_lat = (old_lat * 0.7) + (fine_best[0] * 0.3)
+                    new_lon = (old_lon * 0.7) + (fine_best[1] * 0.3)
+                    
+                    self.active_radars[sweep_interval]["lat"] = new_lat
+                    self.active_radars[sweep_interval]["lon"] = new_lon
+                    self.active_radars[sweep_interval]["health"] = 100
+                    
+                    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.MAGENTA}[SIGINT TRACK] {sweep_interval}s Emitter Refined. Pulling coordinates to truer center.{ANSI.RESET}")
                     self.update_geojson(sweep_interval, new_lat, new_lon)
-                    self.save_to_db(sweep_interval)
                 else:
-                    # New Lock — first detection
-                    self.active_radars[sweep_interval] = {
-                        "lat": fine_best[0], "lon": fine_best[1], "health": 100,
-                        "hits": len(points), "solves": 1,
-                        "bearing_sectors": set(),
-                        "last_hit_time": time.time(),
-                        "unsolved_new": 0,
-                        "hit_history": list(points),
-                    }
-                    # Calculate initial bearing sectors
-                    for p in points:
-                        brg = math.degrees(math.atan2(p["lon"] - fine_best[1], p["lat"] - fine_best[0])) % 360
-                        self.active_radars[sweep_interval]["bearing_sectors"].add(int(brg // 10))
-
-                    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.MAGENTA}[SIGINT LOCK] New Emitter [{sweep_interval}s]. Lat: {round(fine_best[0],4)}, Lon: {round(fine_best[1],4)} | Initial accuracy: ±{self.get_confidence_radius_km(sweep_interval)}km{ANSI.RESET}")
+                    # New Lock
+                    self.active_radars[sweep_interval] = {"lat": fine_best[0], "lon": fine_best[1], "health": 100}
+                    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.MAGENTA}[SIGINT LOCK] New Emitter Verified [{sweep_interval}s]. Lat: {round(fine_best[0],4)}, Lon: {round(fine_best[1],4)}{ANSI.RESET}")
                     self.add_geojson(sweep_interval, fine_best[0], fine_best[1])
-                    self.save_to_db(sweep_interval)
             else:
-                # High variance — but only decay based on staleness, NOT single bad solves
+                # Confidence decay (ghost purge).
                 if sweep_interval in self.active_radars:
-                    radar = self.active_radars[sweep_interval]
-                    time_since_hit = time.time() - radar["last_hit_time"]
-                    if time_since_hit > self.STALENESS_TIMEOUT:
-                        radar["health"] -= 10
-                        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[SIGINT STALE] {sweep_interval}s No hits for {int(time_since_hit)}s. Health: {radar['health']}%{ANSI.RESET}")
-                        if radar["health"] <= 0:
-                            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[SIGINT PURGE] Stale emitter {sweep_interval}s removed from active matrix.{ANSI.RESET}")
-                            del self.active_radars[sweep_interval]
-                            self.remove_geojson(sweep_interval)
-                            self.remove_from_db(sweep_interval)
-                    else:
-                        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[SIGINT WARN] {sweep_interval}s High variance solve rejected. Keeping existing position (backed by {radar['hits']} hits).{ANSI.RESET}")
+                    self.active_radars[sweep_interval]["health"] -= 25
+                    health = self.active_radars[sweep_interval]["health"]
+                    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[SIGINT WARN] {sweep_interval}s Variance High. Emitter Health dropping: {health}%{ANSI.RESET}")
+                    
+                    if health <= 0:
+                        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[SIGINT PURGE] Ghost Emitter {sweep_interval}s completely eradicated from active matrix.{ANSI.RESET}")
+                        del self.active_radars[sweep_interval]
+                        self.remove_geojson(sweep_interval)
 
             self.solving_sweeps.discard(sweep_interval)
-
-    def run_staleness_check(self):
-        """Periodic check to decay radars that haven't received hits. Call from a timer."""
-        now = time.time()
-        with self.lock:
-            stale_keys = []
-            for sweep_key, radar in self.active_radars.items():
-                time_since_hit = now - radar["last_hit_time"]
-                if time_since_hit > self.STALENESS_TIMEOUT:
-                    radar["health"] -= 5
-                    if radar["health"] <= 0:
-                        stale_keys.append(sweep_key)
-                        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[SIGINT PURGE] Stale emitter {sweep_key}s expired (no hits for {int(time_since_hit)}s).{ANSI.RESET}")
-            for key in stale_keys:
-                del self.active_radars[key]
-                self.remove_geojson(key)
-                self.remove_from_db(key)
 
     def calculate_variance(self, r_lat, r_lon, points, sweep_interval):
         errors = []
@@ -1225,77 +1010,34 @@ class SIGINT_Triangulator:
             brg = math.degrees(math.atan2(p["lon"] - r_lon, p["lat"] - r_lat)) % 360
             expected_brg = ((p["time"] % sweep_interval) / sweep_interval) * 360
             diff = (brg - expected_brg) % 360
-            if diff > 180:
-                diff = 360 - diff
+            if diff > 180: diff = 360 - diff
             errors.append(diff)
         mean_err = sum(errors) / len(errors)
         return sum((e - mean_err) ** 2 for e in errors) / len(errors)
 
     def add_geojson(self, sweep, lat, lon):
-        radar = self.active_radars.get(sweep, {})
-        confidence_km = self.get_confidence_radius_km(sweep)
-        hits = radar.get("hits", 0)
-        coverage = len(radar.get("bearing_sectors", set()))
         feature = {
             "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [round(lon, 4), round(lat, 4)]},
-            "properties": {
-                "name": f"SSR {sweep}s", "icon": "RADAR_POINT", "sweep": sweep,
-                "color": "rgba(16, 185, 129, 0.9)",
-                "confidence_km": confidence_km,
-                "total_hits": hits,
-                "bearing_coverage": f"{coverage}/36",
-            }
+            "geometry": { "type": "Point", "coordinates": [round(lon,4), round(lat,4)] },
+            "properties": { "name": f"SSR {sweep}s", "icon": "RADAR_POINT", "sweep": sweep, "color": "rgba(16, 185, 129, 0.9)" }
         }
         AIRSPACE_GEOJSON["features"].append(feature)
         save_airspace()
 
     def update_geojson(self, sweep, lat, lon):
-        radar = self.active_radars.get(sweep, {})
-        confidence_km = self.get_confidence_radius_km(sweep)
-        hits = radar.get("hits", 0)
-        coverage = len(radar.get("bearing_sectors", set()))
         for f in AIRSPACE_GEOJSON["features"]:
             if f.get("properties", {}).get("sweep") == sweep:
-                f["geometry"]["coordinates"] = [round(lon, 4), round(lat, 4)]
+                f["geometry"]["coordinates"] = [round(lon,4), round(lat,4)]
                 f["properties"]["icon"] = "RADAR_POINT"
-                f["properties"]["confidence_km"] = confidence_km
-                f["properties"]["total_hits"] = hits
-                f["properties"]["bearing_coverage"] = f"{coverage}/36"
                 break
         save_airspace()
 
     def remove_geojson(self, sweep):
         AIRSPACE_GEOJSON["features"] = [
-            f for f in AIRSPACE_GEOJSON["features"]
+            f for f in AIRSPACE_GEOJSON["features"] 
             if f.get("properties", {}).get("sweep") != sweep
         ]
         save_airspace()
-
-    def remove_from_db(self, sweep_key):
-        """Remove a purged radar from the database."""
-        try:
-            with db_lock:
-                db_cursor.execute("DELETE FROM radar_registry WHERE sweep_key = ?", (sweep_key,))
-                db_conn.commit()
-        except Exception as e:
-            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[SIGINT DB] Remove error for {sweep_key}s: {e}{ANSI.RESET}")
-
-    def get_status_summary(self):
-        """Returns a summary dict for WebSocket clients."""
-        summary = {}
-        with self.lock:
-            for sweep_key, radar in self.active_radars.items():
-                summary[str(sweep_key)] = {
-                    "lat": round(radar["lat"], 5),
-                    "lon": round(radar["lon"], 5),
-                    "hits": radar["hits"],
-                    "solves": radar["solves"],
-                    "health": radar["health"],
-                    "confidence_km": self.get_confidence_radius_km(sweep_key),
-                    "bearing_coverage": f"{len(radar['bearing_sectors'])}/36",
-                }
-        return summary
 
 sigint = SIGINT_Triangulator()
 
@@ -1900,21 +1642,12 @@ async def main():
     async with websockets.serve(broadcast_state, WS_HOST, WS_PORT):
         await asyncio.Future()
 
-def sigint_staleness_loop():
-    """Periodic background check to decay radars with no recent hits."""
-    while True:
-        time.sleep(SIGINT_Triangulator.STALENESS_CHECK_INTERVAL)
-        sigint.run_staleness_check()
-
-
 if __name__ == "__main__":
     load_airline_db()
     load_historical_state()
     load_airspace()
-    sigint.load_from_db(db_cursor, db_lock)
     threading.Thread(target=serial_reader_thread, daemon=True).start()
     threading.Thread(target=run_reaper_loop, daemon=True).start() 
     threading.Thread(target=archivist_loop, daemon=True).start()
-    threading.Thread(target=sigint_staleness_loop, daemon=True).start()
     try: asyncio.run(main())
     except KeyboardInterrupt: print(f"\n{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}Shutting down Tactical Matrix...{ANSI.RESET}")
