@@ -116,6 +116,13 @@ def signed_magnitude(raw_value, sign_bit):
 def normalise_angle(angle_deg):
     return angle_deg % 360.0
 
+BDS40_TARGET_ALT_SOURCE = {
+    0: "UNKNOWN",
+    1: "AIRCRAFT ALT",
+    2: "FCU/MCP",
+    3: "FMS",
+}
+
 def is_bds40_payload(payload_int):
     if payload_int == 0:
         return False
@@ -157,13 +164,7 @@ def decode_bds40_payload(payload_int):
 
     if (payload_int >> (55 - 53)) & 0x1:
         source_raw = (payload_int >> (55 - 55)) & 0x3
-        source_map = {
-            0: "UNKNOWN",
-            1: "AIRCRAFT ALT",
-            2: "FCU/MCP",
-            3: "FMS",
-        }
-        result["target_altitude_source"] = source_map.get(source_raw, "UNKNOWN")
+        result["target_altitude_source"] = BDS40_TARGET_ALT_SOURCE.get(source_raw, "UNKNOWN")
 
     return result
 
@@ -1588,7 +1589,7 @@ def process_frame(frame):
                 icao = decoded["icao"].upper()
                 handle_entry_gate(icao)
                 update_aircraft(icao, "last_seen", time.time())
-                if rssi_byte > 0:
+                if 0 < rssi_byte <= 255:
                     try:
                         update_aircraft(icao, "rssi_dbfs", round(20.0 * math.log10(rssi_byte / 255.0), 1))
                     except Exception:
@@ -1603,7 +1604,9 @@ def process_frame(frame):
                 if alt is not None: update_aircraft(icao, "alt", alt)
                 if alt == "GROUND":
                     update_aircraft(icao, "air_ground", "GROUND")
-                elif alt not in [None, "----"]:
+                elif decoded.get("on_ground") is True or decoded.get("onground") is True:
+                    update_aircraft(icao, "air_ground", "GROUND")
+                elif decoded.get("on_ground") is False or decoded.get("onground") is False:
                     update_aircraft(icao, "air_ground", "AIR")
                 if decoded.get("squawk") is not None: update_aircraft(icao, "squawk", decoded["squawk"])
                 speed = decoded.get("groundspeed") or decoded.get("gs")

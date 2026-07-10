@@ -517,6 +517,7 @@
     // CELL RENDERERS
     // ============================================================
     const EM = `<span class="empty-datum">----</span>`;
+    const HAZARD_LEVEL_LABELS = ['NIL', 'LIGHT', 'MOD', 'SEV'];
 
     function renderCell(key, plane) {
         switch(key) {
@@ -693,8 +694,7 @@
             case 'wake_vortex_level': {
                 const v = plane[key];
                 if (v === '----' || v === null || v === undefined) return { html: EM };
-                const labels = ['NIL', 'LIGHT', 'MOD', 'SEV'];
-                return { html: labels[v] !== undefined ? labels[v] : String(v) };
+                return { html: HAZARD_LEVEL_LABELS[v] !== undefined ? HAZARD_LEVEL_LABELS[v] : String(v) };
             }
             case 'threat_icao':
                 return { html: (plane.threat_icao && plane.threat_icao !== '----') ? plane.threat_icao : EM };
