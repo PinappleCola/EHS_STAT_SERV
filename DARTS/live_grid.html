@@ -14,21 +14,24 @@
         .online { color: #4ade80; font-weight: bold; }
         .offline { color: #f87171; font-weight: bold; }
         .db-counter { color: #c084fc; font-weight: bold; letter-spacing: 0.5px; }
-        
+
         .table-container { flex: 2; overflow-y: auto; margin-bottom: 10px; border-radius: 4px; border: 1px solid #1e293b; }
         table { width: 100%; border-collapse: collapse; background-color: #0d1117; }
         th, td { padding: 8px 4px; text-align: left; font-size: 0.75em; vertical-align: middle; color: #f1f5f9; white-space: nowrap; }
-        th { background-color: #030712; color: #38bdf8; font-weight: bold; border-bottom: 2px solid #1e293b; text-transform: uppercase; position: sticky; top: 0; z-index: 10; }
+        th { background-color: #030712; color: #38bdf8; font-weight: bold; border-bottom: 2px solid #1e293b; text-transform: uppercase; position: sticky; top: 0; z-index: 10; cursor: default; }
+        th.sortable { cursor: pointer; user-select: none; }
+        th.sortable:hover { color: #7dd3fc; }
+        th.sort-active { color: #f97316 !important; }
         tr { border-bottom: 1px solid #1e293b; transition: background-color 0.1s ease; }
         tr:hover { background-color: #1e293b; }
-        
+
         .origin-cell { font-size: 0.65em; color: #8b5cf6; text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 0px !important; border-bottom: none !important; font-weight: normal; }
         .header-cell { padding-top: 4px !important; }
-        
+
         .row-ident { background-color: rgba(234, 179, 8, 0.4) !important; transition: background-color 0.2s ease; }
         .row-emergency { background-color: rgba(220, 38, 38, 0.35) !important; font-weight: bold; }
         .row-coasting { opacity: 0.35; transition: opacity 2.5s ease-in-out; }
-        
+
         .icao { color: #fbbf24; font-weight: bold; }
         .airline-cell { color: #22d3ee; font-weight: bold; text-transform: uppercase;}
         .intent { color: #c084fc; font-weight: bold; }
@@ -43,7 +46,7 @@
         .empty-datum { color: #64748b; }
         .status-clean { color: #4ade80; }
         .status-ra { color: #ef4444; font-weight: bold; animation: text-flash 0.5s infinite alternate; }
-        
+
         .instrument-wrapper { display: flex; align-items: center; gap: 8px; transition: opacity 0.4s ease; }
         .val-text { min-width: 32px; display: inline-block; }
         .dial-core { position: relative; width: 24px; height: 24px; border: 1.5px solid #475569; border-radius: 50%; background-color: #0b0b0d; flex-shrink: 0; box-shadow: inset 0 0 4px rgba(0,0,0,0.6); }
@@ -52,34 +55,150 @@
         .bank-pointer, .hdg-pointer { transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1); transform-origin: 50% 50%; }
         .bank-pointer::before { content: ''; position: absolute; top: 50%; left: 10%; width: 80%; height: 2px; background-color: #06b6d4; box-shadow: 0 0 3px rgba(6, 182, 212, 0.8); transform: translateY(-50%); }
         .hdg-pointer::before { content: ''; position: absolute; top: 2px; left: 50%; width: 6px; height: 6px; background-color: #f97316; border-radius: 50%; transform: translateX(-50%); box-shadow: 0 0 4px rgba(249, 115, 22, 0.7); }
-        
+
         @keyframes text-flash { from { opacity: 1; } to { opacity: 0.4; } }
 
-        .intercept-panel { 
-            flex: 1; min-height: 250px; 
-            background-color: #030712; border: 1px solid #1e293b; border-left: 4px solid #c084fc; 
-            border-radius: 4px; padding: 10px; display: flex; flex-direction: column; 
-            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.5); 
+        /* --- Column manager button --- */
+        .col-mgr-btn {
+            background: #1e293b; border: 1px solid #334155; color: #38bdf8; font-family: inherit;
+            font-size: 0.78em; padding: 4px 10px; border-radius: 3px; cursor: pointer; letter-spacing: 0.5px;
+            text-transform: uppercase; transition: background 0.15s, border-color 0.15s;
+        }
+        .col-mgr-btn:hover { background: #334155; border-color: #38bdf8; }
+
+        /* --- Column manager modal overlay --- */
+        .col-mgr-overlay {
+            display: none; position: fixed; inset: 0; z-index: 1000;
+            background: rgba(0,0,0,0.72); backdrop-filter: blur(2px);
+            align-items: flex-start; justify-content: flex-end; padding: 12px;
+        }
+        .col-mgr-overlay.open { display: flex; }
+        .col-mgr-panel {
+            background: #0d1117; border: 1px solid #334155; border-radius: 6px;
+            width: 680px; max-height: calc(100vh - 24px); display: flex; flex-direction: column;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.8);
+        }
+        .col-mgr-header {
+            display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+            border-bottom: 1px solid #1e293b; flex-shrink: 0;
+        }
+        .col-mgr-title { color: #38bdf8; font-size: 0.9em; font-weight: bold; letter-spacing: 1px; flex: 1; }
+        .col-mgr-close {
+            background: none; border: none; color: #64748b; font-size: 1.2em; cursor: pointer; padding: 2px 6px;
+            border-radius: 3px; line-height: 1;
+        }
+        .col-mgr-close:hover { color: #f87171; background: rgba(248,113,113,0.1); }
+        .col-mgr-body {
+            display: flex; gap: 0; flex: 1; min-height: 0; overflow: hidden;
+        }
+        .col-mgr-section {
+            flex: 1; display: flex; flex-direction: column; min-height: 0;
+            padding: 10px 12px;
+        }
+        .col-mgr-section + .col-mgr-section { border-left: 1px solid #1e293b; }
+        .col-section-title {
+            color: #64748b; font-size: 0.65em; letter-spacing: 1px; text-transform: uppercase;
+            margin-bottom: 8px; font-weight: bold; flex-shrink: 0;
+        }
+        .col-search {
+            background: #0b0b0d; border: 1px solid #334155; color: #e2e8f0; font-family: inherit;
+            font-size: 0.72em; padding: 5px 8px; border-radius: 3px; width: 100%; box-sizing: border-box;
+            margin-bottom: 8px; flex-shrink: 0;
+        }
+        .col-search::placeholder { color: #475569; }
+        .col-search:focus { outline: none; border-color: #38bdf8; }
+
+        /* Active columns list (left panel) */
+        .active-col-list {
+            list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1;
+        }
+        .active-col-item {
+            display: flex; align-items: center; gap: 6px; padding: 5px 4px;
+            border: 1px solid transparent; border-radius: 3px; cursor: default;
+            user-select: none; font-size: 0.75em;
+        }
+        .active-col-item.drag-over { border-color: #38bdf8; background: rgba(56,189,248,0.1); }
+        .active-col-item[draggable] { cursor: grab; }
+        .active-col-item:active { cursor: grabbing; }
+        .drag-handle { color: #475569; font-size: 0.85em; flex-shrink: 0; cursor: grab; }
+        .col-item-label { flex: 1; color: #e2e8f0; }
+        .col-item-cat { font-size: 0.65em; color: #64748b; flex-shrink: 0; }
+        .col-item-btn {
+            background: none; border: 1px solid #334155; color: #94a3b8; font-family: inherit;
+            font-size: 0.7em; padding: 1px 5px; border-radius: 2px; cursor: pointer; flex-shrink: 0;
+        }
+        .col-item-btn:hover { border-color: #64748b; color: #e2e8f0; }
+        .col-item-btn.danger:hover { border-color: #f87171; color: #f87171; }
+        .col-item-btn.up-btn, .col-item-btn.dn-btn { font-size: 0.85em; padding: 0 4px; }
+
+        /* Available fields list (right panel) */
+        .avail-col-list { overflow-y: auto; flex: 1; }
+        .avail-cat-group { margin-bottom: 10px; }
+        .avail-cat-label {
+            color: #475569; font-size: 0.62em; letter-spacing: 0.8px; text-transform: uppercase;
+            margin-bottom: 4px; padding: 2px 4px; border-left: 2px solid #334155;
+        }
+        .avail-col-item {
+            display: flex; align-items: center; gap: 8px; padding: 4px 4px;
+            border-radius: 3px; font-size: 0.73em; cursor: default;
+        }
+        .avail-col-item.hidden-field { opacity: 0.5; }
+        .field-toggle {
+            width: 14px; height: 14px; border: 1px solid #475569; border-radius: 2px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; flex-shrink: 0; font-size: 0.7em; transition: all 0.1s;
+        }
+        .field-toggle.active { background: #38bdf8; border-color: #38bdf8; color: #000; }
+        .field-toggle:hover { border-color: #94a3b8; }
+        .avail-field-label { flex: 1; color: #cbd5e1; }
+        .avail-field-src { font-size: 0.65em; color: #475569; }
+
+        /* Footer */
+        .col-mgr-footer {
+            border-top: 1px solid #1e293b; padding: 10px 14px;
+            display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+        }
+        .sort-config { display: flex; align-items: center; gap: 6px; flex: 1; font-size: 0.75em; color: #94a3b8; }
+        .sort-select, .sort-dir-btn {
+            background: #0b0b0d; border: 1px solid #334155; color: #e2e8f0; font-family: inherit;
+            font-size: 0.95em; padding: 3px 6px; border-radius: 3px; cursor: pointer;
+        }
+        .sort-select:focus, .sort-dir-btn:focus { outline: none; border-color: #38bdf8; }
+        .sort-dir-btn { min-width: 60px; }
+        .col-mgr-actions { display: flex; gap: 8px; }
+        .mgr-btn {
+            background: #1e293b; border: 1px solid #334155; color: #94a3b8; font-family: inherit;
+            font-size: 0.75em; padding: 5px 12px; border-radius: 3px; cursor: pointer; letter-spacing: 0.3px;
+        }
+        .mgr-btn:hover { border-color: #64748b; color: #e2e8f0; }
+        .mgr-btn.primary { border-color: #38bdf8; color: #38bdf8; }
+        .mgr-btn.primary:hover { background: rgba(56,189,248,0.1); }
+
+        /* --- Intercept panel (unchanged) --- */
+        .intercept-panel {
+            flex: 1; min-height: 250px;
+            background-color: #030712; border: 1px solid #1e293b; border-left: 4px solid #c084fc;
+            border-radius: 4px; padding: 10px; display: flex; flex-direction: column;
+            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.5);
         }
         .intercept-title { color: #c084fc; font-size: 0.8em; font-weight: bold; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
         .intercept-log { flex: 1; overflow-y: auto; font-size: 0.8em; color: #94a3b8; line-height: 1.5; padding-right: 5px; scroll-behavior: smooth; }
         .intercept-log::-webkit-scrollbar { width: 6px; }
         .intercept-log::-webkit-scrollbar-track { background: #0f172a; border-radius: 3px; }
         .intercept-log::-webkit-scrollbar-thumb { background: #c084fc; border-radius: 3px; }
-        
+
         .log-entry { margin-bottom: 4px; border-bottom: 1px dashed #1e293b; padding-bottom: 2px; animation: pulse-entry 2s ease-out; }
         .db-log-entry { border-bottom: 1px dashed #064e3b; animation: pulse-db 2s ease-out; }
         .sys-log-entry { border-bottom: 1px dashed #0284c7; animation: pulse-sys 2s ease-out; }
-        
+
         .ts-badge { color: #64748b; font-family: monospace; margin-right: 6px; }
         .icao-badge { color: #fbbf24; font-weight: bold; }
         .bds-badge { color: #c084fc; font-weight: bold; }
         .hex-payload { color: #22d3ee; font-weight: bold; }
-        
+
         @keyframes pulse-entry { 0% { color: #fff; background-color: rgba(192, 132, 252, 0.2); } 100% { color: #94a3b8; background-color: transparent; } }
         @keyframes pulse-db { 0% { color: #fff; background-color: rgba(74, 222, 128, 0.2); } 100% { background-color: transparent; } }
         @keyframes pulse-sys { 0% { color: #fff; background-color: rgba(56, 189, 248, 0.2); } 100% { background-color: transparent; } }
-
     </style>
 </head>
 <body>
@@ -87,293 +206,817 @@
     <h2>DART-B Live Grid</h2>
     <div class="status">
         <span>DATASTREAM CORE LINK: <span id="status-text" class="offline">STANDBY</span></span>
-        <span class="db-counter">LEDGER DB: <span id="ledger-count-val">0</span> ROWS</span>
+        <div style="display:flex;gap:12px;align-items:center;">
+            <span class="db-counter">LEDGER DB: <span id="ledger-count-val">0</span> ROWS</span>
+            <button class="col-mgr-btn" onclick="openColumnManager()">⚙ COLUMNS</button>
+        </div>
     </div>
 
     <div class="table-container">
-        <table>
-            <thead>
-                <tr>
-                    <th class="origin-cell">PI Parity</th> <th class="origin-cell">DF17 TC:1-4</th> <th class="origin-cell">DB Lookup</th> <th class="origin-cell">DF11 / DF21</th>
-                    <th class="origin-cell">DF17 / DF20</th> <th class="origin-cell">BDS 4,0</th> <th class="origin-cell">BDS 6,0</th>
-                    <th class="origin-cell">BDS 4,0/6,2/4,8</th> <th class="origin-cell">BDS 4,0</th> <th class="origin-cell">BDS 5,0 / TC19</th>
-                    <th class="origin-cell">BDS 5,0</th> <th class="origin-cell">BDS 6,0</th> <th class="origin-cell">BDS 6,0</th>
-                    <th class="origin-cell">BDS 5,0</th> <th class="origin-cell">BDS 5,0</th> <th class="origin-cell">BDS 3,0</th>
-                    <th class="origin-cell">Δt(Burst) Calc</th> <th class="origin-cell">DF17 TC:31</th> <th class="origin-cell">Local CPR Math</th>
-                    <th class="origin-cell">BDS4,4 + Calc</th> <th class="origin-cell">Sys Clock</th>
-                </tr>
-                <tr>
-                    <th class="header-cell">ICAO</th> <th class="header-cell">CALLSIGN</th> <th class="header-cell">AIRLINE</th> <th class="header-cell">SQUAWK</th>
-                    <th class="header-cell">ALTITUDE</th> <th class="header-cell">TARGET ALT</th> <th class="header-cell">VERT RATE</th>
-                    <th class="header-cell">SYS MODE</th> <th class="header-cell">BARO SET</th> <th class="header-cell">SPEED (GS)</th>
-                    <th class="header-cell">TAS</th> <th class="header-cell">IAS / MACH</th> <th class="header-cell">MAG HDG</th>
-                    <th class="header-cell">TRUE TRK / RATE</th> <th class="header-cell">BANK INDX</th> <th class="header-cell">TCAS RA</th>
-                    <th class="header-cell">RADAR SWEEP</th> <th class="header-cell">GNSS QUAL</th> <th class="header-cell">LAT / LON</th>
-                    <th class="header-cell">METEO / SENSORS</th> <th class="header-cell">AGE</th>
-                </tr>
-            </thead>
+        <table id="main-table">
+            <thead id="main-thead"></thead>
             <tbody id="aircraft-table-body">
-                <tr id="cold-start-row"><td colspan="21" style="text-align: center; color: #10b981; font-weight: bold;">System cold-start. Synchronizing register array...</td></tr>
+                <tr id="cold-start-row"><td colspan="99" style="text-align:center;color:#10b981;font-weight:bold;">System cold-start. Synchronizing register array...</td></tr>
             </tbody>
         </table>
+    </div>
+
+    <!-- Column Manager Modal -->
+    <div class="col-mgr-overlay" id="col-mgr-overlay">
+        <div class="col-mgr-panel">
+            <div class="col-mgr-header">
+                <span class="col-mgr-title">⚙ COLUMN MANAGER</span>
+                <button class="col-mgr-close" onclick="closeColumnManager()" title="Close">✕</button>
+            </div>
+            <div class="col-mgr-body">
+                <!-- Left: active columns in order -->
+                <div class="col-mgr-section">
+                    <div class="col-section-title">ACTIVE COLUMNS — drag to reorder</div>
+                    <ul class="active-col-list" id="active-col-list"></ul>
+                </div>
+                <!-- Right: all available fields with toggle -->
+                <div class="col-mgr-section">
+                    <div class="col-section-title">ALL AVAILABLE FIELDS</div>
+                    <input class="col-search" id="col-search" type="text" placeholder="Search fields..." oninput="filterAvailableFields(this.value)">
+                    <div class="avail-col-list" id="avail-col-list"></div>
+                </div>
+            </div>
+            <div class="col-mgr-footer">
+                <div class="sort-config">
+                    <span>SORT:</span>
+                    <select class="sort-select" id="sort-key-select">
+                        <option value="">— none —</option>
+                    </select>
+                    <button class="sort-dir-btn" id="sort-dir-btn" onclick="toggleSortDir()">▲ ASC</button>
+                </div>
+                <div class="col-mgr-actions">
+                    <button class="mgr-btn" onclick="resetConfig()">RESET DEFAULTS</button>
+                    <button class="mgr-btn primary" onclick="applyConfig()">APPLY ✓</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="intercept-panel">
         <div class="intercept-title">DART-B - Intent Shadow Monitor & Registry</div>
         <div class="intercept-log" id="intent-log-box">
-            <div style="color: #475569; font-style: italic;">Awaiting RF Payloads...</div>
+            <div style="color:#475569;font-style:italic;">Awaiting RF Payloads...</div>
         </div>
     </div>
 
     <script>
-        const tableBody = document.getElementById('aircraft-table-body');
-        const statusText = document.getElementById('status-text');
-        const intentLogBox = document.getElementById('intent-log-box');
-        const ledgerCountVal = document.getElementById('ledger-count-val');
-        
-        const seenIntents = new Set();
-        let isFirstIntent = true;
-        const planeState = {}; 
+    // ============================================================
+    // FIELD REGISTRY
+    // Single source of truth for all available grid columns.
+    // 'key' must match the aircraft state dict key, except for
+    // virtual keys (sys_mode, ias_mach, track_info, latlon, meteo)
+    // which are computed from their constituent raw fields.
+    // ============================================================
+    const FIELD_DEFS = [
+        // --- Identification ---
+        { key:'icao',             label:'ICAO',           category:'IDENTIFICATION', source:'PI Parity',       sortable:true,  defaultVisible:true  },
+        { key:'callsign',         label:'CALLSIGN',       category:'IDENTIFICATION', source:'DF17 TC:1-4',     sortable:true,  defaultVisible:true  },
+        { key:'airline',          label:'AIRLINE',        category:'IDENTIFICATION', source:'DB Lookup',       sortable:true,  defaultVisible:true  },
+        { key:'squawk',           label:'SQUAWK',         category:'IDENTIFICATION', source:'DF11 / DF21',     sortable:true,  defaultVisible:true  },
+        // --- Altitude ---
+        { key:'alt',              label:'ALTITUDE',       category:'ALTITUDE',       source:'DF17 / DF20',     sortable:true,  defaultVisible:true,  unit:'ft'    },
+        { key:'target_alt',       label:'TARGET ALT',     category:'ALTITUDE',       source:'BDS 4,0',         sortable:false, defaultVisible:true  },
+        // --- Kinematics ---
+        { key:'vert_rate',        label:'VERT RATE',      category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:true,  unit:'ft/m'  },
+        // --- System / Modes (ordered here so default columns match original layout) ---
+        { key:'sys_mode',         label:'SYS MODE',       category:'SYSTEM',         source:'BDS 4,0/6,2/4,8', sortable:false, defaultVisible:true              },
+        { key:'baro',             label:'BARO SET',       category:'SYSTEM',         source:'BDS 4,0',         sortable:false, defaultVisible:true,  unit:'hPa'   },
+        // --- Kinematics (speeds + heading) ---
+        { key:'speed',            label:'SPEED GS',       category:'KINEMATICS',     source:'BDS 5,0 / TC19',  sortable:true,  defaultVisible:true,  unit:'kt'    },
+        { key:'tas',              label:'TAS',            category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:true,  unit:'kt'    },
+        { key:'ias_mach',         label:'IAS / MACH',     category:'KINEMATICS',     source:'BDS 6,0',         sortable:false, defaultVisible:true              },
+        { key:'ias',              label:'IAS',            category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:false, unit:'kt'    },
+        { key:'mach',             label:'MACH',           category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:false             },
+        { key:'heading',          label:'MAG HDG',        category:'KINEMATICS',     source:'BDS 6,0',         sortable:true,  defaultVisible:true,  unit:'deg'   },
+        { key:'track_info',       label:'TRUE TRK / RATE',category:'KINEMATICS',     source:'BDS 5,0',         sortable:false, defaultVisible:true              },
+        { key:'track',            label:'TRUE TRK',       category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:false, unit:'deg'   },
+        { key:'track_rate',       label:'TRACK RATE',     category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:false, unit:'deg/s' },
+        { key:'roll',             label:'BANK INDEX',     category:'KINEMATICS',     source:'BDS 5,0',         sortable:true,  defaultVisible:true,  unit:'deg'   },
+        // --- Additional system fields ---
+        { key:'discretes',        label:'DISCRETES',      category:'SYSTEM',         source:'BDS 6,2 / TC29',  sortable:false, defaultVisible:false             },
+        { key:'capability_summary',label:'CAPABILITIES',  category:'SYSTEM',         source:'BDS 1,7',         sortable:false, defaultVisible:false             },
+        { key:'last_bds_hit',     label:'LAST BDS HIT',   category:'SYSTEM',         source:'Decoded',         sortable:false, defaultVisible:false             },
+        { key:'supported_bds',    label:'SUPP BDS REGS',  category:'SYSTEM',         source:'BDS 1,7',         sortable:false, defaultVisible:false             },
+        // --- Safety ---
+        { key:'tcas_ra',          label:'TCAS RA',        category:'SAFETY',         source:'BDS 3,0',         sortable:false, defaultVisible:true              },
+        { key:'hazard',           label:'HAZARD',         category:'SAFETY',         source:'BDS 4,4/4,5',     sortable:false, defaultVisible:false             },
+        // --- Surveillance ---
+        { key:'radar_sweep',      label:'RADAR SWEEP',    category:'SURVEILLANCE',   source:'Δt(Burst) Calc',  sortable:false, defaultVisible:true,  unit:'s'     },
+        // --- Position ---
+        { key:'gnss_qual',        label:'GNSS QUAL',      category:'POSITION',       source:'DF17 TC:31',      sortable:false, defaultVisible:true              },
+        { key:'latlon',           label:'LAT / LON',      category:'POSITION',       source:'Local CPR Math',  sortable:false, defaultVisible:true              },
+        { key:'lat',              label:'LATITUDE',       category:'POSITION',       source:'Local CPR Math',  sortable:true,  defaultVisible:false, unit:'deg'   },
+        { key:'lon',              label:'LONGITUDE',      category:'POSITION',       source:'Local CPR Math',  sortable:true,  defaultVisible:false, unit:'deg'   },
+        // --- Meteorology ---
+        { key:'meteo',            label:'METEO / SENSORS',category:'METEO',          source:'BDS4,4 + Calc',   sortable:false, defaultVisible:true              },
+        { key:'wind',             label:'WIND',           category:'METEO',          source:'BDS 4,4 Calc',    sortable:false, defaultVisible:false             },
+        { key:'sat',              label:'SAT TEMP',       category:'METEO',          source:'BDS 4,4/4,5',     sortable:false, defaultVisible:false, unit:'°C'    },
+        // --- System timing ---
+        { key:'age',              label:'AGE',            category:'SYSTEM',         source:'Sys Clock',       sortable:true,  defaultVisible:true,  unit:'s'     },
+    ];
 
-        const ws = new WebSocket('ws://localhost:8765');
-        ws.onopen = () => { statusText.innerText = 'ONLINE - STREAMING RAMPED'; statusText.className = 'online'; };
-        ws.onclose = () => { statusText.innerText = 'OFFLINE - CONSOLE DETACHED'; statusText.className = 'offline'; };
+    // Build lookup map
+    const FIELD_MAP = {};
+    FIELD_DEFS.forEach(f => FIELD_MAP[f.key] = f);
 
-        ws.onmessage = (event) => {
-            try {
-                const parsedData = JSON.parse(event.data);
-                
-                let aircraftList = [];
-                if (Array.isArray(parsedData)) {
-                    aircraftList = parsedData; 
-                } else {
-                    aircraftList = parsedData.airframes || [];
-                    if (parsedData.meta && parsedData.meta.ledger_count !== undefined) {
-                        if (ledgerCountVal) ledgerCountVal.innerText = parsedData.meta.ledger_count.toLocaleString();
-                    }
-                }
-                
-                const activeIcaos = new Set();
+    // ============================================================
+    // CONFIG MANAGEMENT — localStorage persistence
+    // ============================================================
+    const STORAGE_KEY = 'dart_grid_config_v1';
 
-                if (aircraftList.length > 0) {
-                    const coldStart = document.getElementById('cold-start-row');
-                    if (coldStart) coldStart.remove();
-                }
-
-                aircraftList.forEach(plane => {
-                    if (!plane || !plane.icao) return;
-                    activeIcaos.add(plane.icao);
-                    
-                    if (plane.latest_intent && plane.latest_intent.hex) {
-                        const intentHash = plane.latest_intent.icao + "_" + plane.latest_intent.hex;
-                        if (!seenIntents.has(intentHash)) {
-                            seenIntents.add(intentHash);
-                            if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
-                            const logEntry = document.createElement('div');
-                            logEntry.className = 'log-entry';
-                            logEntry.innerHTML = `> <span class="ts-badge">[${plane.latest_intent.time || ''}]</span> INTENT CAPTURE: <span class="icao-badge">${plane.latest_intent.icao || '----'}</span> broadcasted <span class="bds-badge">${plane.latest_intent.bds || ''}</span> payload [<span class="hex-payload">${plane.latest_intent.hex}</span>]`;
-                            intentLogBox.appendChild(logEntry);
-                            intentLogBox.scrollTop = intentLogBox.scrollHeight;
-                        }
-                    }
-
-                    if (plane.latest_db_log && plane.latest_db_log.hash) {
-                        if (!seenIntents.has(plane.latest_db_log.hash)) {
-                            seenIntents.add(plane.latest_db_log.hash);
-                            if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
-                            const logEntry = document.createElement('div');
-                            logEntry.className = 'log-entry db-log-entry';
-                            logEntry.innerHTML = `<span style="color: #4ade80; font-family: monospace; white-space: pre;">${plane.latest_db_log.text || ''}</span>`;
-                            intentLogBox.appendChild(logEntry);
-                            intentLogBox.scrollTop = intentLogBox.scrollHeight;
-                        }
-                    }
-
-                    if (plane.latest_sys_log && plane.latest_sys_log.hash) {
-                        if (!seenIntents.has(plane.latest_sys_log.hash)) {
-                            seenIntents.add(plane.latest_sys_log.hash);
-                            if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
-                            
-                            const logEntry = document.createElement('div');
-                            const safeHash = String(plane.latest_sys_log.hash);
-                            if (safeHash.includes('gate_')) {
-                                logEntry.className = 'log-entry db-log-entry';
-                            } else if (safeHash.includes('cpr_')) {
-                                logEntry.className = 'log-entry';
-                                logEntry.style.borderBottom = '1px dashed #c084fc';
-                                logEntry.style.animation = 'pulse-entry 2s ease-out';
-                            } else {
-                                logEntry.className = 'log-entry sys-log-entry';
-                            }
-                            
-                            logEntry.innerHTML = `<span style="font-family: monospace; white-space: pre;">${plane.latest_sys_log.text || ''}</span>`;
-                            intentLogBox.appendChild(logEntry);
-                            intentLogBox.scrollTop = intentLogBox.scrollHeight;
-                            
-                            if (intentLogBox.children && intentLogBox.children.length > 50) {
-                                intentLogBox.removeChild(intentLogBox.firstChild);
-                            }
-                        }
-                    }
-
-                    const emptyMarker = `<span class="empty-datum">----</span>`;
-                    const callsignVal = (plane.callsign && plane.callsign !== '----') ? plane.callsign : emptyMarker;
-                    const airlineVal = (plane.airline && plane.airline !== '----') ? plane.airline : emptyMarker;
-                    const squawkVal = (plane.squawk && plane.squawk !== '----') ? plane.squawk : emptyMarker;
-                    const targetAltVal = (plane.target_alt && plane.target_alt !== '----') ? plane.target_alt : emptyMarker;
-                    const capabilityVal = (plane.capability_summary && plane.capability_summary !== '----') ? plane.capability_summary : '';
-                    const lastBdsHitVal = (plane.last_bds_hit && plane.last_bds_hit !== '----') ? plane.last_bds_hit : '';
-                    let modeParts = [];
-                    if (plane.discretes && plane.discretes !== '----') modeParts.push(plane.discretes);
-                    if (capabilityVal) modeParts.push(capabilityVal);
-                    let discreteVal = modeParts.length > 0 ? modeParts.join(' | ') : emptyMarker;
-                    if (lastBdsHitVal) {
-                        const prefix = discreteVal === emptyMarker ? '' : `${discreteVal}<br>`;
-                        discreteVal = `${prefix}<span class="decode-tag">${lastBdsHitVal}</span>`;
-                    }
-                    const baroVal = (plane.baro && plane.baro !== '----') ? plane.baro : emptyMarker;
-                    const speedVal = (plane.speed && plane.speed !== '----') ? plane.speed + ' kt' : emptyMarker;
-                    const tasVal = (plane.tas && plane.tas !== '----') ? plane.tas + ' kt' : emptyMarker;
-                    const sweepVal = (plane.radar_sweep && plane.radar_sweep !== '----') ? plane.radar_sweep : emptyMarker;
-                    const gnssVal = (plane.gnss_qual && plane.gnss_qual !== '----') ? plane.gnss_qual : emptyMarker;
-
-                    let altVal = emptyMarker;
-                    if (plane.alt === 'GROUND') altVal = `<span style="color: #fb923c; font-weight:bold;">GROUND</span>`;
-                    else if (plane.alt !== null && plane.alt !== undefined && typeof plane.alt === 'number') altVal = plane.alt.toLocaleString() + ' ft';
-                    else if (plane.alt !== '----' && plane.alt) altVal = plane.alt + ' ft';
-
-                    let vrateVal = emptyMarker;
-                    if (plane.vert_rate !== '----' && typeof plane.vert_rate === 'number') {
-                        let vColor = plane.vert_rate > 250 ? '#4ade80' : (plane.vert_rate < -250 ? '#fb923c' : '#94a3b8');
-                        vrateVal = `<span style="color: ${vColor}; font-weight: bold;">${plane.vert_rate > 0 ? '+' : ''}${plane.vert_rate} ft/m</span>`;
-                    }
-
-                    let iasMachBuffer = [];
-                    if (plane.ias !== '----' && typeof plane.ias === 'number') iasMachBuffer.push(`${plane.ias} kt`);
-                    if (plane.mach !== '----' && typeof plane.mach === 'number') iasMachBuffer.push(`M${plane.mach.toFixed(3)}`);
-                    const iasMachVal = iasMachBuffer.length > 0 ? iasMachBuffer.join(' / ') : emptyMarker;
-
-                    let trkRateBuffer = [];
-                    if (plane.track !== '----' && typeof plane.track === 'number') trkRateBuffer.push(`${plane.track}°`);
-                    if (plane.track_rate !== '----' && typeof plane.track_rate === 'number') {
-                        trkRateBuffer.push(`<span style="color: #c084fc;">(${plane.track_rate > 0 ? '+' : ''}${plane.track_rate}°/s)</span>`);
-                    }
-                    const trackVal = trkRateBuffer.length > 0 ? trkRateBuffer.join(' ') : emptyMarker;
-                    
-                    let cprVal = emptyMarker;
-                    if (plane.lat !== '----' && plane.lon !== '----') {
-                        cprVal = `${plane.lat.toFixed(4)}, ${plane.lon.toFixed(4)}`;
-                    }
-
-                    let sensorString = '';
-                    if (plane.hazard && plane.hazard !== '----') {
-                        sensorString = `<span style="color:#ef4444; font-weight:bold; animation: text-flash 0.5s infinite alternate;">${plane.hazard}</span>`;
-                    } else {
-                        sensorString = (plane.wind && plane.wind !== '----') ? `W:${plane.wind}` : '';
-                        if (plane.sat && plane.sat !== '----') sensorString += sensorString ? ` | T:${plane.sat}` : `T:${plane.sat}`;
-                        if (!sensorString) sensorString = emptyMarker;
-                    }
-
-                    const hasActiveRa = !!(plane.tcas_ra && plane.tcas_ra !== '----' && plane.tcas_ra !== 'CLEAN');
-                    let rowClass = '';
-                    if (['7500', '7600', '7700'].includes(plane.squawk) || hasActiveRa) rowClass = 'row-emergency';
-                    const raClass = hasActiveRa ? 'status-ra' : 'status-clean';
-
-                    let row = document.getElementById('row-' + plane.icao);
-                    
-                    if (!row) {
-                        row = document.createElement('tr');
-                        row.id = 'row-' + plane.icao;
-                        for(let i=0; i<21; i++) row.appendChild(document.createElement('td')); 
-                        tableBody.appendChild(row);
-                        
-                        row.cells[12].innerHTML = `<div class="instrument-wrapper"><div class="dial-core hdg-dial"><div class="pointer-container hdg-pointer"></div></div><span class="val-text"></span></div>`;
-                        row.cells[14].innerHTML = `<div class="instrument-wrapper"><div class="dial-core bank-dial"><div class="pointer-container bank-pointer"></div></div><span class="val-text"></span></div>`;
-                        
-                        planeState[plane.icao] = { hdg: 0, roll: 0, firstPing: true };
-                    }
-
-                    row.className = rowClass;
-
-                    if (plane.is_coasting) row.classList.add('row-coasting');
-                    else row.classList.remove('row-coasting');
-
-                    row.cells[0].className = 'icao'; row.cells[0].innerHTML = plane.icao;
-                    row.cells[1].innerHTML = callsignVal;
-                    row.cells[2].className = 'airline-cell'; row.cells[2].innerHTML = airlineVal;
-                    row.cells[3].className = 'squawk-cell'; row.cells[3].innerHTML = squawkVal;
-                    row.cells[4].innerHTML = altVal;
-                    row.cells[5].className = 'intent'; row.cells[5].innerHTML = targetAltVal;
-                    row.cells[6].innerHTML = vrateVal;
-                    row.cells[7].className = 'discrete-cell'; row.cells[7].innerHTML = discreteVal;
-                    row.cells[8].className = 'baro-cell'; row.cells[8].innerHTML = baroVal;
-                    row.cells[9].innerHTML = speedVal;
-                    row.cells[10].innerHTML = tasVal;
-                    row.cells[11].innerHTML = iasMachVal;
-                    row.cells[13].innerHTML = trackVal;
-                    row.cells[15].className = raClass; row.cells[15].innerHTML = plane.tcas_ra;
-                    row.cells[16].className = 'radar-cell'; row.cells[16].innerHTML = sweepVal;
-                    row.cells[17].className = 'gnss-cell'; row.cells[17].innerHTML = gnssVal;
-                    row.cells[18].className = 'cpr-cell'; row.cells[18].innerHTML = cprVal; 
-                    row.cells[19].className = 'sensor-cell'; row.cells[19].innerHTML = sensorString;
-                    row.cells[20].style.color = plane.age > 45 ? '#f87171' : '#e2e8f0'; row.cells[20].innerHTML = plane.age + 's';
-
-                    if (!planeState[plane.icao]) {
-                        planeState[plane.icao] = { hdg: 0, roll: 0, firstPing: true };
-                    }
-                    const state = planeState[plane.icao];
-                    
-                    const hasHdg = (plane.heading !== '----' && plane.heading !== null);
-                    if (hasHdg) {
-                        let targetHdg = parseFloat(plane.heading);
-                        if (state.firstPing) {
-                            state.hdg = targetHdg; 
-                        } else {
-                            let diff = targetHdg - (state.hdg % 360);
-                            if (diff > 180) diff -= 360;
-                            else if (diff < -180) diff += 360;
-                            state.hdg += diff; 
-                        }
-                        state.hdg = ((state.hdg % 360) + 360) % 360;
-                    }
-                    
-                    const hdgWrapper = row.cells[12].querySelector('.instrument-wrapper');
-                    if (hdgWrapper) hdgWrapper.style.opacity = hasHdg ? '1' : '0.3';
-                    const hdgPointer = row.cells[12].querySelector('.hdg-pointer');
-                    if (hdgPointer) hdgPointer.style.transform = `rotate(${state.hdg}deg)`;
-                    const hdgText = row.cells[12].querySelector('.val-text');
-                    if (hdgText) hdgText.innerHTML = hasHdg ? `${plane.heading}°` : emptyMarker;
-
-                    const hasRoll = (plane.roll !== '----' && plane.roll !== null);
-                    if (hasRoll) { state.roll = parseFloat(plane.roll); } 
-                    
-                    const rollWrapper = row.cells[14].querySelector('.instrument-wrapper');
-                    if (rollWrapper) rollWrapper.style.opacity = hasRoll ? '1' : '0.3';
-                    const bankPointer = row.cells[14].querySelector('.bank-pointer');
-                    const displayRoll = Math.max(-30, Math.min(30, state.roll));
-                    if (bankPointer) bankPointer.style.transform = `rotate(${displayRoll * 1.5}deg)`;
-                    const bankText = row.cells[14].querySelector('.val-text');
-                    if (bankText) bankText.innerHTML = hasRoll ? `${Math.round(displayRoll)}°` : emptyMarker;
-
-                    state.firstPing = false;
-                });
-
-                Array.from(tableBody.children).forEach(row => {
-                    if (row.id === 'cold-start-row') return;
-                    const rowIcao = row.id.replace('row-', '');
-                    if (!activeIcaos.has(rowIcao)) {
-                        row.remove();
-                        delete planeState[rowIcao];
-                    }
-                });
-
-                if (aircraftList.length === 0 && !document.getElementById('cold-start-row')) {
-                    tableBody.innerHTML = `<tr id="cold-start-row"><td colspan="21" style="text-align: center; color: #94a3b8;">No tracked emitters within radar aperture range.</td></tr>`;
-                }
-            } catch (err) {
-                console.warn("Soft catch on Matrix Loop:", err);
-            }
+    function getDefaultConfig() {
+        return {
+            columns: FIELD_DEFS.filter(f => f.defaultVisible).map(f => f.key),
+            sortKey: null,
+            sortDir: 'asc'
         };
+    }
+
+    function loadConfig() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (raw) {
+                const cfg = JSON.parse(raw);
+                // Validate: ensure all stored column keys exist in FIELD_MAP
+                if (Array.isArray(cfg.columns)) {
+                    cfg.columns = cfg.columns.filter(k => FIELD_MAP[k]);
+                    if (cfg.columns.length === 0) return getDefaultConfig();
+                }
+                return cfg;
+            }
+        } catch(e) {}
+        return getDefaultConfig();
+    }
+
+    function saveConfig(cfg) {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch(e) {}
+    }
+
+    // Active config (drives table rendering)
+    let activeConfig = loadConfig();
+
+    // Working copy used while column manager is open
+    let tempConfig = null;
+
+    // ============================================================
+    // TABLE HEADER RENDERING
+    // ============================================================
+    function rebuildTableHeader() {
+        const thead = document.getElementById('main-thead');
+        thead.innerHTML = '';
+
+        // Row 1: source labels (origin cells)
+        const srcRow = document.createElement('tr');
+        activeConfig.columns.forEach(key => {
+            const th = document.createElement('th');
+            th.className = 'origin-cell';
+            th.textContent = (FIELD_MAP[key] && FIELD_MAP[key].source) || '';
+            srcRow.appendChild(th);
+        });
+        thead.appendChild(srcRow);
+
+        // Row 2: column header labels
+        const hdrRow = document.createElement('tr');
+        activeConfig.columns.forEach(key => {
+            const def = FIELD_MAP[key];
+            const th = document.createElement('th');
+            th.className = 'header-cell';
+            th.dataset.key = key;
+
+            let label = def ? def.label : key.toUpperCase();
+            if (def && def.unit) label += ` (${def.unit})`;
+
+            // Sort indicator
+            if (def && def.sortable) {
+                th.classList.add('sortable');
+                if (activeConfig.sortKey === key) {
+                    th.classList.add('sort-active');
+                    label += (activeConfig.sortDir === 'asc') ? ' ▲' : ' ▼';
+                }
+                th.onclick = () => handleHeaderSort(key);
+            }
+            th.textContent = label;
+            hdrRow.appendChild(th);
+        });
+        thead.appendChild(hdrRow);
+    }
+
+    function handleHeaderSort(key) {
+        if (activeConfig.sortKey === key) {
+            activeConfig.sortDir = activeConfig.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+            activeConfig.sortKey = key;
+            activeConfig.sortDir = 'asc';
+        }
+        saveConfig(activeConfig);
+        rebuildTableHeader();
+    }
+
+    // ============================================================
+    // CELL RENDERERS
+    // ============================================================
+    const EM = `<span class="empty-datum">----</span>`;
+
+    function renderCell(key, plane) {
+        switch(key) {
+            case 'icao':
+                return { html: plane.icao || EM, cls: 'icao' };
+            case 'callsign':
+                return { html: (plane.callsign && plane.callsign !== '----') ? plane.callsign : EM };
+            case 'airline':
+                return { html: (plane.airline && plane.airline !== '----') ? plane.airline : EM, cls: 'airline-cell' };
+            case 'squawk':
+                return { html: (plane.squawk && plane.squawk !== '----') ? plane.squawk : EM, cls: 'squawk-cell' };
+            case 'alt': {
+                let html = EM;
+                if (plane.alt === 'GROUND') html = `<span style="color:#fb923c;font-weight:bold;">GROUND</span>`;
+                else if (typeof plane.alt === 'number') html = plane.alt.toLocaleString() + ' ft';
+                else if (plane.alt && plane.alt !== '----') html = plane.alt + ' ft';
+                return { html };
+            }
+            case 'target_alt':
+                return { html: (plane.target_alt && plane.target_alt !== '----') ? plane.target_alt : EM, cls: 'intent' };
+            case 'vert_rate': {
+                if (typeof plane.vert_rate !== 'number') return { html: EM };
+                const c = plane.vert_rate > 250 ? '#4ade80' : (plane.vert_rate < -250 ? '#fb923c' : '#94a3b8');
+                return { html: `<span style="color:${c};font-weight:bold;">${plane.vert_rate > 0 ? '+' : ''}${plane.vert_rate} ft/m</span>` };
+            }
+            case 'speed':
+                return { html: (plane.speed && plane.speed !== '----') ? plane.speed + ' kt' : EM };
+            case 'tas':
+                return { html: (plane.tas && plane.tas !== '----') ? plane.tas + ' kt' : EM };
+            case 'ias_mach': {
+                const parts = [];
+                if (typeof plane.ias === 'number') parts.push(`${plane.ias} kt`);
+                if (typeof plane.mach === 'number') parts.push(`M${plane.mach.toFixed(3)}`);
+                return { html: parts.length ? parts.join(' / ') : EM };
+            }
+            case 'ias':
+                return { html: (typeof plane.ias === 'number') ? plane.ias + ' kt' : EM };
+            case 'mach':
+                return { html: (typeof plane.mach === 'number') ? 'M' + plane.mach.toFixed(3) : EM };
+            case 'heading':
+                return { html: null, special: 'heading' };
+            case 'track_info': {
+                const parts = [];
+                if (typeof plane.track === 'number') parts.push(`${plane.track}°`);
+                if (typeof plane.track_rate === 'number') {
+                    parts.push(`<span style="color:#c084fc;">(${plane.track_rate > 0 ? '+' : ''}${plane.track_rate}°/s)</span>`);
+                }
+                return { html: parts.length ? parts.join(' ') : EM };
+            }
+            case 'track':
+                return { html: (typeof plane.track === 'number') ? `${plane.track}°` : EM };
+            case 'track_rate':
+                return { html: (typeof plane.track_rate === 'number') ? `${plane.track_rate > 0 ? '+' : ''}${plane.track_rate}°/s` : EM };
+            case 'roll':
+                return { html: null, special: 'roll' };
+            case 'sys_mode': {
+                const cap = (plane.capability_summary && plane.capability_summary !== '----') ? plane.capability_summary : '';
+                const bds = (plane.last_bds_hit && plane.last_bds_hit !== '----') ? plane.last_bds_hit : '';
+                let parts = [];
+                if (plane.discretes && plane.discretes !== '----') parts.push(plane.discretes);
+                if (cap) parts.push(cap);
+                let html = parts.length ? parts.join(' | ') : EM;
+                if (bds) {
+                    const prefix = html === EM ? '' : `${html}<br>`;
+                    html = `${prefix}<span class="decode-tag">${bds}</span>`;
+                }
+                return { html, cls: 'discrete-cell' };
+            }
+            case 'baro':
+                return { html: (plane.baro && plane.baro !== '----') ? plane.baro : EM, cls: 'baro-cell' };
+            case 'discretes':
+                return { html: (plane.discretes && plane.discretes !== '----') ? plane.discretes : EM, cls: 'discrete-cell' };
+            case 'capability_summary':
+                return { html: (plane.capability_summary && plane.capability_summary !== '----') ? plane.capability_summary : EM };
+            case 'last_bds_hit':
+                return { html: (plane.last_bds_hit && plane.last_bds_hit !== '----') ? `<span class="decode-tag">${plane.last_bds_hit}</span>` : EM };
+            case 'supported_bds':
+                return { html: (Array.isArray(plane.supported_bds) && plane.supported_bds.length) ? plane.supported_bds.join(', ') : EM };
+            case 'tcas_ra': {
+                const hasRa = !!(plane.tcas_ra && plane.tcas_ra !== '----' && plane.tcas_ra !== 'CLEAN');
+                return { html: plane.tcas_ra || EM, cls: hasRa ? 'status-ra' : 'status-clean' };
+            }
+            case 'hazard':
+                return { html: (plane.hazard && plane.hazard !== '----') ? `<span style="color:#ef4444;font-weight:bold;animation:text-flash 0.5s infinite alternate;">${plane.hazard}</span>` : EM };
+            case 'radar_sweep':
+                return { html: (plane.radar_sweep && plane.radar_sweep !== '----') ? plane.radar_sweep : EM, cls: 'radar-cell' };
+            case 'gnss_qual':
+                return { html: (plane.gnss_qual && plane.gnss_qual !== '----') ? plane.gnss_qual : EM, cls: 'gnss-cell' };
+            case 'latlon': {
+                if (plane.lat !== '----' && plane.lon !== '----' && typeof plane.lat === 'number') {
+                    return { html: `${plane.lat.toFixed(4)}, ${plane.lon.toFixed(4)}`, cls: 'cpr-cell' };
+                }
+                return { html: EM };
+            }
+            case 'lat':
+                return { html: (typeof plane.lat === 'number') ? plane.lat.toFixed(4) : EM };
+            case 'lon':
+                return { html: (typeof plane.lon === 'number') ? plane.lon.toFixed(4) : EM };
+            case 'meteo': {
+                if (plane.hazard && plane.hazard !== '----') {
+                    return { html: `<span style="color:#ef4444;font-weight:bold;animation:text-flash 0.5s infinite alternate;">${plane.hazard}</span>`, cls: 'sensor-cell' };
+                }
+                const parts = [];
+                if (plane.wind && plane.wind !== '----') parts.push(`W:${plane.wind}`);
+                if (plane.sat && plane.sat !== '----') parts.push(`T:${plane.sat}`);
+                return { html: parts.length ? parts.join(' | ') : EM, cls: 'sensor-cell' };
+            }
+            case 'wind':
+                return { html: (plane.wind && plane.wind !== '----') ? plane.wind : EM };
+            case 'sat':
+                return { html: (plane.sat && plane.sat !== '----') ? plane.sat : EM };
+            case 'age': {
+                const color = plane.age > 45 ? '#f87171' : '#e2e8f0';
+                return { html: plane.age + 's', style: `color:${color}` };
+            }
+            default:
+                return { html: EM };
+        }
+    }
+
+    // ============================================================
+    // ROW MANAGEMENT (per-aircraft heading/roll animation state)
+    // ============================================================
+    const planeState = {};
+
+    function initHeadingWidget() {
+        return `<div class="instrument-wrapper"><div class="dial-core hdg-dial"><div class="pointer-container hdg-pointer"></div></div><span class="val-text"></span></div>`;
+    }
+    function initRollWidget() {
+        return `<div class="instrument-wrapper"><div class="dial-core bank-dial"><div class="pointer-container bank-pointer"></div></div><span class="val-text"></span></div>`;
+    }
+
+    function createRow(icao) {
+        const row = document.createElement('tr');
+        row.id = 'row-' + icao;
+        activeConfig.columns.forEach(key => {
+            const td = document.createElement('td');
+            td.dataset.field = key;
+            if (key === 'heading') td.innerHTML = initHeadingWidget();
+            else if (key === 'roll') td.innerHTML = initRollWidget();
+            row.appendChild(td);
+        });
+        planeState[icao] = { hdg: 0, roll: 0, firstPing: true };
+        return row;
+    }
+
+    function updateRow(plane) {
+        const tableBody = document.getElementById('aircraft-table-body');
+        let row = document.getElementById('row-' + plane.icao);
+        const numCols = activeConfig.columns.length;
+
+        if (!row) {
+            row = createRow(plane.icao);
+            tableBody.appendChild(row);
+        } else if (row.cells.length !== numCols) {
+            // Column config changed — rebuild this row's cells
+            while (row.firstChild) row.removeChild(row.firstChild);
+            activeConfig.columns.forEach(key => {
+                const td = document.createElement('td');
+                td.dataset.field = key;
+                if (key === 'heading') td.innerHTML = initHeadingWidget();
+                else if (key === 'roll') td.innerHTML = initRollWidget();
+                row.appendChild(td);
+            });
+            if (!planeState[plane.icao]) planeState[plane.icao] = { hdg: 0, roll: 0, firstPing: true };
+        }
+
+        // Emergency / IDENT row classes
+        const hasRa = !!(plane.tcas_ra && plane.tcas_ra !== '----' && plane.tcas_ra !== 'CLEAN');
+        let rowClass = '';
+        if (['7500','7600','7700'].includes(plane.squawk) || hasRa) rowClass = 'row-emergency';
+        row.className = rowClass;
+        if (plane.is_coasting) row.classList.add('row-coasting');
+
+        // Update each cell via renderer
+        activeConfig.columns.forEach(key => {
+            const td = row.querySelector(`[data-field="${key}"]`);
+            if (!td) return;
+            const r = renderCell(key, plane);
+            if (r.special === 'heading') {
+                updateHeadingWidget(td, plane);
+            } else if (r.special === 'roll') {
+                updateRollWidget(td, plane);
+            } else {
+                td.innerHTML = r.html;
+                td.className = r.cls || '';
+                if (r.style) td.style.cssText = r.style;
+                else td.style.cssText = '';
+            }
+        });
+    }
+
+    function updateHeadingWidget(td, plane) {
+        if (!planeState[plane.icao]) planeState[plane.icao] = { hdg: 0, roll: 0, firstPing: true };
+        const state = planeState[plane.icao];
+        const hasHdg = (plane.heading !== '----' && plane.heading !== null && plane.heading !== undefined);
+
+        if (hasHdg) {
+            const targetHdg = parseFloat(plane.heading);
+            if (state.firstPing) {
+                state.hdg = targetHdg;
+            } else {
+                let diff = targetHdg - (state.hdg % 360);
+                if (diff > 180) diff -= 360;
+                else if (diff < -180) diff += 360;
+                state.hdg += diff;
+            }
+            state.hdg = ((state.hdg % 360) + 360) % 360;
+        }
+
+        const wrapper = td.querySelector('.instrument-wrapper');
+        if (wrapper) wrapper.style.opacity = hasHdg ? '1' : '0.3';
+        const ptr = td.querySelector('.hdg-pointer');
+        if (ptr) ptr.style.transform = `rotate(${state.hdg}deg)`;
+        const txt = td.querySelector('.val-text');
+        if (txt) txt.innerHTML = hasHdg ? `${plane.heading}°` : EM;
+    }
+
+    function updateRollWidget(td, plane) {
+        if (!planeState[plane.icao]) planeState[plane.icao] = { hdg: 0, roll: 0, firstPing: true };
+        const state = planeState[plane.icao];
+        const hasRoll = (plane.roll !== '----' && plane.roll !== null && plane.roll !== undefined);
+        if (hasRoll) state.roll = parseFloat(plane.roll);
+
+        const wrapper = td.querySelector('.instrument-wrapper');
+        if (wrapper) wrapper.style.opacity = hasRoll ? '1' : '0.3';
+        const ptr = td.querySelector('.bank-pointer');
+        const disp = Math.max(-30, Math.min(30, state.roll));
+        if (ptr) ptr.style.transform = `rotate(${disp * 1.5}deg)`;
+        const txt = td.querySelector('.val-text');
+        if (txt) txt.innerHTML = hasRoll ? `${Math.round(disp)}°` : EM;
+    }
+
+    // ============================================================
+    // TABLE UPDATE (called on every WebSocket message)
+    // ============================================================
+    function updateTable(aircraftList) {
+        const tableBody = document.getElementById('aircraft-table-body');
+
+        if (aircraftList.length > 0) {
+            const coldStart = document.getElementById('cold-start-row');
+            if (coldStart) coldStart.remove();
+        }
+
+        // Sort if configured
+        let sorted = [...aircraftList];
+        if (activeConfig.sortKey) {
+            const sk = activeConfig.sortKey;
+            const dir = activeConfig.sortDir === 'desc' ? -1 : 1;
+            sorted.sort((a, b) => {
+                let va = a[sk], vb = b[sk];
+                // Treat missing/null/---- as always last
+                const aNull = (va === null || va === undefined || va === '----');
+                const bNull = (vb === null || vb === undefined || vb === '----');
+                if (aNull && bNull) return 0;
+                if (aNull) return 1;
+                if (bNull) return -1;
+                if (typeof va === 'number' && typeof vb === 'number') return dir * (va - vb);
+                return dir * String(va).localeCompare(String(vb));
+            });
+        }
+
+        // Update/create rows
+        const activeIcaos = new Set();
+        sorted.forEach(plane => {
+            if (!plane || !plane.icao) return;
+            activeIcaos.add(plane.icao);
+            updateRow(plane);
+        });
+
+        // Reorder DOM to match sort
+        if (activeConfig.sortKey) {
+            sorted.forEach(plane => {
+                if (!plane || !plane.icao) return;
+                const row = document.getElementById('row-' + plane.icao);
+                if (row) tableBody.appendChild(row);
+            });
+        }
+
+        // Finalise per-aircraft state flags
+        sorted.forEach(plane => {
+            if (!plane || !plane.icao) return;
+            if (planeState[plane.icao]) planeState[plane.icao].firstPing = false;
+        });
+
+        // Remove stale rows
+        Array.from(tableBody.children).forEach(row => {
+            if (row.id === 'cold-start-row') return;
+            const icao = row.id.replace('row-', '');
+            if (!activeIcaos.has(icao)) {
+                row.remove();
+                delete planeState[icao];
+            }
+        });
+
+        if (aircraftList.length === 0 && !document.getElementById('cold-start-row')) {
+            tableBody.innerHTML = `<tr id="cold-start-row"><td colspan="99" style="text-align:center;color:#94a3b8;">No tracked emitters within radar aperture range.</td></tr>`;
+        }
+    }
+
+    // ============================================================
+    // WEBSOCKET
+    // ============================================================
+    const tableBody = document.getElementById('aircraft-table-body');
+    const statusText = document.getElementById('status-text');
+    const intentLogBox = document.getElementById('intent-log-box');
+    const ledgerCountVal = document.getElementById('ledger-count-val');
+
+    const seenIntents = new Set();
+    let isFirstIntent = true;
+
+    const ws = new WebSocket('ws://localhost:8765');
+    ws.onopen = () => { statusText.innerText = 'ONLINE - STREAMING RAMPED'; statusText.className = 'online'; };
+    ws.onclose = () => { statusText.innerText = 'OFFLINE - CONSOLE DETACHED'; statusText.className = 'offline'; };
+
+    ws.onmessage = (event) => {
+        try {
+            const parsedData = JSON.parse(event.data);
+
+            let aircraftList = [];
+            if (Array.isArray(parsedData)) {
+                aircraftList = parsedData;
+            } else {
+                aircraftList = parsedData.airframes || [];
+                if (parsedData.meta && parsedData.meta.ledger_count !== undefined) {
+                    if (ledgerCountVal) ledgerCountVal.innerText = parsedData.meta.ledger_count.toLocaleString();
+                }
+            }
+
+            // Update grid
+            updateTable(aircraftList);
+
+            // Intercept / intent log (unchanged logic)
+            aircraftList.forEach(plane => {
+                if (!plane || !plane.icao) return;
+
+                if (plane.latest_intent && plane.latest_intent.hex) {
+                    const intentHash = plane.latest_intent.icao + '_' + plane.latest_intent.hex;
+                    if (!seenIntents.has(intentHash)) {
+                        seenIntents.add(intentHash);
+                        if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
+                        const logEntry = document.createElement('div');
+                        logEntry.className = 'log-entry';
+                        logEntry.innerHTML = `> <span class="ts-badge">[${plane.latest_intent.time || ''}]</span> INTENT CAPTURE: <span class="icao-badge">${plane.latest_intent.icao || '----'}</span> broadcasted <span class="bds-badge">${plane.latest_intent.bds || ''}</span> payload [<span class="hex-payload">${plane.latest_intent.hex}</span>]`;
+                        intentLogBox.appendChild(logEntry);
+                        intentLogBox.scrollTop = intentLogBox.scrollHeight;
+                    }
+                }
+
+                if (plane.latest_db_log && plane.latest_db_log.hash) {
+                    if (!seenIntents.has(plane.latest_db_log.hash)) {
+                        seenIntents.add(plane.latest_db_log.hash);
+                        if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
+                        const logEntry = document.createElement('div');
+                        logEntry.className = 'log-entry db-log-entry';
+                        logEntry.innerHTML = `<span style="color:#4ade80;font-family:monospace;white-space:pre;">${plane.latest_db_log.text || ''}</span>`;
+                        intentLogBox.appendChild(logEntry);
+                        intentLogBox.scrollTop = intentLogBox.scrollHeight;
+                    }
+                }
+
+                if (plane.latest_sys_log && plane.latest_sys_log.hash) {
+                    if (!seenIntents.has(plane.latest_sys_log.hash)) {
+                        seenIntents.add(plane.latest_sys_log.hash);
+                        if (isFirstIntent) { intentLogBox.innerHTML = ''; isFirstIntent = false; }
+                        const logEntry = document.createElement('div');
+                        const safeHash = String(plane.latest_sys_log.hash);
+                        if (safeHash.includes('gate_')) logEntry.className = 'log-entry db-log-entry';
+                        else if (safeHash.includes('cpr_')) {
+                            logEntry.className = 'log-entry';
+                            logEntry.style.borderBottom = '1px dashed #c084fc';
+                            logEntry.style.animation = 'pulse-entry 2s ease-out';
+                        } else {
+                            logEntry.className = 'log-entry sys-log-entry';
+                        }
+                        logEntry.innerHTML = `<span style="font-family:monospace;white-space:pre;">${plane.latest_sys_log.text || ''}</span>`;
+                        intentLogBox.appendChild(logEntry);
+                        intentLogBox.scrollTop = intentLogBox.scrollHeight;
+                        if (intentLogBox.children && intentLogBox.children.length > 50) {
+                            intentLogBox.removeChild(intentLogBox.firstChild);
+                        }
+                    }
+                }
+            });
+
+        } catch(err) {
+            console.warn('Soft catch on Matrix Loop:', err);
+        }
+    };
+
+    // ============================================================
+    // COLUMN MANAGER — drag-and-drop reorder, toggle visibility
+    // ============================================================
+
+    let dragSrcKey = null;
+
+    function openColumnManager() {
+        // Clone active config into working copy
+        tempConfig = JSON.parse(JSON.stringify(activeConfig));
+        renderActiveColList();
+        renderAvailableColList('');
+        populateSortSelect();
+        document.getElementById('col-search').value = '';
+        document.getElementById('col-mgr-overlay').classList.add('open');
+    }
+
+    function closeColumnManager() {
+        document.getElementById('col-mgr-overlay').classList.remove('open');
+        tempConfig = null;
+    }
+
+    // Close on overlay background click
+    document.getElementById('col-mgr-overlay').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('col-mgr-overlay')) closeColumnManager();
+    });
+
+    // ESC key closes
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeColumnManager();
+    });
+
+    function renderActiveColList() {
+        const ul = document.getElementById('active-col-list');
+        ul.innerHTML = '';
+        tempConfig.columns.forEach((key, idx) => {
+            const def = FIELD_MAP[key];
+            const li = document.createElement('li');
+            li.className = 'active-col-item';
+            li.draggable = true;
+            li.dataset.key = key;
+            li.dataset.idx = idx;
+            li.innerHTML = `
+                <span class="drag-handle" title="Drag to reorder">⠿</span>
+                <span class="col-item-label">${def ? def.label : key}</span>
+                <span class="col-item-cat">${def ? def.category : ''}</span>
+                <button class="col-item-btn up-btn" onclick="moveCol(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Move up">▲</button>
+                <button class="col-item-btn dn-btn" onclick="moveCol(${idx}, 1)" ${idx === tempConfig.columns.length - 1 ? 'disabled' : ''} title="Move down">▼</button>
+                <button class="col-item-btn danger" onclick="removeCol('${key}')" title="Remove column">✕</button>
+            `;
+
+            // Drag-and-drop events
+            li.addEventListener('dragstart', (e) => {
+                dragSrcKey = key;
+                e.dataTransfer.effectAllowed = 'move';
+                li.style.opacity = '0.5';
+            });
+            li.addEventListener('dragend', () => {
+                li.style.opacity = '1';
+                ul.querySelectorAll('.active-col-item').forEach(el => el.classList.remove('drag-over'));
+            });
+            li.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                ul.querySelectorAll('.active-col-item').forEach(el => el.classList.remove('drag-over'));
+                li.classList.add('drag-over');
+            });
+            li.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (dragSrcKey && dragSrcKey !== key) {
+                    const srcIdx = tempConfig.columns.indexOf(dragSrcKey);
+                    const dstIdx = tempConfig.columns.indexOf(key);
+                    if (srcIdx !== -1 && dstIdx !== -1) {
+                        tempConfig.columns.splice(srcIdx, 1);
+                        tempConfig.columns.splice(dstIdx, 0, dragSrcKey);
+                        renderActiveColList();
+                        renderAvailableColList(document.getElementById('col-search').value);
+                    }
+                }
+                dragSrcKey = null;
+            });
+
+            ul.appendChild(li);
+        });
+    }
+
+    function moveCol(idx, dir) {
+        const newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= tempConfig.columns.length) return;
+        const tmp = tempConfig.columns[idx];
+        tempConfig.columns[idx] = tempConfig.columns[newIdx];
+        tempConfig.columns[newIdx] = tmp;
+        renderActiveColList();
+    }
+
+    function removeCol(key) {
+        tempConfig.columns = tempConfig.columns.filter(k => k !== key);
+        renderActiveColList();
+        renderAvailableColList(document.getElementById('col-search').value);
+    }
+
+    function addCol(key) {
+        if (!tempConfig.columns.includes(key)) {
+            tempConfig.columns.push(key);
+            renderActiveColList();
+            renderAvailableColList(document.getElementById('col-search').value);
+        }
+    }
+
+    function renderAvailableColList(filter) {
+        const container = document.getElementById('avail-col-list');
+        container.innerHTML = '';
+
+        const fl = filter.toLowerCase().trim();
+
+        // Group fields by category
+        const categories = {};
+        FIELD_DEFS.forEach(def => {
+            if (fl && !def.label.toLowerCase().includes(fl) && !def.category.toLowerCase().includes(fl) && !def.key.toLowerCase().includes(fl)) return;
+            if (!categories[def.category]) categories[def.category] = [];
+            categories[def.category].push(def);
+        });
+
+        Object.entries(categories).forEach(([cat, defs]) => {
+            const group = document.createElement('div');
+            group.className = 'avail-cat-group';
+            group.innerHTML = `<div class="avail-cat-label">${cat}</div>`;
+
+            defs.forEach(def => {
+                const isActive = tempConfig.columns.includes(def.key);
+                const item = document.createElement('div');
+                item.className = 'avail-col-item' + (isActive ? '' : ' hidden-field');
+                item.innerHTML = `
+                    <div class="field-toggle ${isActive ? 'active' : ''}" onclick="toggleField('${def.key}')" title="${isActive ? 'Hide column' : 'Show column'}">
+                        ${isActive ? '✓' : ''}
+                    </div>
+                    <span class="avail-field-label">${def.label}${def.unit ? ` <span style="color:#475569;">(${def.unit})</span>` : ''}</span>
+                    <span class="avail-field-src">${def.source}</span>
+                `;
+                group.appendChild(item);
+            });
+
+            container.appendChild(group);
+        });
+    }
+
+    function toggleField(key) {
+        if (tempConfig.columns.includes(key)) {
+            removeCol(key);
+        } else {
+            addCol(key);
+        }
+    }
+
+    function filterAvailableFields(value) {
+        renderAvailableColList(value);
+    }
+
+    function populateSortSelect() {
+        const sel = document.getElementById('sort-key-select');
+        sel.innerHTML = '<option value="">— none —</option>';
+        FIELD_DEFS.filter(f => f.sortable).forEach(def => {
+            const opt = document.createElement('option');
+            opt.value = def.key;
+            opt.textContent = def.label;
+            if (tempConfig.sortKey === def.key) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        const dirBtn = document.getElementById('sort-dir-btn');
+        dirBtn.textContent = (tempConfig.sortDir === 'desc') ? '▼ DESC' : '▲ ASC';
+    }
+
+    function toggleSortDir() {
+        tempConfig.sortDir = (tempConfig.sortDir === 'asc') ? 'desc' : 'asc';
+        const btn = document.getElementById('sort-dir-btn');
+        btn.textContent = (tempConfig.sortDir === 'desc') ? '▼ DESC' : '▲ ASC';
+    }
+
+    function resetConfig() {
+        tempConfig = getDefaultConfig();
+        renderActiveColList();
+        renderAvailableColList(document.getElementById('col-search').value);
+        populateSortSelect();
+    }
+
+    function applyConfig() {
+        // Read sort key from select
+        const sk = document.getElementById('sort-key-select').value;
+        tempConfig.sortKey = sk || null;
+
+        activeConfig = JSON.parse(JSON.stringify(tempConfig));
+        saveConfig(activeConfig);
+
+        // Rebuild table header and clear rows (repopulated on next WS tick)
+        rebuildTableHeader();
+        const tb = document.getElementById('aircraft-table-body');
+        tb.innerHTML = `<tr id="cold-start-row"><td colspan="99" style="text-align:center;color:#94a3b8;">Applying new layout...</td></tr>`;
+        // Clear planeState so instrument widgets reinitialise
+        Object.keys(planeState).forEach(k => delete planeState[k]);
+
+        closeColumnManager();
+    }
+
+    // ============================================================
+    // INITIALISATION
+    // ============================================================
+    rebuildTableHeader();
     </script>
 </body>
 </html>
