@@ -19,6 +19,7 @@ import sqlite3
 import queue
 import re
 import os
+import http.server
 
 APP_VERSION = "v53"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,6 +36,7 @@ def load_runtime_config():
         "baud": 115200,
         "ws_host": "localhost",
         "ws_port": 8765,
+        "http_port": 8766,
         "receiver_id": "ADSBEE-01",
     }
 
@@ -51,6 +53,7 @@ def load_runtime_config():
     config["baud"] = int(os.getenv("EHS_BAUD", config["baud"]))
     config["ws_host"] = os.getenv("EHS_WS_HOST", config["ws_host"])
     config["ws_port"] = int(os.getenv("EHS_WS_PORT", config["ws_port"]))
+    config["http_port"] = int(os.getenv("EHS_HTTP_PORT", config["http_port"]))
     config["receiver_id"] = os.getenv("EHS_RECEIVER_ID", config["receiver_id"])
     return config
 
@@ -289,6 +292,61 @@ CAPABILITY_BDS = [
     "4,0", "4,1", "4,2", "4,3", "4,4", "4,5", "4,8",
     "5,0", "5,1", "5,2", "5,3", "5,4", "5,5", "5,6", "5,F",
     "6,0",
+]
+
+# ==========================================
+# --- LIVE GRID FIELD REGISTRY (single source of truth) ---
+# Each entry describes one selectable grid column.
+# Fields marked defaultVisible=True form the initial default layout.
+# 'key' must match the aircraft_state dict key (or a virtual aggregation key).
+# Virtual keys (sys_mode, ias_mach, track_info, latlon, meteo) are computed
+# in the frontend renderer from their constituent raw fields.
+# ==========================================
+FIELD_REGISTRY = [
+    # --- Identification ---
+    {"key": "icao",             "label": "ICAO",           "type": "text",   "unit": None,   "category": "IDENTIFICATION", "sortable": True,  "defaultVisible": True,  "source": "PI Parity"},
+    {"key": "callsign",         "label": "CALLSIGN",       "type": "text",   "unit": None,   "category": "IDENTIFICATION", "sortable": True,  "defaultVisible": True,  "source": "DF17 TC:1-4"},
+    {"key": "airline",          "label": "AIRLINE",        "type": "text",   "unit": None,   "category": "IDENTIFICATION", "sortable": True,  "defaultVisible": True,  "source": "DB Lookup"},
+    {"key": "squawk",           "label": "SQUAWK",         "type": "text",   "unit": None,   "category": "IDENTIFICATION", "sortable": True,  "defaultVisible": True,  "source": "DF11 / DF21"},
+    # --- Altitude ---
+    {"key": "alt",              "label": "ALTITUDE",       "type": "number", "unit": "ft",   "category": "ALTITUDE",       "sortable": True,  "defaultVisible": True,  "source": "DF17 / DF20"},
+    {"key": "target_alt",       "label": "TARGET ALT",     "type": "text",   "unit": "ft",   "category": "ALTITUDE",       "sortable": False, "defaultVisible": True,  "source": "BDS 4,0"},
+    # --- Kinematics ---
+    {"key": "vert_rate",        "label": "VERT RATE",      "type": "number", "unit": "ft/m", "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 6,0"},
+    # sys_mode and baro are placed here so the default column order matches the original live grid layout
+    {"key": "sys_mode",         "label": "SYS MODE",       "type": "virtual","unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": True,  "source": "BDS 4,0/6,2/4,8"},
+    {"key": "baro",             "label": "BARO SET",       "type": "text",   "unit": "hPa",  "category": "SYSTEM",         "sortable": False, "defaultVisible": True,  "source": "BDS 4,0"},
+    {"key": "speed",            "label": "SPEED GS",       "type": "number", "unit": "kt",   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 5,0 / TC19"},
+    {"key": "tas",              "label": "TAS",            "type": "number", "unit": "kt",   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 5,0"},
+    {"key": "ias_mach",         "label": "IAS / MACH",     "type": "virtual","unit": None,   "category": "KINEMATICS",     "sortable": False, "defaultVisible": True,  "source": "BDS 6,0"},
+    {"key": "ias",              "label": "IAS",            "type": "number", "unit": "kt",   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
+    {"key": "mach",             "label": "MACH",           "type": "number", "unit": None,   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 6,0"},
+    {"key": "heading",          "label": "MAG HDG",        "type": "angle",  "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 6,0"},
+    {"key": "track_info",       "label": "TRUE TRK / RATE","type": "virtual","unit": None,   "category": "KINEMATICS",     "sortable": False, "defaultVisible": True,  "source": "BDS 5,0"},
+    {"key": "track",            "label": "TRUE TRK",       "type": "angle",  "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 5,0"},
+    {"key": "track_rate",       "label": "TRACK RATE",     "type": "number", "unit": "deg/s","category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 5,0"},
+    {"key": "roll",             "label": "BANK INDEX",     "type": "angle",  "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": True,  "source": "BDS 5,0"},
+    # --- Additional system fields ---
+    {"key": "discretes",        "label": "DISCRETES",      "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "BDS 6,2 / TC29"},
+    {"key": "capability_summary","label":"CAPABILITIES",   "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "BDS 1,7"},
+    {"key": "last_bds_hit",     "label": "LAST BDS HIT",   "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "Decoded"},
+    {"key": "supported_bds",    "label": "SUPP BDS REGS",  "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "BDS 1,7"},
+    # --- Safety ---
+    {"key": "tcas_ra",          "label": "TCAS RA",        "type": "text",   "unit": None,   "category": "SAFETY",         "sortable": False, "defaultVisible": True,  "source": "BDS 3,0"},
+    {"key": "hazard",           "label": "HAZARD",         "type": "text",   "unit": None,   "category": "SAFETY",         "sortable": False, "defaultVisible": False, "source": "BDS 4,4/4,5"},
+    # --- Surveillance ---
+    {"key": "radar_sweep",      "label": "RADAR SWEEP",    "type": "text",   "unit": "s",    "category": "SURVEILLANCE",   "sortable": False, "defaultVisible": True,  "source": "Δt(Burst) Calc"},
+    # --- Position ---
+    {"key": "gnss_qual",        "label": "GNSS QUAL",      "type": "text",   "unit": None,   "category": "POSITION",       "sortable": False, "defaultVisible": True,  "source": "DF17 TC:31"},
+    {"key": "latlon",           "label": "LAT / LON",      "type": "virtual","unit": "deg",  "category": "POSITION",       "sortable": False, "defaultVisible": True,  "source": "Local CPR Math"},
+    {"key": "lat",              "label": "LATITUDE",       "type": "number", "unit": "deg",  "category": "POSITION",       "sortable": True,  "defaultVisible": False, "source": "Local CPR Math"},
+    {"key": "lon",              "label": "LONGITUDE",      "type": "number", "unit": "deg",  "category": "POSITION",       "sortable": True,  "defaultVisible": False, "source": "Local CPR Math"},
+    # --- Meteorology ---
+    {"key": "meteo",            "label": "METEO / SENSORS","type": "virtual","unit": None,   "category": "METEO",          "sortable": False, "defaultVisible": True,  "source": "BDS4,4 + Calc"},
+    {"key": "wind",             "label": "WIND",           "type": "text",   "unit": None,   "category": "METEO",          "sortable": False, "defaultVisible": False, "source": "BDS 4,4 Calc"},
+    {"key": "sat",              "label": "SAT TEMP",       "type": "text",   "unit": "°C",   "category": "METEO",          "sortable": False, "defaultVisible": False, "source": "BDS 4,4/4,5"},
+    # --- System timing ---
+    {"key": "age",              "label": "AGE",            "type": "number", "unit": "s",    "category": "SYSTEM",         "sortable": True,  "defaultVisible": True,  "source": "Sys Clock"},
 ]
 
 def decode_bds17_payload(payload_int):
@@ -768,7 +826,65 @@ PORT = RUNTIME_CONFIG["port"]
 BAUD = RUNTIME_CONFIG["baud"]
 WS_HOST = RUNTIME_CONFIG["ws_host"]
 WS_PORT = RUNTIME_CONFIG["ws_port"]
+HTTP_PORT = RUNTIME_CONFIG["http_port"]
 RECEIVER_ID = RUNTIME_CONFIG["receiver_id"]
+
+# ==========================================
+# --- DARTS HTTP API SERVER (field registry + grid config) ---
+# Runs on HTTP_PORT (default 8766) alongside the WebSocket server.
+# Provides CORS-enabled endpoints for the frontend column manager.
+# ==========================================
+class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
+    """Lightweight HTTP handler serving field registry and grid config endpoints."""
+
+    def log_message(self, msg_format, *args):
+        # Log 4xx/5xx only; suppress noisy 200/OPTIONS to keep console clean.
+        # BaseHTTPRequestHandler passes (request_line, status_code, size) as args.
+        # Extract status code defensively; fall back to full args string if layout differs.
+        try:
+            code = str(args[1]) if len(args) > 1 else ""
+        except Exception:
+            code = ""
+        if code.startswith(("4", "5")):
+            log_msg = " ".join(str(a) for a in args)
+            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[HTTP API] {log_msg}{ANSI.RESET}")
+
+    def _send_json(self, data, status=200):
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path == "/api/fields":
+            # Return the complete field registry so frontends can build column pickers
+            self._send_json(FIELD_REGISTRY)
+        elif self.path == "/api/grid-config":
+            # Returns the default config structure; user preferences are stored client-side
+            default_cols = [f["key"] for f in FIELD_REGISTRY if f["defaultVisible"]]
+            self._send_json({"columns": default_cols, "sortKey": None, "sortDir": "asc"})
+        else:
+            self._send_json({"error": "Not found"}, status=404)
+
+def run_http_server():
+    """Run the DARTS HTTP API server bound to localhost only (security: no LAN exposure)."""
+    try:
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", HTTP_PORT), DARTSAPIHandler)
+        server.serve_forever()
+    except OSError as e:
+        print(f"{ANSI.RED}[DARTS] HTTP API server failed to start on port {HTTP_PORT}: {e}{ANSI.RESET}")
 
 # --- Reference Coordinates for Local CPR Decoding (Sydney, NSW) ---
 RECEIVER_LAT = -33.8688
@@ -1639,6 +1755,7 @@ async def broadcast_state(websocket):
 async def main():
     print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}Serial source armed on {PORT} @ {BAUD} baud ({RECEIVER_ID}){ANSI.RESET}")
     print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.GREEN}Tactical Matrix Core {APP_VERSION} online on ws://{WS_HOST}:{WS_PORT}{ANSI.RESET}")
+    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}DARTS API online on http://localhost:{HTTP_PORT} (fields + grid config){ANSI.RESET}")
     async with websockets.serve(broadcast_state, WS_HOST, WS_PORT):
         await asyncio.Future()
 
@@ -1647,7 +1764,8 @@ if __name__ == "__main__":
     load_historical_state()
     load_airspace()
     threading.Thread(target=serial_reader_thread, daemon=True).start()
-    threading.Thread(target=run_reaper_loop, daemon=True).start() 
+    threading.Thread(target=run_reaper_loop, daemon=True).start()
     threading.Thread(target=archivist_loop, daemon=True).start()
+    threading.Thread(target=run_http_server, daemon=True).start()
     try: asyncio.run(main())
     except KeyboardInterrupt: print(f"\n{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}Shutting down Tactical Matrix...{ANSI.RESET}")
