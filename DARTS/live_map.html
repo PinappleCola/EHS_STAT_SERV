@@ -49,11 +49,11 @@
         .btn-toggle { background-color: #64748b; border-color: #334155; }
         .btn-toggle.active { background-color: #10b981; border-color: #047857; color: #000; }
 
-        .dual-slider { position: relative; width: 320px; height: 24px; display: flex; align-items: center; flex-shrink: 0; }
+        .dual-slider { position: relative; width: 320px; height: 24px; display: flex; align-items: center; flex-shrink: 0; margin: 0 14px; }
         .slider-track { position: absolute; width: 100%; height: 5px; background: #1e293b; border-radius: 999px; z-index: 0; }
         .dual-slider input[type=range] { position: absolute; width: 100%; top: 50%; transform: translateY(-50%); pointer-events: none; background: transparent; appearance: none; -webkit-appearance: none; z-index: 2; margin: 0; }
         .dual-slider input[type=range]::-webkit-slider-thumb { pointer-events: auto; -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #38bdf8; cursor: pointer; box-shadow: 0 0 5px rgba(56, 189, 248, 0.8); }
-        .trail-readout { min-width: 280px; width: 280px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; margin-left: 20px; }
+        .trail-readout { min-width: 280px; width: 280px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; margin-left: 14px; }
 
         #db-modal {
             display: none; position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
@@ -98,7 +98,7 @@
             <span id="radar-scale" class="scale-text">AUTO RNG</span>
             <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
             
-            <span style="font-size: 0.8em; color: #64748b;">TRAIL:</span>
+            <span style="font-size: 0.8em; color: #64748b; margin-right: 6px;">TRAIL:</span>
             <div class="dual-slider">
                 <div class="slider-track"></div>
                 <input type="range" id="trail-min" min="0" max="1440" step="1" value="0">
@@ -190,10 +190,73 @@
         let airspaceGeoJSON = { type: "FeatureCollection", features: [] };
 
         // --- Configurable data tag fields (Phase 8) ---
-        const MAP_TAG_FIELD_OPTIONS = ['icao','callsign','squawk','altitude','hdg_spd','speed','heading','track','vert_rate','target_alt','selected_heading'];
-        const MAP_TAG_DEFAULTS = ['icao','callsign','squawk','altitude','hdg_spd'];
-        let mapTagFields = JSON.parse(localStorage.getItem('dart_map_tag_fields') || 'null') || [...MAP_TAG_DEFAULTS];
-        function saveMapTagFields() { localStorage.setItem('dart_map_tag_fields', JSON.stringify(mapTagFields)); }
+        // All available tag fields — mirrors live_grid FIELD_DEFS for full customizability
+        const MAP_TAG_FIELD_OPTIONS = [
+            {key:'icao',            label:'ICAO',            category:'IDENTIFICATION'},
+            {key:'callsign',        label:'CALLSIGN',        category:'IDENTIFICATION'},
+            {key:'airline',          label:'AIRLINE',         category:'IDENTIFICATION'},
+            {key:'squawk',           label:'SQUAWK',          category:'IDENTIFICATION'},
+            {key:'alt',              label:'ALTITUDE',        category:'ALTITUDE'},
+            {key:'target_alt',       label:'TARGET ALT',      category:'ALTITUDE'},
+            {key:'alt_mcp',          label:'ALT MCP',         category:'ALTITUDE'},
+            {key:'alt_fms',          label:'ALT FMS',         category:'ALTITUDE'},
+            {key:'radio_height',     label:'RADIO ALT',       category:'ALTITUDE'},
+            {key:'vert_rate',        label:'VERT RATE',       category:'KINEMATICS'},
+            {key:'speed',            label:'SPEED GS',        category:'KINEMATICS'},
+            {key:'tas',              label:'TAS',             category:'KINEMATICS'},
+            {key:'ias',              label:'IAS',             category:'KINEMATICS'},
+            {key:'mach',             label:'MACH',            category:'KINEMATICS'},
+            {key:'heading',          label:'MAG HDG',         category:'KINEMATICS'},
+            {key:'display_heading',  label:'DISPLAY HDG',     category:'KINEMATICS'},
+            {key:'track',            label:'TRUE TRK',        category:'KINEMATICS'},
+            {key:'track_rate',       label:'TRACK RATE',      category:'KINEMATICS'},
+            {key:'roll',             label:'BANK INDEX',      category:'KINEMATICS'},
+            {key:'inertial_vr',      label:'INERTIAL VR',     category:'KINEMATICS'},
+            {key:'selected_heading', label:'SEL HDG',         category:'INTEGRITY'},
+            {key:'hdg_spd',          label:'HDG / SPD',       category:'KINEMATICS'},
+            {key:'sys_mode',         label:'SYS MODE',        category:'SYSTEM'},
+            {key:'baro',             label:'BARO SET',        category:'SYSTEM'},
+            {key:'tcas_ra',          label:'TCAS RA',         category:'SAFETY'},
+            {key:'hazard',           label:'HAZARD',          category:'SAFETY'},
+            {key:'wind',             label:'WIND',            category:'METEO'},
+            {key:'sat',              label:'SAT TEMP',        category:'METEO'},
+            {key:'humidity',         label:'HUMIDITY',        category:'METEO'},
+            {key:'lat',              label:'LATITUDE',        category:'POSITION'},
+            {key:'lon',              label:'LONGITUDE',       category:'POSITION'},
+            {key:'gnss_qual',        label:'GNSS QUAL',       category:'POSITION'},
+            {key:'nac_p',            label:'NACp',            category:'INTEGRITY'},
+            {key:'sil',              label:'SIL',             category:'INTEGRITY'},
+            {key:'age',              label:'AGE',             category:'SYSTEM'},
+            {key:'msg_count',        label:'MSG COUNT',       category:'SURVEILLANCE'},
+            {key:'radar_sweep',      label:'RADAR SWEEP',     category:'SURVEILLANCE'},
+            {key:'data_age_heading', label:'HDG AGE',         category:'SURVEILLANCE'},
+            {key:'data_age_position',label:'POS AGE',         category:'SURVEILLANCE'},
+        ];
+        const MAP_TAG_FIELD_KEYS = MAP_TAG_FIELD_OPTIONS.map(f => f.key);
+        const MAP_TAG_DEFAULTS = ['icao','callsign','squawk','alt','hdg_spd'];
+        // Independent localStorage key — separate from grid config
+        const MAP_TAG_STORAGE_KEY = 'dart_map_tag_config';
+        let mapTagFields = (() => {
+            try {
+                const raw = localStorage.getItem(MAP_TAG_STORAGE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed.fields)) return parsed.fields.filter(k => MAP_TAG_FIELD_KEYS.includes(k));
+                }
+            } catch(e) {}
+            return [...MAP_TAG_DEFAULTS];
+        })();
+        // Global tag-box toggle — persisted
+        let mapTagShowBox = (() => {
+            try {
+                const raw = localStorage.getItem(MAP_TAG_STORAGE_KEY);
+                if (raw) { const parsed = JSON.parse(raw); if (typeof parsed.showBox === 'boolean') return parsed.showBox; }
+            } catch(e) {}
+            return true;
+        })();
+        function saveMapTagConfig() {
+            localStorage.setItem(MAP_TAG_STORAGE_KEY, JSON.stringify({ fields: mapTagFields, showBox: mapTagShowBox }));
+        }
 
         // --- Altitude color legend (Phase 5) ---
         const ALT_COLOR_LEGEND = [
@@ -569,7 +632,7 @@
                 
                 planes.forEach(p => {
                     if (p.lat && p.lon && p.lat !== '----' && p.lon !== '----') {
-                        entityCache[p.icao] = { lat: parseFloat(p.lat), lon: parseFloat(p.lon), alt: p.alt };
+                        entityCache[p.icao] = { lat: parseFloat(p.lat), lon: parseFloat(p.lon), alt: p.alt, _latency: p._latency || null };
                     }
                 });
                 
@@ -604,7 +667,7 @@
                             const iconType = (props.icon || props.type || 'FIX').toUpperCase();
                             const wpId = 'WPT_' + (props.name || idx);
                             
-                            entityCache[wpId] = { lat: geom.coordinates[1], lon: geom.coordinates[0], alt: 'GROUND' };
+                            entityCache[wpId] = { lat: geom.coordinates[1], lon: geom.coordinates[0], alt: 'GROUND', _latency: null };
                             renderHitboxes.push({ id: wpId, x: pt.x, y: pt.y });
                             
                             const isSelected = (wpId === hoveredEntity || wpId === lockedEntity || wpId === secondaryEntity);
@@ -764,31 +827,6 @@
                             rCtx.lineTo(-1.5, -1); rCtx.lineTo(-1.5, -5); rCtx.closePath();
                             rCtx.fill(); rCtx.restore(); rCtx.shadowBlur = 0; rCtx.globalAlpha = 1.0;
 
-                            const tagW = 100, tagH = 65;
-                            let tagX = pt.x + 12; let tagY = pt.y - (tagH/2);
-                            let attempts = 0; let isDisplaced = false; let angle = 0; let radius = 45;
-
-                            while (occupiedRects.some(r => tagX < r.x + tagW + 4 && tagX + tagW > r.x - 4 && tagY < r.y + tagH + 4 && tagY + tagH > r.y - 4) && attempts < 15) {
-                                isDisplaced = true; angle += Math.PI / 4; radius += 6;
-                                tagX = pt.x + Math.cos(angle) * radius; tagY = pt.y + Math.sin(angle) * radius;
-                                attempts++;
-                            }
-                            occupiedRects.push({x: tagX, y: tagY});
-
-                            if (isDimmed) return; 
-
-                            if (isDisplaced) {
-                                rCtx.beginPath(); rCtx.moveTo(pt.x, pt.y); rCtx.lineTo(tagX + (tagX > pt.x ? 0 : tagW), tagY + (tagH/2));
-                                rCtx.strokeStyle = isSelected ? '#38bdf8' : 'rgba(148, 163, 184, 0.4)'; rCtx.lineWidth = 1; rCtx.stroke();
-                            }
-
-                            rCtx.fillStyle = isSelected ? 'rgba(3, 7, 18, 0.95)' : 'rgba(3, 7, 18, 0.7)';
-                            rCtx.strokeStyle = isSelected ? '#38bdf8' : 'rgba(51, 65, 85, 0.8)';
-                            rCtx.lineWidth = 1;
-                            rCtx.beginPath(); rCtx.roundRect(tagX, tagY, tagW, tagH, 4); rCtx.fill(); rCtx.stroke();
-                            
-                            rCtx.font = isSelected ? "bold 11px 'B612 Mono', 'Consolas', monospace" : "11px 'B612 Mono', 'Consolas', monospace";
-                            const textColor = isSelected ? '#ffffff' : (p.is_coasting ? 'rgba(148, 163, 184, 0.9)' : '#38bdf8');
                             
                             let vRateSym = '≈';
                             if (typeof p.vert_rate === 'number') {
@@ -803,27 +841,94 @@
                             const strHdg = (p.display_heading && p.display_heading !== '----') ? Math.round(p.display_heading) + '°' : ((p.heading && p.heading !== '----') ? Math.round(p.heading) + '°' : '----');
                             const strSpd = (p.speed && p.speed !== '----') ? p.speed + ' kt' : '----';
                             
-                            // Configurable tag fields — uses mapTagFields from config
                             const tagFieldRenderers = {
-                                'icao': () => lblIcao,
-                                'callsign': () => lblCall,
-                                'squawk': () => lblSqk,
-                                'altitude': () => lblAlt,
+                                'icao': () => p.icao,
+                                'callsign': () => (p.callsign && p.callsign !== '----') ? p.callsign : '----',
+                                'airline': () => (p.airline && p.airline !== '----') ? p.airline : '----',
+                                'squawk': () => (p.squawk && p.squawk !== '----') ? p.squawk : '----',
+                                'alt': () => lblAlt,
+                                'target_alt': () => (p.target_alt && p.target_alt !== '----') ? p.target_alt : '----',
+                                'alt_mcp': () => (p.alt_mcp && p.alt_mcp !== '----') ? p.alt_mcp : '----',
+                                'alt_fms': () => (p.alt_fms && p.alt_fms !== '----') ? p.alt_fms : '----',
+                                'radio_height': () => (p.radio_height && p.radio_height !== '----') ? p.radio_height + ' ft' : '----',
                                 'hdg_spd': () => `${strHdg} / ${strSpd}`,
                                 'speed': () => strSpd,
+                                'tas': () => (p.tas && p.tas !== '----') ? p.tas + ' kt' : '----',
+                                'ias': () => (p.ias && p.ias !== '----') ? p.ias + ' kt' : '----',
+                                'mach': () => (p.mach && p.mach !== '----') ? 'M' + p.mach : '----',
                                 'heading': () => strHdg,
+                                'display_heading': () => (p.display_heading && p.display_heading !== '----') ? Math.round(p.display_heading) + '°' : '----',
                                 'track': () => (p.track && p.track !== '----') ? Math.round(p.track) + '°T' : '----',
+                                'track_rate': () => (p.track_rate && p.track_rate !== '----') ? p.track_rate + '°/s' : '----',
+                                'roll': () => (p.roll && p.roll !== '----') ? p.roll + '°' : '----',
+                                'inertial_vr': () => (p.inertial_vr && p.inertial_vr !== '----') ? p.inertial_vr + ' fpm' : '----',
                                 'vert_rate': () => (typeof p.vert_rate === 'number') ? `${p.vert_rate > 0 ? '+' : ''}${p.vert_rate} fpm` : '----',
-                                'target_alt': () => (p.target_alt && p.target_alt !== '----') ? p.target_alt : '----',
                                 'selected_heading': () => (p.selected_heading && p.selected_heading !== '----') ? `SEL:${Math.round(p.selected_heading)}°` : '----',
+                                'sys_mode': () => (p.sys_mode && p.sys_mode !== '----') ? p.sys_mode : '----',
+                                'baro': () => (p.baro && p.baro !== '----') ? p.baro + ' hPa' : '----',
+                                'tcas_ra': () => (p.tcas_ra && p.tcas_ra !== '----') ? p.tcas_ra : '----',
+                                'hazard': () => (p.hazard && p.hazard !== '----') ? p.hazard : '----',
+                                'wind': () => (p.wind && p.wind !== '----') ? p.wind : '----',
+                                'sat': () => (p.sat && p.sat !== '----') ? p.sat + '°C' : '----',
+                                'humidity': () => (p.humidity && p.humidity !== '----') ? p.humidity + '%' : '----',
+                                'lat': () => (p.lat && p.lat !== '----') ? parseFloat(p.lat).toFixed(4) : '----',
+                                'lon': () => (p.lon && p.lon !== '----') ? parseFloat(p.lon).toFixed(4) : '----',
+                                'gnss_qual': () => (p.gnss_qual && p.gnss_qual !== '----') ? p.gnss_qual : '----',
+                                'nac_p': () => (p.nac_p && p.nac_p !== '----') ? 'NACp:' + p.nac_p : '----',
+                                'sil': () => (p.sil && p.sil !== '----') ? 'SIL:' + p.sil : '----',
+                                'age': () => (p.age !== undefined && p.age !== '----') ? p.age + 's' : '----',
+                                'msg_count': () => (p.msg_count !== undefined && p.msg_count !== '----') ? p.msg_count : '----',
+                                'radar_sweep': () => (p.radar_sweep && p.radar_sweep !== '----') ? p.radar_sweep + 's' : '----',
+                                'data_age_heading': () => (p.data_age_heading && p.data_age_heading !== '----') ? p.data_age_heading + 's' : '----',
+                                'data_age_position': () => (p.data_age_position && p.data_age_position !== '----') ? p.data_age_position + 's' : '----',
                             };
                             
                             const lines = mapTagFields.map(f => (tagFieldRenderers[f] || (() => '----'))());
                             
+                            // Dynamic box sizing: no box if zero fields
+                            if (lines.length === 0) return;
+                            
+                            // Measure content to dynamically size box
+                            rCtx.font = isSelected ? "bold 11px 'B612 Mono', 'Consolas', monospace" : "11px 'B612 Mono', 'Consolas', monospace";
+                            const lineHeight = 11.5;
+                            const padX = 6, padY = 7;
+                            let maxTextW = 0;
+                            lines.forEach(line => { const w = rCtx.measureText(line).width; if (w > maxTextW) maxTextW = w; });
+                            const tagW = Math.ceil(maxTextW + padX * 2 + 2);
+                            const tagH = Math.ceil(lines.length * lineHeight + padY * 2);
+
+                            let tagX = pt.x + 12; let tagY = pt.y - (tagH/2);
+                            let attempts = 0; let isDisplaced = false; let angle = 0; let radius = 45;
+
+                            while (occupiedRects.some(r => tagX < r.x + r.w + 4 && tagX + tagW > r.x - 4 && tagY < r.y + r.h + 4 && tagY + tagH > r.y - 4) && attempts < 15) {
+                                isDisplaced = true; angle += Math.PI / 4; radius += 6;
+                                tagX = pt.x + Math.cos(angle) * radius; tagY = pt.y + Math.sin(angle) * radius;
+                                attempts++;
+                            }
+                            occupiedRects.push({x: tagX, y: tagY, w: tagW, h: tagH});
+
+                            if (isDimmed) return; 
+
+                            if (isDisplaced) {
+                                rCtx.beginPath(); rCtx.moveTo(pt.x, pt.y); rCtx.lineTo(tagX + (tagX > pt.x ? 0 : tagW), tagY + (tagH/2));
+                                rCtx.strokeStyle = isSelected ? '#38bdf8' : 'rgba(148, 163, 184, 0.4)'; rCtx.lineWidth = 1; rCtx.stroke();
+                            }
+
+                            // Tag box background — conditional on global toggle
+                            if (mapTagShowBox) {
+                                rCtx.fillStyle = isSelected ? 'rgba(3, 7, 18, 0.95)' : 'rgba(3, 7, 18, 0.7)';
+                                rCtx.strokeStyle = isSelected ? '#38bdf8' : 'rgba(51, 65, 85, 0.8)';
+                                rCtx.lineWidth = 1;
+                                rCtx.beginPath(); rCtx.roundRect(tagX, tagY, tagW, tagH, 4); rCtx.fill(); rCtx.stroke();
+                            }
+                            
+                            rCtx.font = isSelected ? "bold 11px 'B612 Mono', 'Consolas', monospace" : "11px 'B612 Mono', 'Consolas', monospace";
+                            const textColor = isSelected ? '#ffffff' : (p.is_coasting ? 'rgba(148, 163, 184, 0.9)' : '#38bdf8');
+                            
                             lines.forEach((line, idx) => {
                                 if (idx === mapTagFields.indexOf('squawk') && (['7500', '7600', '7700'].includes(p.squawk) || hasActiveRa)) { rCtx.fillStyle = '#ef4444'; } 
                                 else { rCtx.fillStyle = textColor; }
-                                rCtx.fillText(line, tagX + 6, tagY + 14 + (idx * 11.5));
+                                rCtx.fillText(line, tagX + padX, tagY + padY + 7 + (idx * lineHeight));
                             });
                         }
                     }
@@ -866,8 +971,7 @@
                         
                         // Hold-alt confidence indicator (Phase 6)
                         const conf = computeHoldAltConfidence(e1, e2);
-                        const confColor = conf.confidence === 'HIGH' ? '#4ade80' : conf.confidence === 'MED' ? '#fbbf24' : '#94a3b8';
-                        rCtx.fillStyle = confColor;
+                        rCtx.fillStyle = conf.color;
                         rCtx.font = "9px 'B612 Mono', monospace";
                         const confText = conf.ageDelta !== null ? `${conf.confidence} Δt:${conf.ageDelta.toFixed(1)}s` : conf.confidence;
                         rCtx.fillText(`⬤ ${confText}`, midX - 54, midY + 27);
@@ -1002,27 +1106,117 @@
             
             const modal = document.createElement('div');
             modal.id = 'tag-config-modal';
-            modal.style.cssText = 'position:absolute;top:80px;right:20px;width:260px;background:rgba(15,23,42,0.95);border:1px solid #38bdf8;border-radius:6px;z-index:200;padding:15px;pointer-events:auto;font-size:0.85em;';
+            modal.style.cssText = 'position:absolute;top:80px;right:20px;width:300px;max-height:calc(100vh - 120px);background:rgba(15,23,42,0.95);border:1px solid #38bdf8;border-radius:6px;z-index:200;padding:15px;pointer-events:auto;font-size:0.85em;display:flex;flex-direction:column;overflow:hidden;';
             
-            let html = '<div style="color:#38bdf8;font-weight:bold;margin-bottom:10px;">TAG FIELD CONFIG <span style="float:right;cursor:pointer;" onclick="this.parentElement.parentElement.remove()">✕</span></div>';
-            html += '<div style="color:#64748b;font-size:0.8em;margin-bottom:8px;">Drag to reorder. Check to enable.</div>';
-            html += '<div id="tag-field-list">';
+            function renderModal() {
+                let html = '<div style="color:#38bdf8;font-weight:bold;margin-bottom:8px;">TAG FIELD CONFIG <span style="float:right;cursor:pointer;" onclick="document.getElementById(\'tag-config-modal\').remove()">✕</span></div>';
+                
+                // Global box toggle
+                html += `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #1e293b;margin-bottom:8px;cursor:pointer;color:#e2e8f0;">
+                    <input type="checkbox" id="tag-box-toggle" ${mapTagShowBox ? 'checked' : ''} onchange="mapTagShowBox=this.checked;saveMapTagConfig();">
+                    <span>SHOW TAG BOX</span></label>`;
+                
+                // Search
+                html += '<input type="text" id="tag-search" placeholder="Search fields..." style="width:100%;background:#030712;color:#e2e8f0;border:1px solid #1e293b;padding:5px 8px;font-family:monospace;font-size:0.9em;border-radius:3px;margin-bottom:8px;box-sizing:border-box;">';
+                
+                // Active fields (reorderable)
+                html += '<div style="color:#94a3b8;font-size:0.75em;margin-bottom:4px;">ACTIVE FIELDS (drag or ▲▼ to reorder):</div>';
+                html += '<div id="tag-active-list" style="max-height:140px;overflow-y:auto;border:1px solid #1e293b;border-radius:3px;margin-bottom:8px;">';
+                mapTagFields.forEach((key, idx) => {
+                    const def = MAP_TAG_FIELD_OPTIONS.find(f => f.key === key);
+                    const label = def ? def.label : key.toUpperCase();
+                    html += `<div draggable="true" data-key="${key}" style="display:flex;align-items:center;gap:4px;padding:3px 6px;background:rgba(14,165,233,0.1);border-bottom:1px solid #0f172a;cursor:grab;color:#38bdf8;">
+                        <span style="flex:1;font-size:0.9em;">${label}</span>
+                        <button onclick="moveTagField('${key}',-1)" style="background:none;border:none;color:#94a3b8;cursor:pointer;font-size:0.8em;padding:0 2px;">▲</button>
+                        <button onclick="moveTagField('${key}',1)" style="background:none;border:none;color:#94a3b8;cursor:pointer;font-size:0.8em;padding:0 2px;">▼</button>
+                        <button onclick="toggleTagField('${key}',false)" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:0.9em;padding:0 2px;">✕</button>
+                    </div>`;
+                });
+                html += '</div>';
+                
+                // Available fields (grouped by category)
+                html += '<div style="color:#94a3b8;font-size:0.75em;margin-bottom:4px;">AVAILABLE FIELDS:</div>';
+                html += '<div id="tag-avail-list" style="flex:1;overflow-y:auto;border:1px solid #1e293b;border-radius:3px;min-height:80px;">';
+                const categories = [...new Set(MAP_TAG_FIELD_OPTIONS.map(f => f.category))];
+                categories.forEach(cat => {
+                    const fields = MAP_TAG_FIELD_OPTIONS.filter(f => f.category === cat);
+                    html += `<div style="padding:3px 6px;color:#64748b;font-size:0.75em;font-weight:bold;background:#0f172a;">${cat}</div>`;
+                    fields.forEach(def => {
+                        const isActive = mapTagFields.includes(def.key);
+                        html += `<div class="tag-avail-item" data-key="${def.key}" style="display:flex;align-items:center;gap:6px;padding:3px 6px;cursor:pointer;color:${isActive ? '#334155' : '#e2e8f0'};" onclick="toggleTagField('${def.key}',${!isActive})">
+                            <span style="width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;border:1px solid ${isActive ? '#38bdf8' : '#475569'};border-radius:2px;background:${isActive ? '#38bdf8' : 'transparent'};color:#000;font-size:0.7em;font-weight:bold;">${isActive ? '✓' : ''}</span>
+                            <span style="flex:1;font-size:0.9em;">${def.label}</span>
+                        </div>`;
+                    });
+                });
+                html += '</div>';
+                
+                // Bottom buttons
+                html += '<div style="margin-top:8px;display:flex;gap:6px;">';
+                html += '<button onclick="mapTagFields=[...MAP_TAG_DEFAULTS];saveMapTagConfig();rerenderTagConfig();" style="flex:1;background:#64748b;border:none;color:#fff;padding:4px;border-radius:3px;cursor:pointer;font-size:0.85em;">RESET</button>';
+                html += '<button onclick="document.getElementById(\'tag-config-modal\').remove();" style="flex:1;background:#0ea5e9;border:none;color:#fff;padding:4px;border-radius:3px;cursor:pointer;font-size:0.85em;">CLOSE</button>';
+                html += '</div>';
+                
+                modal.innerHTML = html;
+                
+                // Attach search filter
+                setTimeout(() => {
+                    const searchInput = document.getElementById('tag-search');
+                    if (searchInput) {
+                        searchInput.addEventListener('input', () => {
+                            const q = searchInput.value.toLowerCase();
+                            document.querySelectorAll('.tag-avail-item').forEach(el => {
+                                const key = el.dataset.key;
+                                const def = MAP_TAG_FIELD_OPTIONS.find(f => f.key === key);
+                                const match = !q || (def && (def.label.toLowerCase().includes(q) || def.key.includes(q) || def.category.toLowerCase().includes(q)));
+                                el.style.display = match ? 'flex' : 'none';
+                            });
+                        });
+                    }
+                    
+                    // Drag-and-drop reorder for active list
+                    const activeList = document.getElementById('tag-active-list');
+                    if (activeList) {
+                        let dragSrcKey = null;
+                        activeList.addEventListener('dragstart', e => { dragSrcKey = e.target.dataset.key; e.dataTransfer.effectAllowed = 'move'; });
+                        activeList.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+                        activeList.addEventListener('drop', e => {
+                            e.preventDefault();
+                            const targetEl = e.target.closest('[data-key]');
+                            if (!targetEl || !dragSrcKey) return;
+                            const dstKey = targetEl.dataset.key;
+                            if (dragSrcKey === dstKey) return;
+                            const srcIdx = mapTagFields.indexOf(dragSrcKey);
+                            const dstIdx = mapTagFields.indexOf(dstKey);
+                            if (srcIdx === -1 || dstIdx === -1) return;
+                            mapTagFields.splice(srcIdx, 1);
+                            mapTagFields.splice(dstIdx, 0, dragSrcKey);
+                            saveMapTagConfig();
+                            rerenderTagConfig();
+                        });
+                    }
+                }, 0);
+            }
             
-            MAP_TAG_FIELD_OPTIONS.forEach(f => {
-                const checked = mapTagFields.includes(f) ? 'checked' : '';
-                const label = f.replace(/_/g, ' ').toUpperCase();
-                html += `<label style="display:flex;align-items:center;gap:6px;padding:4px 0;cursor:pointer;color:#e2e8f0;"><input type="checkbox" value="${f}" ${checked} onchange="toggleTagField('${f}', this.checked)"><span>${label}</span></label>`;
-            });
-            
-            html += '</div>';
-            html += '<div style="margin-top:10px;display:flex;gap:6px;">';
-            html += '<button onclick="mapTagFields=[...MAP_TAG_DEFAULTS];saveMapTagFields();this.parentElement.parentElement.remove();openTagConfig();" style="flex:1;background:#64748b;border:none;color:#fff;padding:4px;border-radius:3px;cursor:pointer;font-size:0.85em;">RESET</button>';
-            html += '<button onclick="document.getElementById(\'tag-config-modal\').remove();" style="flex:1;background:#0ea5e9;border:none;color:#fff;padding:4px;border-radius:3px;cursor:pointer;font-size:0.85em;">CLOSE</button>';
-            html += '</div>';
-            
-            modal.innerHTML = html;
+            renderModal();
             document.body.appendChild(modal);
         }
+        
+        window.rerenderTagConfig = function() {
+            const modal = document.getElementById('tag-config-modal');
+            if (modal) { modal.remove(); openTagConfig(); }
+        };
+
+        window.moveTagField = function(key, dir) {
+            const idx = mapTagFields.indexOf(key);
+            if (idx === -1) return;
+            const newIdx = idx + dir;
+            if (newIdx < 0 || newIdx >= mapTagFields.length) return;
+            mapTagFields.splice(idx, 1);
+            mapTagFields.splice(newIdx, 0, key);
+            saveMapTagConfig();
+            rerenderTagConfig();
+        };
 
         function toggleTagField(field, enabled) {
             if (enabled && !mapTagFields.includes(field)) {
@@ -1030,7 +1224,8 @@
             } else if (!enabled) {
                 mapTagFields = mapTagFields.filter(f => f !== field);
             }
-            saveMapTagFields();
+            saveMapTagConfig();
+            rerenderTagConfig();
         }
 
         // --- Waypoint GPS + Import/Export (Phase 7) ---
@@ -1088,16 +1283,33 @@
         }
 
         // --- Hold-Alt Tool: Time-aligned measurement with confidence (Phase 6) ---
-        // Enhanced measurement display shows time delta between samples and confidence
+        // Validity states: HIGH (green) = both entities fresh (<5s delta or waypoint),
+        // MED (amber) = delta 5-10s, LOW (red) = >10s or no latency data, STALE (grey) = >30s age
         function computeHoldAltConfidence(e1, e2) {
-            if (!e1 || !e2) return { confidence: 'NONE', ageDelta: null };
-            const age1 = e1._latency ? e1._latency.state_age : null;
-            const age2 = e2._latency ? e2._latency.state_age : null;
-            if (age1 === null || age2 === null) return { confidence: 'LOW', ageDelta: null };
+            if (!e1 || !e2) return { confidence: 'NONE', ageDelta: null, color: '#94a3b8' };
+            
+            // Waypoints are always "fresh" (static ground truth) — treat as age 0
+            const isWpt1 = e1._latency === null && e1.alt === 'GROUND';
+            const isWpt2 = e2._latency === null && e2.alt === 'GROUND';
+            
+            const age1 = isWpt1 ? 0 : (e1._latency ? e1._latency.state_age : null);
+            const age2 = isWpt2 ? 0 : (e2._latency ? e2._latency.state_age : null);
+            
+            // If both are waypoints, always HIGH (static ground truth, no temporal concern)
+            if (isWpt1 && isWpt2) return { confidence: 'HIGH', ageDelta: null, color: '#4ade80' };
+            
+            // If either aircraft has no latency data (never received position update)
+            if (age1 === null || age2 === null) return { confidence: 'LOW', ageDelta: null, color: '#ef4444' };
+            
+            // Check for stale data (>30s since last update)
+            const maxAge = Math.max(age1, age2);
+            if (maxAge > 30) return { confidence: 'STALE', ageDelta: Math.abs(age1 - age2), color: '#94a3b8' };
+            
+            // Compute time alignment delta
             const ageDelta = Math.abs(age1 - age2);
-            if (ageDelta > 10) return { confidence: 'LOW', ageDelta };
-            if (ageDelta > 5) return { confidence: 'MED', ageDelta };
-            return { confidence: 'HIGH', ageDelta };
+            if (ageDelta > 10) return { confidence: 'LOW', ageDelta, color: '#ef4444' };
+            if (ageDelta > 5) return { confidence: 'MED', ageDelta, color: '#fbbf24' };
+            return { confidence: 'HIGH', ageDelta, color: '#4ade80' };
         }
 
     </script>
