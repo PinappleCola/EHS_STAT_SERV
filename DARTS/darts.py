@@ -168,6 +168,268 @@ def decode_bds40_payload(payload_int):
 
     return result
 
+def decode_icao_charset(payload_int, start_bit, char_count):
+    chars = []
+    for idx in range(char_count):
+        char_start = start_bit + (idx * 6)
+        raw_char = (payload_int >> (55 - (char_start + 5))) & 0x3F
+        symbol = ICAO_ALPHABET[raw_char] if 0 <= raw_char < len(ICAO_ALPHABET) else "#"
+        chars.append(symbol)
+    return "".join(chars).replace("_", " ").replace("#", "").strip()
+
+def is_bds41_payload(payload_int):
+    if payload_int == 0:
+        return False
+    if (payload_int & 0x1) != 0:  # bit 56 reserved
+        return False
+    if wrong_status(payload_int, 0, 1, 54):
+        return False
+    if ((payload_int >> (55 - 0)) & 0x1) == 0:
+        return False
+    waypoint = decode_icao_charset(payload_int, 1, 9)
+    return len(waypoint) > 0
+
+def decode_bds41_payload(payload_int):
+    result = {}
+    if (payload_int >> (55 - 0)) & 0x1:
+        waypoint = decode_icao_charset(payload_int, 1, 9)
+        if waypoint:
+            result["next_waypoint"] = waypoint
+    return result
+
+def is_bds42_payload(payload_int):
+    if payload_int == 0:
+        return False
+    if wrong_status(payload_int, 0, 1, 19):
+        return False
+    if wrong_status(payload_int, 20, 21, 19):
+        return False
+    if wrong_status(payload_int, 40, 41, 15):
+        return False
+
+    decoded = decode_bds42_payload(payload_int)
+    lat = decoded.get("next_waypoint_lat")
+    lon = decoded.get("next_waypoint_lon")
+    if lat is not None and abs(lat) > 180:
+        return False
+    if lon is not None and abs(lon) > 180:
+        return False
+    return any(decoded.get(key) is not None for key in ("next_waypoint_lat", "next_waypoint_lon", "next_waypoint_crossing_alt"))
+
+def decode_bds42_payload(payload_int):
+    result = {}
+
+    if (payload_int >> (55 - 0)) & 0x1:
+        sign = (payload_int >> (55 - 1)) & 0x1
+        mag = (payload_int >> (55 - 19)) & ((1 << 18) - 1)
+        result["next_waypoint_lat"] = signed_magnitude(mag, sign) * (90.0 / 131072.0)
+
+    if (payload_int >> (55 - 20)) & 0x1:
+        sign = (payload_int >> (55 - 21)) & 0x1
+        mag = (payload_int >> (55 - 39)) & ((1 << 18) - 1)
+        result["next_waypoint_lon"] = signed_magnitude(mag, sign) * (90.0 / 131072.0)
+
+    if (payload_int >> (55 - 40)) & 0x1:
+        sign = (payload_int >> (55 - 41)) & 0x1
+        mag = (payload_int >> (55 - 55)) & ((1 << 14) - 1)
+        result["next_waypoint_crossing_alt"] = signed_magnitude(mag, sign) * 8
+
+    return result
+
+def is_bds43_payload(payload_int):
+    if payload_int == 0:
+        return False
+    if wrong_status(payload_int, 0, 1, 11):
+        return False
+    if wrong_status(payload_int, 12, 13, 12):
+        return False
+    if wrong_status(payload_int, 25, 26, 17):
+        return False
+
+    decoded = decode_bds43_payload(payload_int)
+    bearing = decoded.get("next_waypoint_bearing")
+    time_to_go = decoded.get("next_waypoint_time_to_go_min")
+    distance_to_go = decoded.get("next_waypoint_distance_to_go_nm")
+    if bearing is not None and abs(bearing) > 180:
+        return False
+    if time_to_go is not None and time_to_go > 410:
+        return False
+    if distance_to_go is not None and distance_to_go > 6554:
+        return False
+    return any(decoded.get(key) is not None for key in ("next_waypoint_bearing", "next_waypoint_time_to_go_min", "next_waypoint_distance_to_go_nm"))
+
+def decode_bds43_payload(payload_int):
+    result = {}
+
+    if (payload_int >> (55 - 0)) & 0x1:
+        sign = (payload_int >> (55 - 1)) & 0x1
+        mag = (payload_int >> (55 - 11)) & ((1 << 10) - 1)
+        result["next_waypoint_bearing"] = signed_magnitude(mag, sign) * (90.0 / 512.0)
+
+    if (payload_int >> (55 - 12)) & 0x1:
+        raw = (payload_int >> (55 - 24)) & ((1 << 12) - 1)
+        result["next_waypoint_time_to_go_min"] = raw * 0.1
+
+    if (payload_int >> (55 - 25)) & 0x1:
+        raw = (payload_int >> (55 - 41)) & ((1 << 16) - 1)
+        result["next_waypoint_distance_to_go_nm"] = raw * 0.1
+
+    return result
+
+def decode_vhf_channel(raw_value):
+    if raw_value <= 0:
+        return None
+    mhz = 118.0 + (raw_value * 0.001)
+    if mhz < 118.0 or mhz > 152.112:
+        return None
+    return round(mhz, 3)
+
+def decode_vhf_audio(raw_value):
+    return {
+        0: "UNKNOWN",
+        1: "NOBODY",
+        2: "HEADSET",
+        3: "SPEAKER",
+    }.get(raw_value, "UNKNOWN")
+
+def is_bds48_payload(payload_int):
+    if payload_int == 0:
+        return False
+    if wrong_status(payload_int, 15, 0, 15):
+        return False
+    if wrong_status(payload_int, 33, 18, 15):
+        return False
+    if wrong_status(payload_int, 51, 36, 15):
+        return False
+
+    decoded = decode_bds48_payload(payload_int)
+    has_channel = any(decoded.get(key) is not None for key in ("vhf1_mhz", "vhf2_mhz", "vhf3_mhz"))
+    return has_channel
+
+def decode_bds48_payload(payload_int):
+    result = {}
+
+    if (payload_int >> (55 - 15)) & 0x1:
+        raw = (payload_int >> (55 - 14)) & ((1 << 15) - 1)
+        result["vhf1_mhz"] = decode_vhf_channel(raw)
+    result["vhf1_audio"] = decode_vhf_audio((payload_int >> (55 - 17)) & 0x3)
+
+    if (payload_int >> (55 - 33)) & 0x1:
+        raw = (payload_int >> (55 - 32)) & ((1 << 15) - 1)
+        result["vhf2_mhz"] = decode_vhf_channel(raw)
+    result["vhf2_audio"] = decode_vhf_audio((payload_int >> (55 - 35)) & 0x3)
+
+    if (payload_int >> (55 - 51)) & 0x1:
+        raw = (payload_int >> (55 - 50)) & ((1 << 15) - 1)
+        result["vhf3_mhz"] = decode_vhf_channel(raw)
+    result["vhf3_audio"] = decode_vhf_audio((payload_int >> (55 - 53)) & 0x3)
+    result["vhf_guard_audio"] = decode_vhf_audio((payload_int >> (55 - 55)) & 0x3)
+
+    return result
+
+def is_bds53_payload(payload_int):
+    if payload_int == 0:
+        return False
+    if wrong_status(payload_int, 0, 1, 11):
+        return False
+    if wrong_status(payload_int, 12, 13, 10):
+        return False
+    if wrong_status(payload_int, 23, 24, 9):
+        return False
+    if wrong_status(payload_int, 33, 34, 12):
+        return False
+    if wrong_status(payload_int, 46, 47, 9):
+        return False
+
+    decoded = decode_bds53_payload(payload_int)
+    heading = decoded.get("air_vector_heading")
+    ias = decoded.get("air_vector_ias")
+    mach = decoded.get("air_vector_mach")
+    tas = decoded.get("air_vector_tas")
+    vr = decoded.get("air_vector_vertical_rate")
+    if heading is not None and abs(heading) > 360:
+        return False
+    if ias is not None and ias > 1023:
+        return False
+    if mach is not None and mach > 4.2:
+        return False
+    if tas is not None and tas > 2048:
+        return False
+    if vr is not None and abs(vr) > 16384:
+        return False
+    return any(decoded.get(key) is not None for key in ("air_vector_heading", "air_vector_ias", "air_vector_mach", "air_vector_tas", "air_vector_vertical_rate"))
+
+def decode_bds53_payload(payload_int):
+    result = {}
+
+    if (payload_int >> (55 - 0)) & 0x1:
+        sign = (payload_int >> (55 - 1)) & 0x1
+        mag = (payload_int >> (55 - 11)) & ((1 << 10) - 1)
+        result["air_vector_heading"] = normalise_angle(signed_magnitude(mag, sign) * (90.0 / 512.0))
+
+    if (payload_int >> (55 - 12)) & 0x1:
+        result["air_vector_ias"] = (payload_int >> (55 - 22)) & ((1 << 10) - 1)
+
+    if (payload_int >> (55 - 23)) & 0x1:
+        raw = (payload_int >> (55 - 32)) & ((1 << 9) - 1)
+        result["air_vector_mach"] = raw * 0.008
+
+    if (payload_int >> (55 - 33)) & 0x1:
+        raw = (payload_int >> (55 - 45)) & ((1 << 12) - 1)
+        result["air_vector_tas"] = raw * 0.5
+
+    if (payload_int >> (55 - 46)) & 0x1:
+        sign = (payload_int >> (55 - 47)) & 0x1
+        mag = (payload_int >> (55 - 55)) & ((1 << 8) - 1)
+        result["air_vector_vertical_rate"] = signed_magnitude(mag, sign) * 64
+
+    return result
+
+def is_bds5f_payload(payload_int):
+    if payload_int == 0:
+        return False
+
+    monitored_pairs = {
+        "qsp_mcp_alt_change": (0, 1),
+        "qsp_next_waypoint_change": (12, 13),
+        "qsp_fms_vertical_mode_change": (16, 17),
+        "qsp_vhf_channel_change": (18, 19),
+        "qsp_meteo_hazard_change": (20, 21),
+        "qsp_fms_alt_change": (22, 23),
+        "qsp_baro_change": (24, 25),
+    }
+    used_bits = set()
+    non_zero_pairs = 0
+    for _, (msb, lsb) in monitored_pairs.items():
+        used_bits.update({msb, lsb})
+        value = ((payload_int >> (55 - msb)) & 0x1) << 1 | ((payload_int >> (55 - lsb)) & 0x1)
+        if value != 0:
+            non_zero_pairs += 1
+
+    if non_zero_pairs == 0:
+        return False
+
+    for bit_index in range(56):
+        if bit_index in used_bits:
+            continue
+        if ((payload_int >> (55 - bit_index)) & 0x1) != 0:
+            return False
+    return True
+
+def decode_bds5f_payload(payload_int):
+    def pair_value(msb, lsb):
+        return (((payload_int >> (55 - msb)) & 0x1) << 1) | ((payload_int >> (55 - lsb)) & 0x1)
+
+    return {
+        "qsp_mcp_alt_change": pair_value(0, 1),
+        "qsp_next_waypoint_change": pair_value(12, 13),
+        "qsp_fms_vertical_mode_change": pair_value(16, 17),
+        "qsp_vhf_channel_change": pair_value(18, 19),
+        "qsp_meteo_hazard_change": pair_value(20, 21),
+        "qsp_fms_alt_change": pair_value(22, 23),
+        "qsp_baro_change": pair_value(24, 25),
+    }
+
 def is_bds50_payload(payload_int):
     if payload_int == 0:
         return False
@@ -405,6 +667,32 @@ FIELD_REGISTRY = [
     {"key": "threat_icao",      "label": "RA THREAT ICAO", "type": "text",   "unit": None,   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 3,0"},
     {"key": "threat_range_nm",  "label": "RA THREAT RNG",  "type": "number", "unit": "NM",   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 3,0"},
     {"key": "threat_bearing_deg","label":"RA THREAT BRG",  "type": "number", "unit": "deg",  "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 3,0"},
+    {"key": "intent_next_wp",   "label": "INTENT WP",      "type": "text",   "unit": None,   "category": "INTENT",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,1"},
+    {"key": "intent_wp_lat",    "label": "INTENT LAT",     "type": "number", "unit": "deg",  "category": "INTENT",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,2"},
+    {"key": "intent_wp_lon",    "label": "INTENT LON",     "type": "number", "unit": "deg",  "category": "INTENT",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,2"},
+    {"key": "intent_wp_cross_alt","label":"INTENT X ALT",  "type": "number", "unit": "ft",   "category": "INTENT",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,2"},
+    {"key": "intent_bearing",   "label": "INTENT BRG",     "type": "number", "unit": "deg",  "category": "INTENT",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,3"},
+    {"key": "intent_time_to_go","label": "INTENT TTG",     "type": "number", "unit": "min",  "category": "INTENT",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,3"},
+    {"key": "intent_dist_to_go","label": "INTENT DTG",     "type": "number", "unit": "NM",   "category": "INTENT",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,3"},
+    {"key": "vhf1_freq_mhz",    "label": "VHF1",           "type": "number", "unit": "MHz",  "category": "COMMS",          "sortable": True,  "defaultVisible": False, "source": "BDS 4,8"},
+    {"key": "vhf2_freq_mhz",    "label": "VHF2",           "type": "number", "unit": "MHz",  "category": "COMMS",          "sortable": True,  "defaultVisible": False, "source": "BDS 4,8"},
+    {"key": "vhf3_freq_mhz",    "label": "VHF3",           "type": "number", "unit": "MHz",  "category": "COMMS",          "sortable": True,  "defaultVisible": False, "source": "BDS 4,8"},
+    {"key": "vhf1_audio",       "label": "VHF1 AUDIO",     "type": "text",   "unit": None,   "category": "COMMS",          "sortable": False, "defaultVisible": False, "source": "BDS 4,8"},
+    {"key": "vhf2_audio",       "label": "VHF2 AUDIO",     "type": "text",   "unit": None,   "category": "COMMS",          "sortable": False, "defaultVisible": False, "source": "BDS 4,8"},
+    {"key": "vhf3_audio",       "label": "VHF3 AUDIO",     "type": "text",   "unit": None,   "category": "COMMS",          "sortable": False, "defaultVisible": False, "source": "BDS 4,8"},
+    {"key": "vhf_guard_audio",  "label": "121.5 AUDIO",    "type": "text",   "unit": None,   "category": "COMMS",          "sortable": False, "defaultVisible": False, "source": "BDS 4,8"},
+    {"key": "air_vector_heading","label":"AIRV HDG",       "type": "number", "unit": "deg",  "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 5,3"},
+    {"key": "air_vector_ias",   "label": "AIRV IAS",       "type": "number", "unit": "kt",   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 5,3"},
+    {"key": "air_vector_mach",  "label": "AIRV MACH",      "type": "number", "unit": None,   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 5,3"},
+    {"key": "air_vector_tas",   "label": "AIRV TAS",       "type": "number", "unit": "kt",   "category": "KINEMATICS",     "sortable": True,  "defaultVisible": False, "source": "BDS 5,3"},
+    {"key": "air_vector_vr",    "label": "AIRV VR",        "type": "number", "unit": "ft/min","category": "KINEMATICS",    "sortable": True,  "defaultVisible": False, "source": "BDS 5,3"},
+    {"key": "qsp_mcp_alt_change","label":"QSP MCP ALT",    "type": "number", "unit": None,   "category": "SYSTEM",         "sortable": True,  "defaultVisible": False, "source": "BDS 5,F"},
+    {"key": "qsp_next_wp_change","label":"QSP NEXT WP",    "type": "number", "unit": None,   "category": "SYSTEM",         "sortable": True,  "defaultVisible": False, "source": "BDS 5,F"},
+    {"key": "qsp_fms_vmode_change","label":"QSP FMS VMODE","type": "number", "unit": None,   "category": "SYSTEM",         "sortable": True,  "defaultVisible": False, "source": "BDS 5,F"},
+    {"key": "qsp_vhf_change",   "label": "QSP VHF",        "type": "number", "unit": None,   "category": "SYSTEM",         "sortable": True,  "defaultVisible": False, "source": "BDS 5,F"},
+    {"key": "qsp_meteo_change", "label": "QSP METEO",      "type": "number", "unit": None,   "category": "SYSTEM",         "sortable": True,  "defaultVisible": False, "source": "BDS 5,F"},
+    {"key": "qsp_fms_alt_change","label":"QSP FMS ALT",    "type": "number", "unit": None,   "category": "SYSTEM",         "sortable": True,  "defaultVisible": False, "source": "BDS 5,F"},
+    {"key": "qsp_baro_change",  "label": "QSP BARO",       "type": "number", "unit": None,   "category": "SYSTEM",         "sortable": True,  "defaultVisible": False, "source": "BDS 5,F"},
     # --- System timing ---
     {"key": "age",              "label": "AGE",            "type": "number", "unit": "s",    "category": "SYSTEM",         "sortable": True,  "defaultVisible": True,  "source": "Sys Clock"},
     {"key": "first_seen",       "label": "FIRST SEEN",     "type": "text",   "unit": None,   "category": "SYSTEM",         "sortable": False, "defaultVisible": False, "source": "Sys Clock"},
@@ -856,6 +1144,24 @@ def infer_comm_b_type(message_hex, known_state=None):
 
     if is_bds45_payload(mb_int):
         return "BDS45", decode_bds45_payload(mb_int)
+
+    if is_bds41_payload(mb_int):
+        return "BDS41", decode_bds41_payload(mb_int)
+
+    if is_bds42_payload(mb_int):
+        return "BDS42", decode_bds42_payload(mb_int)
+
+    if is_bds43_payload(mb_int):
+        return "BDS43", decode_bds43_payload(mb_int)
+
+    if is_bds48_payload(mb_int):
+        return "BDS48", decode_bds48_payload(mb_int)
+
+    if is_bds53_payload(mb_int):
+        return "BDS53", decode_bds53_payload(mb_int)
+
+    if is_bds5f_payload(mb_int):
+        return "BDS5F", decode_bds5f_payload(mb_int)
 
     bds50_ok = is_bds50_payload(mb_int)
     bds60_ok = is_bds60_payload(mb_int)
@@ -1576,6 +1882,13 @@ def update_aircraft(icao, key, value):
                 "static_pressure": "----", "turbulence_level": "----",
                 "wind_shear_level": "----", "microburst_level": "----", "icing_level": "----", "wake_vortex_level": "----",
                 "threat_icao": "----", "threat_range_nm": "----", "threat_bearing_deg": "----",
+                "intent_next_wp": "----", "intent_wp_lat": "----", "intent_wp_lon": "----", "intent_wp_cross_alt": "----",
+                "intent_bearing": "----", "intent_time_to_go": "----", "intent_dist_to_go": "----",
+                "vhf1_freq_mhz": "----", "vhf2_freq_mhz": "----", "vhf3_freq_mhz": "----",
+                "vhf1_audio": "----", "vhf2_audio": "----", "vhf3_audio": "----", "vhf_guard_audio": "----",
+                "air_vector_heading": "----", "air_vector_ias": "----", "air_vector_mach": "----", "air_vector_tas": "----", "air_vector_vr": "----",
+                "qsp_mcp_alt_change": "----", "qsp_next_wp_change": "----", "qsp_fms_vmode_change": "----",
+                "qsp_vhf_change": "----", "qsp_meteo_change": "----", "qsp_fms_alt_change": "----", "qsp_baro_change": "----",
                 "msg_count": 0, "data_age_heading": "----", "data_age_position": "----",
                 "rssi_dbfs": "----",
                 # Display heading arbitration internals
@@ -1942,12 +2255,115 @@ def process_frame(frame):
                     except Exception:
                         pass
 
-                elif bds_type in ["BDS41", "BDS42"]:
+                elif bds_type == "BDS41":
                     try:
-                        if icao not in fms_intent_cache: fms_intent_cache[icao] = {}
+                        if bds_data.get("next_waypoint"):
+                            update_aircraft(icao, "intent_next_wp", bds_data["next_waypoint"])
+                        if icao not in fms_intent_cache:
+                            fms_intent_cache[icao] = {}
                         if fms_intent_cache[icao].get(bds_type) != mb_hex:
-                            fms_intent_cache[icao][bds_type] = mb_hex 
-                            update_aircraft(icao, "latest_intent", {"time": get_ui_time(), "icao": icao, "bds": bds_type, "hex": mb_hex})
+                            fms_intent_cache[icao][bds_type] = mb_hex
+                            update_aircraft(icao, "latest_intent", {
+                                "time": get_ui_time(),
+                                "icao": icao,
+                                "bds": bds_type,
+                                "hex": mb_hex,
+                                "next_waypoint": bds_data.get("next_waypoint", "----")
+                            })
+                    except Exception:
+                        pass
+
+                elif bds_type == "BDS42":
+                    try:
+                        if bds_data.get("next_waypoint_lat") is not None:
+                            update_aircraft(icao, "intent_wp_lat", round(float(bds_data["next_waypoint_lat"]), 5))
+                        if bds_data.get("next_waypoint_lon") is not None:
+                            update_aircraft(icao, "intent_wp_lon", round(float(bds_data["next_waypoint_lon"]), 5))
+                        if bds_data.get("next_waypoint_crossing_alt") is not None:
+                            update_aircraft(icao, "intent_wp_cross_alt", int(bds_data["next_waypoint_crossing_alt"]))
+                        if icao not in fms_intent_cache:
+                            fms_intent_cache[icao] = {}
+                        if fms_intent_cache[icao].get(bds_type) != mb_hex:
+                            fms_intent_cache[icao][bds_type] = mb_hex
+                            update_aircraft(icao, "latest_intent", {
+                                "time": get_ui_time(),
+                                "icao": icao,
+                                "bds": bds_type,
+                                "hex": mb_hex,
+                                "lat": round(float(bds_data["next_waypoint_lat"]), 5) if bds_data.get("next_waypoint_lat") is not None else "----",
+                                "lon": round(float(bds_data["next_waypoint_lon"]), 5) if bds_data.get("next_waypoint_lon") is not None else "----",
+                                "crossing_alt_ft": int(bds_data["next_waypoint_crossing_alt"]) if bds_data.get("next_waypoint_crossing_alt") is not None else "----",
+                            })
+                    except Exception:
+                        pass
+
+                elif bds_type == "BDS43":
+                    try:
+                        if bds_data.get("next_waypoint_bearing") is not None:
+                            update_aircraft(icao, "intent_bearing", round(float(bds_data["next_waypoint_bearing"]), 2))
+                        if bds_data.get("next_waypoint_time_to_go_min") is not None:
+                            update_aircraft(icao, "intent_time_to_go", round(float(bds_data["next_waypoint_time_to_go_min"]), 1))
+                        if bds_data.get("next_waypoint_distance_to_go_nm") is not None:
+                            update_aircraft(icao, "intent_dist_to_go", round(float(bds_data["next_waypoint_distance_to_go_nm"]), 1))
+                        if icao not in fms_intent_cache:
+                            fms_intent_cache[icao] = {}
+                        if fms_intent_cache[icao].get(bds_type) != mb_hex:
+                            fms_intent_cache[icao][bds_type] = mb_hex
+                            update_aircraft(icao, "latest_intent", {
+                                "time": get_ui_time(),
+                                "icao": icao,
+                                "bds": bds_type,
+                                "hex": mb_hex,
+                                "bearing": round(float(bds_data["next_waypoint_bearing"]), 2) if bds_data.get("next_waypoint_bearing") is not None else "----",
+                                "time_to_go_min": round(float(bds_data["next_waypoint_time_to_go_min"]), 1) if bds_data.get("next_waypoint_time_to_go_min") is not None else "----",
+                                "distance_to_go_nm": round(float(bds_data["next_waypoint_distance_to_go_nm"]), 1) if bds_data.get("next_waypoint_distance_to_go_nm") is not None else "----",
+                            })
+                    except Exception:
+                        pass
+
+                elif bds_type == "BDS48":
+                    try:
+                        if bds_data.get("vhf1_mhz") is not None:
+                            update_aircraft(icao, "vhf1_freq_mhz", round(float(bds_data["vhf1_mhz"]), 3))
+                        if bds_data.get("vhf2_mhz") is not None:
+                            update_aircraft(icao, "vhf2_freq_mhz", round(float(bds_data["vhf2_mhz"]), 3))
+                        if bds_data.get("vhf3_mhz") is not None:
+                            update_aircraft(icao, "vhf3_freq_mhz", round(float(bds_data["vhf3_mhz"]), 3))
+                        if bds_data.get("vhf1_audio"):
+                            update_aircraft(icao, "vhf1_audio", bds_data["vhf1_audio"])
+                        if bds_data.get("vhf2_audio"):
+                            update_aircraft(icao, "vhf2_audio", bds_data["vhf2_audio"])
+                        if bds_data.get("vhf3_audio"):
+                            update_aircraft(icao, "vhf3_audio", bds_data["vhf3_audio"])
+                        if bds_data.get("vhf_guard_audio"):
+                            update_aircraft(icao, "vhf_guard_audio", bds_data["vhf_guard_audio"])
+                    except Exception:
+                        pass
+
+                elif bds_type == "BDS53":
+                    try:
+                        if bds_data.get("air_vector_heading") is not None:
+                            update_aircraft(icao, "air_vector_heading", round(float(bds_data["air_vector_heading"]), 2))
+                        if bds_data.get("air_vector_ias") is not None:
+                            update_aircraft(icao, "air_vector_ias", int(bds_data["air_vector_ias"]))
+                        if bds_data.get("air_vector_mach") is not None:
+                            update_aircraft(icao, "air_vector_mach", round(float(bds_data["air_vector_mach"]), 3))
+                        if bds_data.get("air_vector_tas") is not None:
+                            update_aircraft(icao, "air_vector_tas", round(float(bds_data["air_vector_tas"]), 1))
+                        if bds_data.get("air_vector_vertical_rate") is not None:
+                            update_aircraft(icao, "air_vector_vr", int(bds_data["air_vector_vertical_rate"]))
+                    except Exception:
+                        pass
+
+                elif bds_type == "BDS5F":
+                    try:
+                        update_aircraft(icao, "qsp_mcp_alt_change", int(bds_data.get("qsp_mcp_alt_change", 0)))
+                        update_aircraft(icao, "qsp_next_wp_change", int(bds_data.get("qsp_next_waypoint_change", 0)))
+                        update_aircraft(icao, "qsp_fms_vmode_change", int(bds_data.get("qsp_fms_vertical_mode_change", 0)))
+                        update_aircraft(icao, "qsp_vhf_change", int(bds_data.get("qsp_vhf_channel_change", 0)))
+                        update_aircraft(icao, "qsp_meteo_change", int(bds_data.get("qsp_meteo_hazard_change", 0)))
+                        update_aircraft(icao, "qsp_fms_alt_change", int(bds_data.get("qsp_fms_alt_change", 0)))
+                        update_aircraft(icao, "qsp_baro_change", int(bds_data.get("qsp_baro_change", 0)))
                     except Exception: pass
 
         except Exception: pass
