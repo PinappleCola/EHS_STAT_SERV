@@ -174,8 +174,8 @@
                 <input type="range" id="trail-min" min="0" max="1440" step="0.1" value="0">
                 <input type="range" id="trail-max" min="0" max="1440" step="0.1" value="1440">
             </div>
-            <input id="trail-end-code" class="timecode-input" type="text" value="24:00:00" title="Range end HH:MM:SS">
-            <span id="trail-val" class="scale-text trail-readout" style="color: #38bdf8; text-align:center;">Δ 00:00:00 | 00:00:00 - 24:00:00</span>
+            <input id="trail-end-code" class="timecode-input" type="text" value="23:59:59" title="Range end HH:MM:SS">
+            <span id="trail-val" class="scale-text trail-readout" style="color: #38bdf8; text-align:center;">Δ 00:00:00 | 00:00:00 - 23:59:59</span>
             
             <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
             
@@ -655,7 +655,7 @@
         }
 
         function formatHmsFromMinutes(v) {
-            const seconds = Math.max(0, Math.round(Number(v) * 60));
+            const seconds = Math.max(0, Math.min(86399, Math.round(Number(v) * 60)));
             const h = Math.floor(seconds / 3600);
             const m = Math.floor((seconds % 3600) / 60);
             const s = seconds % 60;
@@ -665,7 +665,6 @@
         function parseHmsToMinutes(input) {
             if (!input) return null;
             const normalized = String(input).trim();
-            if (normalized === '24:00:00') return 1440;
             const m = normalized.match(/^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/);
             if (!m) return null;
             const h = Number(m[1]), mm = Number(m[2]), s = Number(m[3]);
