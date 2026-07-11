@@ -210,7 +210,7 @@ def is_bds42_payload(payload_int):
     decoded = decode_bds42_payload(payload_int)
     lat = decoded.get("next_waypoint_lat")
     lon = decoded.get("next_waypoint_lon")
-    if lat is not None and abs(lat) > 180:
+    if lat is not None and abs(lat) > 90:
         return False
     if lon is not None and abs(lon) > 180:
         return False
@@ -250,7 +250,7 @@ def is_bds43_payload(payload_int):
     bearing = decoded.get("next_waypoint_bearing")
     time_to_go = decoded.get("next_waypoint_time_to_go_min")
     distance_to_go = decoded.get("next_waypoint_distance_to_go_nm")
-    if bearing is not None and abs(bearing) > 180:
+    if bearing is not None and abs(bearing) > 360:
         return False
     if time_to_go is not None and time_to_go > 410:
         return False
@@ -347,7 +347,7 @@ def is_bds53_payload(payload_int):
     mach = decoded.get("air_vector_mach")
     tas = decoded.get("air_vector_tas")
     vr = decoded.get("air_vector_vertical_rate")
-    if heading is not None and abs(heading) > 360:
+    if heading is not None and (heading < 0 or heading > 360):
         return False
     if ias is not None and ias > 1023:
         return False
