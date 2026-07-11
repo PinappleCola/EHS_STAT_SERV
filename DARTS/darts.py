@@ -73,6 +73,8 @@ class ANSI:
 
 # --- Optional pyModeS Support ---
 MODE_S_POLY = 0xFFF409
+VHF_MIN_MHZ = 118.0
+VHF_MAX_MHZ = 152.112
 
 def mode_s_crc(message_hex):
     try:
@@ -250,7 +252,7 @@ def is_bds43_payload(payload_int):
     bearing = decoded.get("next_waypoint_bearing")
     time_to_go = decoded.get("next_waypoint_time_to_go_min")
     distance_to_go = decoded.get("next_waypoint_distance_to_go_nm")
-    if bearing is not None and abs(bearing) > 360:
+    if bearing is not None and (bearing < 0 or bearing >= 360):
         return False
     if time_to_go is not None and time_to_go > 410:
         return False
@@ -264,7 +266,7 @@ def decode_bds43_payload(payload_int):
     if (payload_int >> (55 - 0)) & 0x1:
         sign = (payload_int >> (55 - 1)) & 0x1
         mag = (payload_int >> (55 - 11)) & ((1 << 10) - 1)
-        result["next_waypoint_bearing"] = signed_magnitude(mag, sign) * (90.0 / 512.0)
+        result["next_waypoint_bearing"] = normalise_angle(signed_magnitude(mag, sign) * (90.0 / 512.0))
 
     if (payload_int >> (55 - 12)) & 0x1:
         raw = (payload_int >> (55 - 24)) & ((1 << 12) - 1)
@@ -279,8 +281,8 @@ def decode_bds43_payload(payload_int):
 def decode_vhf_channel(raw_value):
     if raw_value <= 0:
         return None
-    mhz = 118.0 + (raw_value * 0.001)
-    if mhz < 118.0 or mhz > 152.112:
+    mhz = VHF_MIN_MHZ + (raw_value * 0.001)
+    if mhz < VHF_MIN_MHZ or mhz > VHF_MAX_MHZ:
         return None
     return round(mhz, 3)
 
@@ -347,7 +349,7 @@ def is_bds53_payload(payload_int):
     mach = decoded.get("air_vector_mach")
     tas = decoded.get("air_vector_tas")
     vr = decoded.get("air_vector_vertical_rate")
-    if heading is not None and (heading < 0 or heading > 360):
+    if heading is not None and (heading < 0 or heading >= 360):
         return False
     if ias is not None and ias > 1023:
         return False
