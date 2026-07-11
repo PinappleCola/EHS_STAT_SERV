@@ -664,10 +664,11 @@
 
         function parseHmsToMinutes(input) {
             if (!input) return null;
-            const m = String(input).trim().match(/^(([01]\d|2[0-3]):([0-5]\d):([0-5]\d)|24:00:00)$/);
+            const normalized = String(input).trim();
+            if (normalized === '24:00:00') return 1440;
+            const m = normalized.match(/^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/);
             if (!m) return null;
-            if (m[0] === '24:00:00') return 1440;
-            const h = Number(m[2]), mm = Number(m[3]), s = Number(m[4]);
+            const h = Number(m[1]), mm = Number(m[2]), s = Number(m[3]);
             return (h * 3600 + mm * 60 + s) / 60;
         }
 
