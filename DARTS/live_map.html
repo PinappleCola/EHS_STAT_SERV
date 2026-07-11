@@ -84,6 +84,37 @@
         }
         .wpt-input { background: #030712; color: #e2e8f0; border: 1px solid #1e293b; font-size: 0.9em; padding: 6px; font-family: monospace; }
 
+        /* RX Config Modal */
+        #rx-config-modal {
+            display: none; position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
+            width: 480px; background: rgba(15, 23, 42, 0.97); backdrop-filter: blur(8px);
+            border: 1px solid #38bdf8; border-radius: 6px; z-index: 200;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.95); flex-direction: column; pointer-events: auto;
+        }
+        .rx-modal-header { background: #0369a1; padding: 10px 15px; font-weight: bold; color: white; display: flex; justify-content: space-between; align-items: center; border-radius: 5px 5px 0 0; }
+        .rx-modal-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+        .rx-receiver-block { border: 1px solid #1e293b; border-radius: 4px; padding: 12px; background: rgba(3,7,18,0.6); }
+        .rx-receiver-title { font-size: 0.85em; font-weight: bold; color: #38bdf8; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        .rx-led { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #ef4444; box-shadow: 0 0 4px #ef4444; flex-shrink: 0; }
+        .rx-led.active { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
+        .rx-led.idle   { background: #f59e0b; box-shadow: 0 0 4px #f59e0b; }
+        .rx-input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+        .rx-input-label { font-size: 0.78em; color: #94a3b8; width: 42px; flex-shrink: 0; }
+        .rx-input { background: #030712; color: #e2e8f0; border: 1px solid #334155; border-radius: 3px; padding: 4px 8px; font-size: 0.85em; font-family: monospace; flex: 1; outline: none; }
+        .rx-input:focus { border-color: #38bdf8; }
+        .rx-btn-row { display: flex; gap: 8px; }
+        .rx-mode-row { display: flex; gap: 8px; justify-content: center; }
+        .btn-rx-mode { background: #1e293b; color: #94a3b8; border: 1px solid #334155; padding: 5px 14px; font-size: 0.85em; cursor: pointer; border-radius: 3px; font-family: monospace; font-weight: bold; letter-spacing: 0.5px; transition: background 0.15s; }
+        .btn-rx-mode:hover { background: #334155; color: #e2e8f0; }
+        .btn-rx-mode.selected { background: #0ea5e9; color: #fff; border-color: #0369a1; }
+        .btn-rx-connect { background: #10b981; border: none; color: #000; font-weight: bold; cursor: pointer; padding: 4px 12px; border-radius: 3px; font-size: 0.8em; font-family: monospace; }
+        .btn-rx-reset   { background: #f59e0b; border: none; color: #000; font-weight: bold; cursor: pointer; padding: 4px 12px; border-radius: 3px; font-size: 0.8em; font-family: monospace; }
+
+        /* Toolbar LED indicators (main bar) */
+        .rx-bar-led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; box-shadow: 0 0 3px #ef4444; margin-left: 4px; vertical-align: middle; }
+        .rx-bar-led.active { background: #4ade80; box-shadow: 0 0 5px #4ade80; }
+        .rx-bar-led.idle   { background: #f59e0b; box-shadow: 0 0 3px #f59e0b; }
+
         #map-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; display: none; background-color: #040811; pointer-events: none; }
         #radar-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; display: block; cursor: crosshair; }
     </style>
@@ -122,6 +153,66 @@
             <button id="btn-clean-snap" class="btn-action">Clean Snapshot</button>
             <button onclick="openTagConfig()" class="btn-action" title="Ctrl+Shift+T">Tag Fields</button>
             <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Ctrl+Shift+P">Perf Overlay</button>
+
+            <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
+
+            <button id="btn-rx-a" class="btn-action btn-rx-mode selected" onclick="setRxMode('A')" title="Single receiver A">A-RX<span id="led-bar-a" class="rx-bar-led"></span></button>
+            <button id="btn-rx-b" class="btn-action btn-rx-mode" onclick="setRxMode('B')" title="Single receiver B">B-RX<span id="led-bar-b" class="rx-bar-led"></span></button>
+            <button id="btn-rx-dual" class="btn-action btn-rx-mode" onclick="setRxMode('DUAL')" title="Both receivers merged">DUAL</button>
+            <button id="btn-rx-config" class="btn-action btn-action-alt" onclick="toggleRxConfigModal()" title="Receiver port/baud settings">RX Config</button>
+        </div>
+    </div>
+
+    <!-- RX Config Modal -->
+    <div id="rx-config-modal">
+        <div class="rx-modal-header">
+            <span>RECEIVER CONFIGURATION</span>
+            <span style="cursor:pointer;color:white;font-weight:bold;" onclick="toggleRxConfigModal()">✕</span>
+        </div>
+        <div class="rx-modal-body">
+            <div class="rx-mode-row">
+                <button class="btn-rx-mode" id="modal-rx-a"   onclick="setRxMode('A')">A-RX</button>
+                <button class="btn-rx-mode" id="modal-rx-b"   onclick="setRxMode('B')">B-RX</button>
+                <button class="btn-rx-mode" id="modal-rx-dual" onclick="setRxMode('DUAL')">DUAL</button>
+            </div>
+
+            <!-- Receiver A -->
+            <div class="rx-receiver-block">
+                <div class="rx-receiver-title">
+                    <span class="rx-led" id="led-a"></span> RECEIVER A
+                </div>
+                <div class="rx-input-row">
+                    <span class="rx-input-label">PORT</span>
+                    <input id="rx-a-port" class="rx-input" type="text" placeholder="COM5">
+                </div>
+                <div class="rx-input-row">
+                    <span class="rx-input-label">BAUD</span>
+                    <input id="rx-a-baud" class="rx-input" type="number" placeholder="115200">
+                </div>
+                <div class="rx-btn-row">
+                    <button class="btn-rx-connect" onclick="connectReceiver('A')">CONNECT</button>
+                    <button class="btn-rx-reset"   onclick="resetReceiver('A')">RESET</button>
+                </div>
+            </div>
+
+            <!-- Receiver B -->
+            <div class="rx-receiver-block">
+                <div class="rx-receiver-title">
+                    <span class="rx-led" id="led-b"></span> RECEIVER B
+                </div>
+                <div class="rx-input-row">
+                    <span class="rx-input-label">PORT</span>
+                    <input id="rx-b-port" class="rx-input" type="text" placeholder="COM4">
+                </div>
+                <div class="rx-input-row">
+                    <span class="rx-input-label">BAUD</span>
+                    <input id="rx-b-baud" class="rx-input" type="number" placeholder="115200">
+                </div>
+                <div class="rx-btn-row">
+                    <button class="btn-rx-connect" onclick="connectReceiver('B')">CONNECT</button>
+                    <button class="btn-rx-reset"   onclick="resetReceiver('B')">RESET</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -191,6 +282,118 @@
         const entityCache = {};
         
         let airspaceGeoJSON = { type: "FeatureCollection", features: [] };
+
+        // =============================================
+        // --- DUAL RECEIVER MANAGEMENT ---
+        // =============================================
+        const HTTP_API = 'http://localhost:8766';
+        let currentRxMode = 'A';
+
+        function applyRxModeUI(mode) {
+            currentRxMode = mode;
+            ['A','B','DUAL'].forEach(m => {
+                const barBtn = document.getElementById(`btn-rx-${m.toLowerCase()}`);
+                const modalBtn = document.getElementById(`modal-rx-${m.toLowerCase()}`);
+                const sel = (m === mode);
+                if (barBtn)   { barBtn.classList.toggle('selected', sel); }
+                if (modalBtn) { modalBtn.classList.toggle('selected', sel); }
+            });
+        }
+
+        async function setRxMode(mode) {
+            try {
+                await fetch(`${HTTP_API}/api/rx-config`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ rx_mode: mode })
+                });
+                applyRxModeUI(mode);
+            } catch(e) { console.warn('setRxMode error:', e); }
+        }
+
+        async function connectReceiver(label) {
+            const port = document.getElementById(`rx-${label.toLowerCase()}-port`).value.trim();
+            const baud = parseInt(document.getElementById(`rx-${label.toLowerCase()}-baud`).value) || 115200;
+            if (!port) { alert(`Enter a port for Receiver ${label}`); return; }
+            const key = label === 'A' ? 'receiver_a' : 'receiver_b';
+            // Preserve existing receiver_id from config if available
+            const curCfg = label === 'A' ? (window._rxCfgA || {}) : (window._rxCfgB || {});
+            const receiver_id = curCfg.receiver_id || `ADSBEE-0${label === 'A' ? 1 : 2}`;
+            try {
+                await fetch(`${HTTP_API}/api/rx-config`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ [key]: {port, baud, receiver_id}, restart: label })
+                });
+            } catch(e) { console.warn('connectReceiver error:', e); }
+        }
+
+        async function resetReceiver(label) {
+            try {
+                await fetch(`${HTTP_API}/api/rx-config`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ restart: label })
+                });
+            } catch(e) { console.warn('resetReceiver error:', e); }
+        }
+
+        function setLed(el, status) {
+            if (!el) return;
+            el.classList.remove('active', 'idle');
+            if (status === 'active') el.classList.add('active');
+            else if (status === 'idle') el.classList.add('idle');
+            // else: red (default)
+        }
+
+        async function pollRxStatus() {
+            try {
+                const r = await fetch(`${HTTP_API}/api/rx-status`);
+                if (!r.ok) return;
+                const data = await r.json();
+                for (const label of ['A', 'B']) {
+                    const s = data[label];
+                    if (!s) continue;
+                    let status = 'offline';
+                    if (s.connected) {
+                        status = (s.last_frame_age_ms !== null && s.last_frame_age_ms < 2000) ? 'active' : 'idle';
+                    }
+                    setLed(document.getElementById(`led-${label.toLowerCase()}`), status);
+                    setLed(document.getElementById(`led-bar-${label.toLowerCase()}`), status);
+                }
+            } catch(e) { /* server not yet up */ }
+        }
+
+        function toggleRxConfigModal() {
+            const modal = document.getElementById('rx-config-modal');
+            const visible = modal.style.display === 'flex';
+            modal.style.display = visible ? 'none' : 'flex';
+        }
+
+        async function initRxConfig() {
+            try {
+                const r = await fetch(`${HTTP_API}/api/rx-config`);
+                if (!r.ok) return;
+                const cfg = await r.json();
+                applyRxModeUI(cfg.rx_mode || 'A');
+                window._rxCfgA = cfg.receiver_a || {};
+                window._rxCfgB = cfg.receiver_b || {};
+                if (cfg.receiver_a) {
+                    if (cfg.receiver_a.port) document.getElementById('rx-a-port').value = cfg.receiver_a.port;
+                    if (cfg.receiver_a.baud) document.getElementById('rx-a-baud').value = cfg.receiver_a.baud;
+                }
+                if (cfg.receiver_b) {
+                    if (cfg.receiver_b.port) document.getElementById('rx-b-port').value = cfg.receiver_b.port;
+                    if (cfg.receiver_b.baud) document.getElementById('rx-b-baud').value = cfg.receiver_b.baud;
+                }
+            } catch(e) { /* server not yet up */ }
+        }
+
+        // Init on load, then poll status every 500ms
+        initRxConfig();
+        setInterval(pollRxStatus, 500);
+
+        // =============================================
 
         // --- Configurable data tag fields (Phase 8) ---
         // All available tag fields — mirrors live_grid FIELD_DEFS for full customizability

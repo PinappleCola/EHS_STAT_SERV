@@ -3,5 +3,16 @@
     "baud": 115200,
     "ws_host": "localhost",
     "ws_port": 8765,
-    "receiver_id": "ADSBEE-01"
+    "receiver_id": "ADSBEE-01",
+    "rx_mode": "A",
+    "receiver_a": {
+        "port": "COM5",
+        "baud": 115200,
+        "receiver_id": "ADSBEE-01"
+    },
+    "receiver_b": {
+        "port": "COM4",
+        "baud": 115200,
+        "receiver_id": "ADSBEE-02"
+    }
 }
