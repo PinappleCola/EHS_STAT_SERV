@@ -1750,7 +1750,8 @@ rx_console_lock = threading.Lock()
 
 RECONNECT_DELAY_S = 2.0  # seconds between serial reconnect attempts after a drop
 # Allow active Beast reader loop to observe stop_event and release serial port
-# before we open the same UART for an AT console transaction.
+# before we open the same UART for an AT console transaction. 350ms proved
+# sufficient against the 100ms serial timeout + loop scheduling jitter.
 SERIAL_PORT_RELEASE_DELAY_S = 0.35
 
 # --- Dedup Layer (DUAL mode only) ---
@@ -1798,7 +1799,7 @@ def is_allowed_console_at_command(command):
         return False
     if cmd in {"AT", "AT+HELP"}:
         return True
-    if cmd.startswith("AT+") and cmd.endswith("?"):
+    if cmd.startswith("AT+") and cmd.endswith("?") and "=" not in cmd and re.fullmatch(r"AT\+[A-Z0-9_]+\?", cmd):
         return True
     return False
 
