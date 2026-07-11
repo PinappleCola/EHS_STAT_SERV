@@ -16,46 +16,63 @@
         }
 
         .hud-top {
-            position: absolute; top: 15px; left: 20px; right: 20px; z-index: 50;
+            position: absolute; top: 10px; left: 10px; right: 10px; z-index: 50;
             display: flex; justify-content: flex-start; align-items: center;
             pointer-events: none;
         }
         
         .hud-panel {
             background: rgba(3, 7, 18, 0.7); backdrop-filter: blur(4px);
-            border: 1px solid #1e293b; border-radius: 4px; padding: 10px 15px;
+            border: 1px solid #1e293b; border-radius: 4px; padding: 8px 10px;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); pointer-events: auto;
         }
 
-        .title { color: #38bdf8; font-weight: bold; text-transform: uppercase; letter-spacing: 1.5px; font-size: 1.1em; margin-bottom: 5px; }
-        .status { font-size: 0.85em; color: #94a3b8; }
+        .title { color: #38bdf8; font-weight: bold; text-transform: uppercase; letter-spacing: 1.2px; font-size: clamp(0.8rem, 1.15vw, 1rem); margin-bottom: 0; }
+        .status { font-size: clamp(0.72rem, 0.95vw, 0.84rem); color: #94a3b8; }
         .online { color: #4ade80; font-weight: bold; }
         .offline { color: #f87171; font-weight: bold; }
         
-        .controls { display: flex; gap: 10px; align-items: center; flex-wrap: nowrap; width: 100%; overflow-x: auto; }
-        .scale-text { color: #c084fc; font-weight: bold; font-size: 0.9em; letter-spacing: 1px; }
+        .controls {
+            display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+            width: 100%; max-width: calc(100vw - 20px);
+            overflow-x: hidden; row-gap: 6px;
+        }
+        .controls > * { flex-shrink: 0; }
+        .scale-text { color: #c084fc; font-weight: bold; font-size: clamp(0.72rem, 0.9vw, 0.85rem); letter-spacing: 0.7px; }
 
         .btn-action, .map-select {
             background-color: #0ea5e9; color: #fff; border: 1px solid #0369a1; padding: 4px 10px;
             font-size: 0.85em; cursor: pointer; border-radius: 3px;
             font-weight: bold; font-family: monospace; letter-spacing: 0.5px; transition: background-color 0.2s;
         }
+        .hud-panel.controls .btn-action,
+        .hud-panel.controls .map-select {
+            min-width: 104px;
+            height: 30px;
+            box-sizing: border-box;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            white-space: nowrap;
+            font-size: clamp(0.66rem, 0.82vw, 0.78rem);
+            padding: 0 8px;
+        }
         .btn-action:hover { background-color: #38bdf8; }
         .btn-action-alt { background-color: #8b5cf6; border-color: #7c3aed; }
         .btn-action-alt:hover { background-color: #a78bfa; }
         
-        .map-select { background-color: #1e293b; color: #e2e8f0; border-color: #334155; outline: none; appearance: none; padding: 4px 25px 4px 10px; }
+        .map-select { background-color: #1e293b; color: #e2e8f0; border-color: #334155; outline: none; appearance: none; padding: 0 25px 0 10px; }
         .map-select:hover { background-color: #334155; }
         .btn-toggle { background-color: #64748b; border-color: #334155; }
         .btn-toggle.active { background-color: #10b981; border-color: #047857; color: #000; }
 
-        .dual-slider { position: relative; width: 520px; height: 28px; display: flex; align-items: center; flex-shrink: 0; margin: 0 8px; }
+        .dual-slider { position: relative; width: min(520px, 34vw); min-width: 220px; height: 28px; display: flex; align-items: center; flex-shrink: 1; margin: 0 4px; }
         .slider-track { position: absolute; width: 100%; height: 6px; background: #1e293b; border-radius: 999px; z-index: 0; }
         .dual-slider input[type=range] { position: absolute; width: 100%; top: 50%; transform: translateY(-50%); pointer-events: none; background: transparent; appearance: none; -webkit-appearance: none; z-index: 2; margin: 0; }
         .dual-slider input[type=range]::-webkit-slider-thumb { pointer-events: auto; -webkit-appearance: none; height: 20px; width: 20px; border-radius: 4px; background: #38bdf8; border: 1px solid #0ea5e9; cursor: pointer; box-shadow: 0 0 7px rgba(56, 189, 248, 0.9); }
         .dual-slider input[type=range]::-moz-range-thumb { pointer-events: auto; height: 20px; width: 20px; border-radius: 4px; background: #38bdf8; border: 1px solid #0ea5e9; cursor: pointer; box-shadow: 0 0 7px rgba(56, 189, 248, 0.9); }
         .trail-readout { min-width: 290px; width: 290px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; margin-left: 8px; }
-        .timecode-input { width: 84px; background:#030712; color:#e2e8f0; border:1px solid #334155; border-radius:3px; padding:3px 6px; font-size:0.8em; font-family:monospace; }
+        .timecode-input { width: 84px; height: 30px; background:#030712; color:#e2e8f0; border:1px solid #334155; border-radius:3px; padding:3px 6px; font-size:0.76em; font-family:monospace; box-sizing: border-box; }
 
         #db-modal {
             display: none; position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
@@ -95,6 +112,7 @@
         .rx-modal-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
         .rx-receiver-block { border: 1px solid #1e293b; border-radius: 4px; padding: 12px; background: rgba(3,7,18,0.6); }
         .rx-receiver-title { font-size: 0.85em; font-weight: bold; color: #38bdf8; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        .rx-module-name { margin-left: auto; color: #cbd5e1; font-size: 0.86em; max-width: 225px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .rx-led { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #ef4444; box-shadow: 0 0 4px #ef4444; flex-shrink: 0; }
         .rx-led.active { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
         .rx-led.idle   { background: #f59e0b; box-shadow: 0 0 4px #f59e0b; }
@@ -109,6 +127,9 @@
         .btn-rx-mode.selected { background: #0ea5e9; color: #fff; border-color: #0369a1; }
         .btn-rx-connect { background: #10b981; border: none; color: #000; font-weight: bold; cursor: pointer; padding: 4px 12px; border-radius: 3px; font-size: 0.8em; font-family: monospace; }
         .btn-rx-reset   { background: #f59e0b; border: none; color: #000; font-weight: bold; cursor: pointer; padding: 4px 12px; border-radius: 3px; font-size: 0.8em; font-family: monospace; }
+        .rx-console-block { border: 1px solid #1e293b; border-radius: 4px; padding: 10px; background: rgba(2,6,23,0.65); }
+        .rx-console-row { display: flex; gap: 8px; margin-bottom: 8px; }
+        .rx-console-output { background:#020617; color:#cbd5e1; border:1px solid #334155; border-radius:3px; padding:8px; min-height:86px; max-height:160px; overflow:auto; font-size:0.74em; line-height:1.35; white-space:pre-wrap; }
 
         /* Toolbar LED indicators (main bar) */
         .rx-bar-led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; box-shadow: 0 0 3px #ef4444; margin-left: 4px; vertical-align: middle; }
@@ -179,7 +200,7 @@
             <!-- Receiver A -->
             <div class="rx-receiver-block">
                 <div class="rx-receiver-title">
-                    <span class="rx-led" id="led-a"></span> RECEIVER A
+                    <span class="rx-led" id="led-a"></span> RECEIVER A <span id="rx-name-a" class="rx-module-name">ID: --</span>
                 </div>
                 <div class="rx-input-row">
                     <span class="rx-input-label">PORT</span>
@@ -198,7 +219,7 @@
             <!-- Receiver B -->
             <div class="rx-receiver-block">
                 <div class="rx-receiver-title">
-                    <span class="rx-led" id="led-b"></span> RECEIVER B
+                    <span class="rx-led" id="led-b"></span> RECEIVER B <span id="rx-name-b" class="rx-module-name">ID: --</span>
                 </div>
                 <div class="rx-input-row">
                     <span class="rx-input-label">PORT</span>
@@ -211,6 +232,19 @@
                 <div class="rx-btn-row">
                     <button class="btn-rx-connect" onclick="connectReceiver('B')">CONNECT</button>
                     <button class="btn-rx-reset"   onclick="resetReceiver('B')">RESET</button>
+                </div>
+
+                <div class="rx-console-block">
+                    <div class="rx-receiver-title" style="margin-bottom:8px;">AT CONSOLE (PAUSES STREAM BRIEFLY)</div>
+                    <div class="rx-console-row">
+                        <select id="rx-console-label" class="rx-input" style="max-width:80px;">
+                            <option value="A">A</option>
+                            <option value="B">B</option>
+                        </select>
+                        <input id="rx-console-command" class="rx-input" type="text" placeholder="AT+HOSTNAME?" value="AT+HOSTNAME?">
+                        <button class="btn-rx-connect" onclick="sendRxConsoleCommand()">SEND</button>
+                    </div>
+                    <div id="rx-console-output" class="rx-console-output">Ready.</div>
                 </div>
             </div>
         </div>
@@ -346,6 +380,19 @@
             // else: red (default)
         }
 
+        function setReceiverModuleLabel(label, name, moduleId) {
+            const el = document.getElementById(`rx-name-${label.toLowerCase()}`);
+            if (!el) return;
+            const value = (name || moduleId || '').trim();
+            const display = value ? `ID: ${value}` : 'ID: --';
+            el.textContent = display;
+            if (moduleId) {
+                el.title = moduleId;
+            } else {
+                el.title = display;
+            }
+        }
+
         async function pollRxStatus() {
             try {
                 const r = await fetch(`${HTTP_API}/api/rx-status`);
@@ -360,8 +407,35 @@
                     }
                     setLed(document.getElementById(`led-${label.toLowerCase()}`), status);
                     setLed(document.getElementById(`led-bar-${label.toLowerCase()}`), status);
+                    setReceiverModuleLabel(label, s.module_name || '', s.module_id || '');
                 }
             } catch(e) { /* server not yet up */ }
+        }
+
+        async function sendRxConsoleCommand() {
+            const label = document.getElementById('rx-console-label').value;
+            const command = document.getElementById('rx-console-command').value.trim();
+            const output = document.getElementById('rx-console-output');
+            if (!command) {
+                output.textContent = 'Command required.';
+                return;
+            }
+            output.textContent = `> ${command}\nSending...`;
+            try {
+                const r = await fetch(`${HTTP_API}/api/rx-console`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ label, command })
+                });
+                const data = await r.json();
+                if (!r.ok || data.error) {
+                    output.textContent = `> ${command}\nERROR: ${data.error || 'request failed'}`;
+                    return;
+                }
+                output.textContent = `> ${command}\n${data.response || '(no response)'}\n\n${data.note || ''}`;
+            } catch (e) {
+                output.textContent = `> ${command}\nERROR: ${e}`;
+            }
         }
 
         function toggleRxConfigModal() {
@@ -537,7 +611,7 @@
         const trailStartCode = document.getElementById('trail-start-code');
         const trailEndCode = document.getElementById('trail-end-code');
         const TRAIL_WINDOW_MAX_MINUTES = 1440;
-        const MIN_TRAIL_SPAN_MINUTES = 0.1;
+        const MIN_TRAIL_SPAN_MINUTES = 1.0;
         const MAX_STALE_POSITION_MS = 15000;
         const HAZARD_LEVEL_LABELS = ['NIL', 'LIGHT', 'MOD', 'SEV'];
         let suppressTimecodeSync = false;
@@ -585,7 +659,21 @@
             maxSlider = Math.max(0, Math.min(TRAIL_WINDOW_MAX_MINUTES, maxSlider));
             trailMin.value = minSlider.toFixed(1);
             trailMax.value = maxSlider.toFixed(1);
+            updateSliderThumbOrder(minSlider, maxSlider);
             return { minSlider, maxSlider };
+        }
+
+        function updateSliderThumbOrder(minSlider, maxSlider) {
+            const tight = (maxSlider - minSlider) <= (MIN_TRAIL_SPAN_MINUTES + 0.05);
+            const minFocused = document.activeElement === trailMin;
+            const maxFocused = document.activeElement === trailMax;
+            if (minFocused || (tight && !maxFocused)) {
+                trailMin.style.zIndex = '4';
+                trailMax.style.zIndex = '3';
+            } else {
+                trailMin.style.zIndex = '3';
+                trailMax.style.zIndex = '4';
+            }
         }
 
         function updateSliderLabels(syncInputs = true, source = null) {

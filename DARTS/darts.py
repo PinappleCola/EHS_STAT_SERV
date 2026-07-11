@@ -1248,6 +1248,7 @@ RECEIVER_ID = RUNTIME_CONFIG["receiver_id"]
 RX_MODE = RUNTIME_CONFIG["rx_mode"]
 RECEIVER_A_CONFIG = RUNTIME_CONFIG["receiver_a"]
 RECEIVER_B_CONFIG = RUNTIME_CONFIG["receiver_b"]
+AT_COMMAND_PATTERN = re.compile(r"^\s*AT(?:\+[A-Z0-9_?=,\-]+)?\s*$", re.IGNORECASE)
 
 # ==========================================
 # --- DARTS HTTP API SERVER (field registry + grid config) ---
@@ -1314,6 +1315,8 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                     "connected": s.get("connected", False),
                     "port": s.get("port", ""),
                     "last_frame_age_ms": age_ms,
+                    "module_name": s.get("module_name", ""),
+                    "module_id": s.get("module_id", ""),
                 }
             self._send_json(status_out)
         else:
@@ -1384,6 +1387,39 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                         receiver_status["B"]["connected"] = False
 
             self._send_json({"ok": True, "rx_mode": RX_MODE})
+        elif self.path == "/api/rx-console":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body.decode("utf-8"))
+            except Exception:
+                self._send_json({"error": "Invalid JSON"}, status=400)
+                return
+
+            label = str(data.get("label", "")).upper().strip()
+            command = str(data.get("command", "")).strip()
+            timeout_s = data.get("timeout_s", 1.2)
+
+            if label not in ("A", "B"):
+                self._send_json({"error": "label must be A or B"}, status=400)
+                return
+            if not command:
+                self._send_json({"error": "command is required"}, status=400)
+                return
+            if len(command) > 120:
+                self._send_json({"error": "command too long"}, status=400)
+                return
+            if not AT_COMMAND_PATTERN.match(command):
+                self._send_json({"error": "Only AT commands are allowed"}, status=400)
+                return
+            try:
+                timeout_s = float(timeout_s)
+            except Exception:
+                timeout_s = 1.2
+            timeout_s = max(0.2, min(4.0, timeout_s))
+
+            response = run_rx_console_command(label, command, timeout_s)
+            self._send_json(response)
         else:
             self._send_json({"error": "Not found"}, status=404)
 
@@ -1692,13 +1728,26 @@ log_queue_warn_lock = threading.Lock()
 # --- Dual Receiver State ---
 rx_status_lock = threading.Lock()
 receiver_status = {
-    "A": {"connected": False, "last_frame_time": 0, "port": RECEIVER_A_CONFIG.get("port", "")},
-    "B": {"connected": False, "last_frame_time": 0, "port": RECEIVER_B_CONFIG.get("port", "")},
+    "A": {
+        "connected": False,
+        "last_frame_time": 0,
+        "port": RECEIVER_A_CONFIG.get("port", ""),
+        "module_name": RECEIVER_A_CONFIG.get("receiver_id", ""),
+        "module_id": "",
+    },
+    "B": {
+        "connected": False,
+        "last_frame_time": 0,
+        "port": RECEIVER_B_CONFIG.get("port", ""),
+        "module_name": RECEIVER_B_CONFIG.get("receiver_id", ""),
+        "module_id": "",
+    },
 }
 receiver_stop_events = {
     "A": threading.Event(),
     "B": threading.Event(),
 }
+rx_console_lock = threading.Lock()
 
 RECONNECT_DELAY_S = 2.0  # seconds between serial reconnect attempts after a drop
 
@@ -1726,6 +1775,109 @@ def dedup_check_and_record(payload_hex):
             return False
         dedup_cache[payload_hex] = now
     return True
+
+
+def _extract_ascii_lines(raw_text):
+    clean_chars = []
+    for ch in raw_text:
+        if ch in ("\r", "\n", "\t") or (" " <= ch <= "~"):
+            clean_chars.append(ch)
+    return "\n".join(line.strip() for line in "".join(clean_chars).replace("\r", "\n").split("\n") if line.strip())
+
+
+def send_at_query(ser, command, timeout_s=0.45):
+    try:
+        ser.reset_input_buffer()
+    except Exception:
+        pass
+
+    try:
+        ser.write((command.strip() + "\r\n").encode("ascii", errors="ignore"))
+        ser.flush()
+    except Exception:
+        return ""
+
+    deadline = time.time() + max(0.1, timeout_s)
+    chunks = []
+    while time.time() < deadline:
+        try:
+            waiting = getattr(ser, "in_waiting", 0)
+            if waiting:
+                data = ser.read(waiting)
+                if data:
+                    chunks.append(data)
+                    continue
+            else:
+                b = ser.read(1)
+                if b:
+                    chunks.append(b)
+                    continue
+        except Exception:
+            break
+        time.sleep(0.02)
+
+    if not chunks:
+        return ""
+    return _extract_ascii_lines(b"".join(chunks).decode("utf-8", errors="ignore"))
+
+
+def probe_receiver_identity(ser):
+    module_name = ""
+    module_id = ""
+
+    host_reply = send_at_query(ser, "AT+HOSTNAME?", timeout_s=0.45)
+    for line in host_reply.splitlines():
+        if line.upper().startswith("HOSTNAME="):
+            module_name = line.split("=", 1)[1].strip()
+            break
+
+    dev_reply = send_at_query(ser, "AT+DEVICE_INFO?", timeout_s=0.65)
+    for line in dev_reply.splitlines():
+        if line.upper().startswith("PART CODE:"):
+            module_id = line.split(":", 1)[1].strip()
+            break
+
+    if not module_name and module_id:
+        module_name = module_id
+    return module_name, module_id
+
+
+def run_rx_console_command(label, command, timeout_s=1.2):
+    cfg = RECEIVER_A_CONFIG if label == "A" else RECEIVER_B_CONFIG
+    port = cfg.get("port", "").strip()
+    baud = int(cfg.get("baud", 115200))
+    if not port:
+        return {"ok": False, "error": f"Receiver {label} has no configured port"}
+
+    should_resume_stream = RX_MODE in ("DUAL", label)
+    stop_event = receiver_stop_events[label]
+
+    with rx_console_lock:
+        stop_event.set()
+        time.sleep(0.35)
+        with rx_status_lock:
+            receiver_status[label]["connected"] = False
+
+        response_text = ""
+        try:
+            with serial.Serial(port, baud, timeout=0.1, write_timeout=0.5) as ser:
+                response_text = send_at_query(ser, command, timeout_s=timeout_s)
+        except Exception as exc:
+            response_text = f"ERROR: {exc}"
+            should_resume_stream = should_resume_stream and True
+
+        if should_resume_stream:
+            receiver_stop_events[label] = threading.Event()
+            threading.Thread(target=beast_reader_thread, args=(label,), daemon=True).start()
+
+    return {
+        "ok": True,
+        "label": label,
+        "command": command,
+        "response": response_text or "(no response)",
+        "stream_resumed": bool(should_resume_stream),
+        "note": "Serial stream is temporarily paused while AT command executes.",
+    }
 
 
 def emit_throttled_warning(key, message):
@@ -2554,8 +2706,18 @@ def beast_reader_thread(label):
             receiver_status[label]["port"] = port
         try:
             ser = serial.Serial(port, baud, timeout=0.1)
+            module_name = ""
+            module_id = ""
+            try:
+                module_name, module_id = probe_receiver_identity(ser)
+            except Exception:
+                pass
             with rx_status_lock:
                 receiver_status[label]["connected"] = True
+                if module_name:
+                    receiver_status[label]["module_name"] = module_name
+                if module_id:
+                    receiver_status[label]["module_id"] = module_id
             print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.GREEN}[RX-{label}] Connected: {port} @ {baud} baud{ANSI.RESET}")
             in_frame = False
             frame_data = bytearray()
