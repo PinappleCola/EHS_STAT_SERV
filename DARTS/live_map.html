@@ -41,9 +41,10 @@
         .scale-text { color: #c084fc; font-weight: bold; font-size: clamp(0.72rem, 0.9vw, 0.85rem); letter-spacing: 0.7px; }
 
         .btn-action, .map-select {
-            background-color: #0ea5e9; color: #fff; border: 1px solid #0369a1; padding: 4px 10px;
+            background-color: rgba(15, 23, 42, 0.9); color: #f8fafc; border: 1px solid #475569; padding: 4px 10px;
             font-size: 0.85em; cursor: pointer; border-radius: 3px;
-            font-weight: bold; font-family: monospace; letter-spacing: 0.5px; transition: background-color 0.2s;
+            font-weight: bold; font-family: 'B612 Mono', 'Consolas', 'Courier New', monospace; letter-spacing: 0.5px; transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
+            position: relative;
         }
         .hud-panel.controls .btn-action,
         .hud-panel.controls .map-select {
@@ -57,22 +58,27 @@
             font-size: clamp(0.66rem, 0.82vw, 0.78rem);
             padding: 0 8px;
         }
-        .btn-action:hover { background-color: #38bdf8; }
-        .btn-action-alt { background-color: #8b5cf6; border-color: #7c3aed; }
-        .btn-action-alt:hover { background-color: #a78bfa; }
+        .btn-action:hover { background-color: #1e293b; border-color: #64748b; }
+        .btn-action-alt { background-color: rgba(15, 23, 42, 0.9); border-color: #475569; }
+        .btn-action-alt:hover { background-color: #1e293b; border-color: #64748b; }
         
-        .map-select { background-color: #1e293b; color: #e2e8f0; border-color: #334155; outline: none; appearance: none; padding: 0 25px 0 10px; }
-        .map-select:hover { background-color: #334155; }
-        .btn-toggle { background-color: #64748b; border-color: #334155; }
-        .btn-toggle.active { background-color: #10b981; border-color: #047857; color: #000; }
+        .map-select { background-color: rgba(15, 23, 42, 0.9); color: #f8fafc; border-color: #475569; outline: none; appearance: none; padding: 0 25px 0 10px; }
+        .map-select:hover { background-color: #1e293b; border-color: #64748b; }
+        .btn-toggle { background-color: rgba(15, 23, 42, 0.9); border-color: #475569; }
+        .btn-toggle.active,
+        .hud-panel.controls .btn-rx-mode.selected {
+            border-color: #94a3b8;
+            box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.35), inset 0 -2px 0 #cbd5e1;
+        }
 
         .dual-slider { position: relative; width: min(520px, 34vw); min-width: 220px; height: 28px; display: flex; align-items: center; flex-shrink: 1; margin: 0 4px; }
         .slider-track { position: absolute; width: 100%; height: 6px; background: #1e293b; border-radius: 999px; z-index: 0; }
         .dual-slider input[type=range] { position: absolute; width: 100%; top: 50%; transform: translateY(-50%); pointer-events: none; background: transparent; appearance: none; -webkit-appearance: none; z-index: 2; margin: 0; }
         .dual-slider input[type=range]::-webkit-slider-thumb { pointer-events: auto; -webkit-appearance: none; height: 20px; width: 20px; border-radius: 4px; background: #38bdf8; border: 1px solid #0ea5e9; cursor: pointer; box-shadow: 0 0 7px rgba(56, 189, 248, 0.9); }
         .dual-slider input[type=range]::-moz-range-thumb { pointer-events: auto; height: 20px; width: 20px; border-radius: 4px; background: #38bdf8; border: 1px solid #0ea5e9; cursor: pointer; box-shadow: 0 0 7px rgba(56, 189, 248, 0.9); }
-        .trail-readout { min-width: 290px; width: 290px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; margin-left: 8px; }
-        .timecode-input { width: 84px; height: 30px; background:#030712; color:#e2e8f0; border:1px solid #334155; border-radius:3px; padding:3px 6px; font-size:0.76em; font-family:monospace; box-sizing: border-box; }
+        .trail-window-label { font-size: 0.8em; color: #64748b; margin-right: 4px; height: 30px; display: inline-flex; align-items: center; }
+        .trail-readout { min-width: 316px; width: 316px; height: 30px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; letter-spacing: 0.4px; margin-left: 8px; }
+        .timecode-input { width: 84px; height: 30px; background:#030712; color:#e2e8f0; border:1px solid #334155; border-radius:3px; padding:3px 6px; font-size:0.76em; font-family:'B612 Mono', 'Consolas', 'Courier New', monospace; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; box-sizing: border-box; }
 
         #db-modal {
             display: none; position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
@@ -80,7 +86,14 @@
             border: 1px solid #38bdf8; border-radius: 6px; z-index: 100; box-shadow: 0 15px 40px rgba(0,0,0,0.9);
             flex-direction: column; pointer-events: auto; overflow: hidden;
         }
-        .db-header { background: #0369a1; padding: 10px 15px; font-weight: bold; color: white; display: flex; justify-content: space-between; align-items: center; }
+        .db-header { background: #0369a1; padding: 10px 15px; font-weight: bold; color: white; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        .db-header-actions { display: inline-flex; align-items: center; gap: 8px; }
+        .db-header-btn {
+            height: 26px; padding: 0 10px; border: 1px solid #475569; border-radius: 3px;
+            background: rgba(15, 23, 42, 0.9); color: #f8fafc; font-size: 0.78em; font-family: 'B612 Mono', 'Consolas', 'Courier New', monospace;
+            font-weight: bold; cursor: pointer;
+        }
+        .db-header-btn:hover { background: #1e293b; border-color: #64748b; }
         .db-close { cursor: pointer; color: white; font-weight: bold; font-size: 1.2em; }
         .db-close:hover { color: #f87171; }
         .db-content { padding: 15px; overflow-y: auto; }
@@ -122,9 +135,12 @@
         .rx-input:focus { border-color: #38bdf8; }
         .rx-btn-row { display: flex; gap: 8px; }
         .rx-mode-row { display: flex; gap: 8px; justify-content: center; }
-        .btn-rx-mode { background: #1e293b; color: #94a3b8; border: 1px solid #334155; padding: 5px 14px; font-size: 0.85em; cursor: pointer; border-radius: 3px; font-family: monospace; font-weight: bold; letter-spacing: 0.5px; transition: background 0.15s; }
-        .btn-rx-mode:hover { background: #334155; color: #e2e8f0; }
-        .btn-rx-mode.selected { background: #0ea5e9; color: #fff; border-color: #0369a1; }
+        .btn-rx-mode { background: rgba(15, 23, 42, 0.9); color: #f8fafc; border: 1px solid #475569; padding: 5px 14px; font-size: 0.85em; cursor: pointer; border-radius: 3px; font-family: 'B612 Mono', 'Consolas', 'Courier New', monospace; font-weight: bold; letter-spacing: 0.5px; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s; }
+        .btn-rx-mode:hover { background: #1e293b; border-color: #64748b; color: #f8fafc; }
+        .btn-rx-mode.selected { border-color: #94a3b8; box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.35), inset 0 -2px 0 #cbd5e1; }
+        .btn-rx-mode.rx-status-offline { color: #f87171; }
+        .btn-rx-mode.rx-status-idle { color: #f59e0b; }
+        .btn-rx-mode.rx-status-active { color: #4ade80; }
         .btn-rx-connect { background: #10b981; border: none; color: #000; font-weight: bold; cursor: pointer; padding: 4px 12px; border-radius: 3px; font-size: 0.8em; font-family: monospace; }
         .btn-rx-reset   { background: #f59e0b; border: none; color: #000; font-weight: bold; cursor: pointer; padding: 4px 12px; border-radius: 3px; font-size: 0.8em; font-family: monospace; }
         .rx-console-block { border: 1px solid #1e293b; border-radius: 4px; padding: 10px; background: rgba(2,6,23,0.65); }
@@ -133,10 +149,7 @@
         .rx-console-label-select { max-width: 80px; }
         .rx-console-output { background:#020617; color:#cbd5e1; border:1px solid #334155; border-radius:3px; padding:8px; min-height:86px; max-height:160px; overflow:auto; font-size:0.74em; line-height:1.35; white-space:pre-wrap; }
 
-        /* Toolbar LED indicators (main bar) */
-        .rx-bar-led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; box-shadow: 0 0 3px #ef4444; margin-left: 4px; vertical-align: middle; }
-        .rx-bar-led.active { background: #4ade80; box-shadow: 0 0 5px #4ade80; }
-        .rx-bar-led.idle   { background: #f59e0b; box-shadow: 0 0 3px #f59e0b; }
+
 
         #map-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; display: none; background-color: #040811; pointer-events: none; }
         #radar-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; display: block; cursor: crosshair; }
@@ -151,7 +164,7 @@
             <span id="radar-scale" class="scale-text">AUTO RNG</span>
             <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
             
-            <span style="font-size: 0.8em; color: #64748b; margin-right: 4px;">TRAIL WINDOW:</span>
+            <span class="trail-window-label">TRAIL WINDOW:</span>
             <input id="trail-start-code" class="timecode-input" type="text" value="00:00:00" title="Range start HH:MM:SS">
             <div class="dual-slider">
                 <div class="slider-track"></div>
@@ -159,7 +172,7 @@
                 <input type="range" id="trail-max" min="0" max="1440" step="0.1" value="1440">
             </div>
             <input id="trail-end-code" class="timecode-input" type="text" value="23:59:59" title="Range end HH:MM:SS">
-            <span id="trail-val" class="scale-text trail-readout" style="color: #38bdf8; text-align:center;">Δ 0m | --:--:-- - --:--:--</span>
+            <span id="trail-val" class="scale-text trail-readout" style="color: #38bdf8; text-align:center;">Δ 00:00:00 | 00:00:00 - 00:00:00</span>
             
             <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
             
@@ -169,20 +182,19 @@
                 <option value="osm">OSM TOPO</option>
             </select>
             
-            <button id="btn-network" class="btn-action btn-toggle">Map Link: Off-grid</button>
-            <button id="btn-db" class="btn-action btn-action-alt">Spatial DB</button>
-            <button id="btn-add-wpt" class="btn-action">Add Waypoint</button>
-            <button id="btn-lock" class="btn-action">Center/Unlock</button>
-            <button id="btn-clean-snap" class="btn-action">Clean Snapshot</button>
-            <button onclick="openTagConfig()" class="btn-action" title="Ctrl+Shift+T">Tag Fields</button>
-            <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Ctrl+Shift+P">Perf Overlay</button>
+            <button id="btn-network" class="btn-action btn-toggle">MAP TOGGLE</button>
+            <button id="btn-db" class="btn-action btn-action-alt">WAYPOINTS</button>
+            <button id="btn-lock" class="btn-action">SNAP CURRENT LOC</button>
+            <button id="btn-clean-snap" class="btn-action">CLEAN SCREENSHOT</button>
+            <button onclick="openTagConfig()" class="btn-action" title="Ctrl+Shift+T">DATA TAGS</button>
+            <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Ctrl+Shift+P">PERF</button>
 
             <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
 
-            <button id="btn-rx-a" class="btn-action btn-rx-mode selected" onclick="setRxMode('A')" title="Single receiver A">A-RX<span id="led-bar-a" class="rx-bar-led"></span></button>
-            <button id="btn-rx-b" class="btn-action btn-rx-mode" onclick="setRxMode('B')" title="Single receiver B">B-RX<span id="led-bar-b" class="rx-bar-led"></span></button>
+            <button id="btn-rx-a" class="btn-action btn-rx-mode selected" onclick="setRxMode('A')" title="Single receiver A">A-RX</button>
+            <button id="btn-rx-b" class="btn-action btn-rx-mode" onclick="setRxMode('B')" title="Single receiver B">B-RX</button>
             <button id="btn-rx-dual" class="btn-action btn-rx-mode" onclick="setRxMode('DUAL')" title="Both receivers merged">DUAL</button>
-            <button id="btn-rx-config" class="btn-action btn-action-alt" onclick="toggleRxConfigModal()" title="Receiver port/baud settings">RX Config</button>
+            <button id="btn-rx-config" class="btn-action btn-action-alt" onclick="toggleRxConfigModal()" title="Receiver port/baud settings">DECODER MNGR</button>
         </div>
     </div>
 
@@ -255,7 +267,10 @@
     <div id="db-modal">
         <div class="db-header">
             <span>SPATIAL DATABASE MANAGER</span>
-            <span class="db-close" id="btn-close-db">X</span>
+            <div class="db-header-actions">
+                <button id="btn-db-add-wpt" class="db-header-btn">ADD WAYPOINT</button>
+                <span class="db-close" id="btn-close-db">X</span>
+            </div>
         </div>
         <div class="db-content">
             <table class="db-table" id="db-table">
@@ -382,6 +397,13 @@
             // else: red (default)
         }
 
+        function setRxBarTextStatus(label, status) {
+            const btn = document.getElementById(`btn-rx-${label.toLowerCase()}`);
+            if (!btn) return;
+            btn.classList.remove('rx-status-offline', 'rx-status-idle', 'rx-status-active');
+            btn.classList.add(`rx-status-${status}`);
+        }
+
         function setReceiverModuleLabel(label, name, moduleId) {
             const el = document.getElementById(`rx-name-${label.toLowerCase()}`);
             if (!el) return;
@@ -410,7 +432,7 @@
                         status = (s.last_frame_age_ms !== null && s.last_frame_age_ms < 2000) ? 'active' : 'idle';
                     }
                     setLed(document.getElementById(`led-${label.toLowerCase()}`), status);
-                    setLed(document.getElementById(`led-bar-${label.toLowerCase()}`), status);
+                    setRxBarTextStatus(label, status);
                     setReceiverModuleLabel(label, s.module_name || '', s.module_id || '');
                 }
             } catch(e) { /* server not yet up */ }
@@ -621,23 +643,20 @@
         const HAZARD_LEVEL_LABELS = ['NIL', 'LIGHT', 'MOD', 'SEV'];
         let suppressTimecodeSync = false;
 
-        function formatDuration(minutesValue) {
+        function formatSpanHmsFromMinutes(minutesValue) {
             const totalSeconds = Math.max(0, Math.round(minutesValue * 60));
             const days = Math.floor(totalSeconds / 86400);
             const hours = Math.floor((totalSeconds % 86400) / 3600);
             const minutes = Math.floor((totalSeconds % 3600) / 60);
             const seconds = totalSeconds % 60;
-
-            const parts = [];
-            if (days > 0) parts.push(`${days}d`);
-            if (hours > 0 || parts.length > 0) parts.push(`${String(hours).padStart(2, '0')}h`);
-            if (minutes > 0 || parts.length > 0) parts.push(`${String(minutes).padStart(2, '0')}m`);
-            parts.push(`${seconds}s`);
-            return parts.join(' ');
+            if (days > 0) {
+                return `${String(days).padStart(2, '0')}:${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            }
+            return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
         }
 
         function formatHmsFromMinutes(v) {
-            const seconds = Math.max(0, Math.round(Number(v) * 60));
+            const seconds = Math.max(0, Math.min(86399, Math.round(Number(v) * 60)));
             const h = Math.floor(seconds / 3600);
             const m = Math.floor((seconds % 3600) / 60);
             const s = seconds % 60;
@@ -684,12 +703,8 @@
 
         function updateSliderLabels(syncInputs = true, source = null) {
             const { minSlider, maxSlider } = clampTrailRange(source);
-            const now = Date.now();
-            const maxAgeMs = (TRAIL_WINDOW_MAX_MINUTES - minSlider) * 60000;
-            const minAgeMs = (TRAIL_WINDOW_MAX_MINUTES - maxSlider) * 60000;
-            const fmtOpts = { hour: '2-digit', minute:'2-digit', second: '2-digit', hour12: false };
             const spanMinutes = (maxSlider - minSlider);
-            trailVal.innerText = `Δ ${formatDuration(spanMinutes)} | ${new Date(now - maxAgeMs).toLocaleTimeString([], fmtOpts)} - ${new Date(now - minAgeMs).toLocaleTimeString([], fmtOpts)}`;
+            trailVal.innerText = `Δ ${formatSpanHmsFromMinutes(spanMinutes)} | ${formatHmsFromMinutes(minSlider)} - ${formatHmsFromMinutes(maxSlider)}`;
             if (syncInputs && !suppressTimecodeSync) {
                 trailStartCode.value = formatHmsFromMinutes(minSlider);
                 trailEndCode.value = formatHmsFromMinutes(maxSlider);
@@ -789,7 +804,10 @@
         };
 
         // Inject Waypoint Logic
-        document.getElementById('btn-add-wpt').addEventListener('click', () => document.getElementById('wpt-form').style.display = 'flex');
+        const btnDbAddWpt = document.getElementById('btn-db-add-wpt');
+        if (btnDbAddWpt) {
+            btnDbAddWpt.addEventListener('click', () => document.getElementById('wpt-form').style.display = 'flex');
+        }
         document.getElementById('btn-cancel-wpt').addEventListener('click', () => document.getElementById('wpt-form').style.display = 'none');
         
         document.getElementById('btn-save-wpt').addEventListener('click', () => {
@@ -825,7 +843,7 @@
         document.getElementById('btn-network').addEventListener('click', () => {
             if (networkMode === 'OFF-GRID') {
                 networkMode = 'ONLINE';
-                document.getElementById('btn-network').innerText = 'Map Link: Live map';
+                document.getElementById('btn-network').innerText = 'MAP TOGGLE';
                 document.getElementById('btn-network').className = 'btn-action btn-toggle active';
                 document.getElementById('map-style-dropdown').style.display = 'block';
                 mapContainer.style.display = 'block';
@@ -843,7 +861,7 @@
                 setTimeout(() => { leafMap.invalidateSize(); leafMap.setView([centerLat, centerLon], leafZoom, {animate: false}); }, 10);
             } else {
                 networkMode = 'OFF-GRID';
-                document.getElementById('btn-network').innerText = 'Map Link: Off-grid';
+                document.getElementById('btn-network').innerText = 'MAP TOGGLE';
                 document.getElementById('btn-network').className = 'btn-action btn-toggle';
                 document.getElementById('map-style-dropdown').style.display = 'none';
                 mapContainer.style.display = 'none';
