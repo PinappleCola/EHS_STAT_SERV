@@ -1749,6 +1749,8 @@ receiver_stop_events = {
 rx_console_lock = threading.Lock()
 
 RECONNECT_DELAY_S = 2.0  # seconds between serial reconnect attempts after a drop
+# Allow active Beast reader loop to observe stop_event and release serial port
+# before we open the same UART for an AT console transaction.
 STREAM_STOP_SETTLE_TIME_S = 0.35
 
 # --- Dedup Layer (DUAL mode only) ---
@@ -1786,6 +1788,9 @@ def _extract_ascii_lines(raw_text):
 
 
 def is_allowed_console_at_command(command):
+    # ADSBee AT syntax uses query form ("?") for read-only operations. This
+    # console intentionally blocks assignment/write forms (e.g., "=...") so the
+    # UI cannot mutate persistent receiver configuration.
     cmd = command.strip().upper()
     if not cmd.startswith("AT"):
         return False

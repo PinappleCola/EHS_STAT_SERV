@@ -129,6 +129,8 @@
         .btn-rx-reset   { background: #f59e0b; border: none; color: #000; font-weight: bold; cursor: pointer; padding: 4px 12px; border-radius: 3px; font-size: 0.8em; font-family: monospace; }
         .rx-console-block { border: 1px solid #1e293b; border-radius: 4px; padding: 10px; background: rgba(2,6,23,0.65); }
         .rx-console-row { display: flex; gap: 8px; margin-bottom: 8px; }
+        .rx-console-title { margin-bottom: 8px; }
+        .rx-console-label-select { max-width: 80px; }
         .rx-console-output { background:#020617; color:#cbd5e1; border:1px solid #334155; border-radius:3px; padding:8px; min-height:86px; max-height:160px; overflow:auto; font-size:0.74em; line-height:1.35; white-space:pre-wrap; }
 
         /* Toolbar LED indicators (main bar) */
@@ -235,9 +237,9 @@
                 </div>
 
                 <div class="rx-console-block">
-                    <div class="rx-receiver-title" style="margin-bottom:8px;">AT CONSOLE (PAUSES STREAM BRIEFLY)</div>
+                    <div class="rx-receiver-title rx-console-title">AT CONSOLE (PAUSES STREAM BRIEFLY)</div>
                     <div class="rx-console-row">
-                        <select id="rx-console-label" class="rx-input" style="max-width:80px;">
+                        <select id="rx-console-label" class="rx-input rx-console-label-select">
                             <option value="A">A</option>
                             <option value="B">B</option>
                         </select>
