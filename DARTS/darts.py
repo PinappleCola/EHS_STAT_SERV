@@ -75,6 +75,7 @@ class ANSI:
 MODE_S_POLY = 0xFFF409
 VHF_MIN_MHZ = 118.0
 VHF_MAX_MHZ = 152.112
+VHF_833_MHZ_STEP = 25.0 / 3.0 / 1000.0
 
 def mode_s_crc(message_hex):
     try:
@@ -285,7 +286,7 @@ def decode_vhf_channel(raw_value):
     # normalize to nearest operational aviation spacing for display robustness.
     mhz = VHF_MIN_MHZ + (raw_value * 0.001)
     mhz_25 = VHF_MIN_MHZ + (round((mhz - VHF_MIN_MHZ) / 0.025) * 0.025)
-    mhz_833 = VHF_MIN_MHZ + (round((mhz - VHF_MIN_MHZ) / (25.0 / 3.0 / 1000.0)) * (25.0 / 3.0 / 1000.0))
+    mhz_833 = VHF_MIN_MHZ + (round((mhz - VHF_MIN_MHZ) / VHF_833_MHZ_STEP) * VHF_833_MHZ_STEP)
     mhz = mhz_25 if abs(mhz - mhz_25) <= abs(mhz - mhz_833) else mhz_833
     if mhz < VHF_MIN_MHZ or mhz > VHF_MAX_MHZ:
         return None
@@ -302,11 +303,17 @@ def decode_vhf_audio(raw_value):
 def is_bds48_payload(payload_int):
     if payload_int == 0:
         return False
-    if wrong_status(payload_int, 15, 0, 15):
+    vhf1_status = (payload_int >> (55 - 15)) & 0x1
+    vhf1_value = (payload_int >> (55 - 14)) & ((1 << 15) - 1)
+    if vhf1_status == 0 and vhf1_value != 0:
         return False
-    if wrong_status(payload_int, 33, 18, 15):
+    vhf2_status = (payload_int >> (55 - 33)) & 0x1
+    vhf2_value = (payload_int >> (55 - 32)) & ((1 << 15) - 1)
+    if vhf2_status == 0 and vhf2_value != 0:
         return False
-    if wrong_status(payload_int, 51, 36, 15):
+    vhf3_status = (payload_int >> (55 - 51)) & 0x1
+    vhf3_value = (payload_int >> (55 - 50)) & ((1 << 15) - 1)
+    if vhf3_status == 0 and vhf3_value != 0:
         return False
 
     decoded = decode_bds48_payload(payload_int)
