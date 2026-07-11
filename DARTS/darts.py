@@ -1749,6 +1749,7 @@ receiver_stop_events = {
 rx_console_lock = threading.Lock()
 
 RECONNECT_DELAY_S = 2.0  # seconds between serial reconnect attempts after a drop
+MIN_AT_TIMEOUT_S = 0.1
 # Allow active Beast reader loop to observe stop_event and release serial port
 # before we open the same UART for an AT console transaction. 350ms proved
 # sufficient against the 100ms serial timeout + loop scheduling jitter.
@@ -1781,9 +1782,10 @@ def dedup_check_and_record(payload_hex):
 
 
 def _extract_ascii_lines(raw_text):
+    keep_whitespace = {"\r", "\n", "\t"}
     clean = "".join(
         ch for ch in raw_text
-        if ch in ("\r", "\n", "\t") or (" " <= ch <= "~")
+        if ch in keep_whitespace or (" " <= ch <= "~")
     )
     return "\n".join(line.strip() for line in clean.replace("\r", "\n").split("\n") if line.strip())
 
@@ -1799,7 +1801,7 @@ def is_allowed_console_at_command(command):
         return False
     if cmd in {"AT", "AT+HELP"}:
         return True
-    if cmd.startswith("AT+") and cmd.endswith("?") and "=" not in cmd and re.fullmatch(r"AT\+[A-Z0-9_]+\?", cmd):
+    if cmd.startswith("AT+") and cmd.endswith("?") and re.fullmatch(r"AT\+[A-Z0-9_]+\?", cmd):
         return True
     return False
 
@@ -1816,7 +1818,7 @@ def send_at_query(ser, command, timeout_s=0.45):
     except Exception:
         return ""
 
-    deadline = time.time() + max(0.1, timeout_s)
+    deadline = time.time() + max(MIN_AT_TIMEOUT_S, timeout_s)
     chunks = []
     while time.time() < deadline:
         try:
@@ -1884,11 +1886,19 @@ def run_rx_console_command(label, command, timeout_s=1.2):
             receiver_status[label]["connected"] = False
 
         response_text = ""
-        try:
-            with serial.Serial(port, baud, timeout=0.1, write_timeout=0.5) as ser:
-                response_text = send_at_query(ser, command, timeout_s=timeout_s)
-        except Exception as exc:
-            response_text = f"ERROR: {exc}"
+        open_deadline = time.time() + max(0.5, timeout_s)
+        last_exc = None
+        while time.time() < open_deadline:
+            try:
+                with serial.Serial(port, baud, timeout=0.1, write_timeout=0.5) as ser:
+                    response_text = send_at_query(ser, command, timeout_s=timeout_s)
+                    last_exc = None
+                    break
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(0.08)
+        if last_exc is not None and not response_text:
+            response_text = f"ERROR: {last_exc}"
 
         if should_resume_stream:
             restart_receiver(label)
