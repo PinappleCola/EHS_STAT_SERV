@@ -241,7 +241,7 @@
                             <option value="A">A</option>
                             <option value="B">B</option>
                         </select>
-                        <input id="rx-console-command" class="rx-input" type="text" placeholder="AT+HOSTNAME?" value="AT+HOSTNAME?">
+                        <input id="rx-console-command" class="rx-input" type="text" placeholder="AT+HOSTNAME?">
                         <button class="btn-rx-connect" onclick="sendRxConsoleCommand()">SEND</button>
                     </div>
                     <div id="rx-console-output" class="rx-console-output">Ready.</div>
@@ -611,7 +611,8 @@
         const trailStartCode = document.getElementById('trail-start-code');
         const trailEndCode = document.getElementById('trail-end-code');
         const TRAIL_WINDOW_MAX_MINUTES = 1440;
-        const MIN_TRAIL_SPAN_MINUTES = 1.0;
+        const MIN_TRAIL_SPAN_MINUTES = 0.1;
+        const SLIDER_TIGHT_THRESHOLD_BUFFER = 0.05;
         const MAX_STALE_POSITION_MS = 15000;
         const HAZARD_LEVEL_LABELS = ['NIL', 'LIGHT', 'MOD', 'SEV'];
         let suppressTimecodeSync = false;
@@ -664,7 +665,7 @@
         }
 
         function updateSliderThumbOrder(minSlider, maxSlider) {
-            const tight = (maxSlider - minSlider) <= (MIN_TRAIL_SPAN_MINUTES + 0.05);
+            const tight = (maxSlider - minSlider) <= (MIN_TRAIL_SPAN_MINUTES + SLIDER_TIGHT_THRESHOLD_BUFFER);
             const minFocused = document.activeElement === trailMin;
             const maxFocused = document.activeElement === trailMax;
             if (minFocused || (tight && !maxFocused)) {

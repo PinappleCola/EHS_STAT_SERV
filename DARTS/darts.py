@@ -1248,7 +1248,6 @@ RECEIVER_ID = RUNTIME_CONFIG["receiver_id"]
 RX_MODE = RUNTIME_CONFIG["rx_mode"]
 RECEIVER_A_CONFIG = RUNTIME_CONFIG["receiver_a"]
 RECEIVER_B_CONFIG = RUNTIME_CONFIG["receiver_b"]
-AT_COMMAND_PATTERN = re.compile(r"^\s*AT(?:\+[A-Z0-9_?=,\-]+)?\s*$", re.IGNORECASE)
 
 # ==========================================
 # --- DARTS HTTP API SERVER (field registry + grid config) ---
@@ -1409,8 +1408,8 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             if len(command) > 120:
                 self._send_json({"error": "command too long"}, status=400)
                 return
-            if not AT_COMMAND_PATTERN.match(command):
-                self._send_json({"error": "Only AT commands are allowed"}, status=400)
+            if not is_allowed_console_at_command(command):
+                self._send_json({"error": "Only read-only AT commands are allowed (AT, AT+HELP, AT+...?)"}, status=400)
                 return
             try:
                 timeout_s = float(timeout_s)
@@ -1750,6 +1749,7 @@ receiver_stop_events = {
 rx_console_lock = threading.Lock()
 
 RECONNECT_DELAY_S = 2.0  # seconds between serial reconnect attempts after a drop
+STREAM_STOP_SETTLE_TIME_S = 0.35
 
 # --- Dedup Layer (DUAL mode only) ---
 dedup_cache = {}
@@ -1783,6 +1783,19 @@ def _extract_ascii_lines(raw_text):
         if ch in ("\r", "\n", "\t") or (" " <= ch <= "~"):
             clean_chars.append(ch)
     return "\n".join(line.strip() for line in "".join(clean_chars).replace("\r", "\n").split("\n") if line.strip())
+
+
+def is_allowed_console_at_command(command):
+    cmd = command.strip().upper()
+    if not cmd.startswith("AT"):
+        return False
+    if "=" in cmd:
+        return False
+    if cmd in {"AT", "AT+HELP"}:
+        return True
+    if cmd.startswith("AT+") and cmd.endswith("?"):
+        return True
+    return False
 
 
 def send_at_query(ser, command, timeout_s=0.45):
@@ -1854,7 +1867,7 @@ def run_rx_console_command(label, command, timeout_s=1.2):
 
     with rx_console_lock:
         stop_event.set()
-        time.sleep(0.35)
+        time.sleep(STREAM_STOP_SETTLE_TIME_S)
         with rx_status_lock:
             receiver_status[label]["connected"] = False
 
@@ -1864,11 +1877,9 @@ def run_rx_console_command(label, command, timeout_s=1.2):
                 response_text = send_at_query(ser, command, timeout_s=timeout_s)
         except Exception as exc:
             response_text = f"ERROR: {exc}"
-            should_resume_stream = should_resume_stream and True
 
         if should_resume_stream:
-            receiver_stop_events[label] = threading.Event()
-            threading.Thread(target=beast_reader_thread, args=(label,), daemon=True).start()
+            restart_receiver(label)
 
     return {
         "ok": True,
