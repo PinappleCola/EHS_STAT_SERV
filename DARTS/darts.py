@@ -1751,7 +1751,7 @@ rx_console_lock = threading.Lock()
 RECONNECT_DELAY_S = 2.0  # seconds between serial reconnect attempts after a drop
 # Allow active Beast reader loop to observe stop_event and release serial port
 # before we open the same UART for an AT console transaction.
-STREAM_STOP_SETTLE_TIME_S = 0.35
+SERIAL_PORT_RELEASE_DELAY_S = 0.35
 
 # --- Dedup Layer (DUAL mode only) ---
 dedup_cache = {}
@@ -1780,11 +1780,11 @@ def dedup_check_and_record(payload_hex):
 
 
 def _extract_ascii_lines(raw_text):
-    clean_chars = []
-    for ch in raw_text:
-        if ch in ("\r", "\n", "\t") or (" " <= ch <= "~"):
-            clean_chars.append(ch)
-    return "\n".join(line.strip() for line in "".join(clean_chars).replace("\r", "\n").split("\n") if line.strip())
+    clean = "".join(
+        ch for ch in raw_text
+        if ch in ("\r", "\n", "\t") or (" " <= ch <= "~")
+    )
+    return "\n".join(line.strip() for line in clean.replace("\r", "\n").split("\n") if line.strip())
 
 
 def is_allowed_console_at_command(command):
@@ -1846,13 +1846,15 @@ def probe_receiver_identity(ser):
     host_reply = send_at_query(ser, "AT+HOSTNAME?", timeout_s=0.45)
     for line in host_reply.splitlines():
         if line.upper().startswith("HOSTNAME="):
-            module_name = line.split("=", 1)[1].strip()
+            _, _, value = line.partition("=")
+            module_name = value.strip()
             break
 
     dev_reply = send_at_query(ser, "AT+DEVICE_INFO?", timeout_s=0.65)
     for line in dev_reply.splitlines():
         if line.upper().startswith("PART CODE:"):
-            module_id = line.split(":", 1)[1].strip()
+            _, _, value = line.partition(":")
+            module_id = value.strip()
             break
 
     if not module_name and module_id:
@@ -1872,7 +1874,7 @@ def run_rx_console_command(label, command, timeout_s=1.2):
 
     with rx_console_lock:
         stop_event.set()
-        time.sleep(STREAM_STOP_SETTLE_TIME_S)
+        time.sleep(SERIAL_PORT_RELEASE_DELAY_S)
         with rx_status_lock:
             receiver_status[label]["connected"] = False
 
