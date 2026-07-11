@@ -38,6 +38,9 @@ def load_runtime_config():
         "ws_port": 8765,
         "http_port": 8766,
         "receiver_id": "ADSBEE-01",
+        "rx_mode": "A",
+        "receiver_a": {},
+        "receiver_b": {},
     }
 
     try:
@@ -55,6 +58,25 @@ def load_runtime_config():
     config["ws_port"] = int(os.getenv("EHS_WS_PORT", config["ws_port"]))
     config["http_port"] = int(os.getenv("EHS_HTTP_PORT", config["http_port"]))
     config["receiver_id"] = os.getenv("EHS_RECEIVER_ID", config["receiver_id"])
+
+    # Backward-compat: if receiver_a not explicitly set, inherit legacy port/baud/receiver_id
+    if not config["receiver_a"].get("port"):
+        config["receiver_a"] = {
+            "port": config["port"],
+            "baud": config["baud"],
+            "receiver_id": config["receiver_id"],
+        }
+    if not config["receiver_b"].get("port"):
+        config["receiver_b"] = {
+            "port": "COM4",
+            "baud": 115200,
+            "receiver_id": "ADSBEE-02",
+        }
+
+    # Validate rx_mode
+    if config.get("rx_mode") not in ("A", "B", "DUAL"):
+        config["rx_mode"] = "A"
+
     return config
 
 # --- Windows ANSI Compatibility Hook ---
@@ -1223,6 +1245,9 @@ WS_HOST = RUNTIME_CONFIG["ws_host"]
 WS_PORT = RUNTIME_CONFIG["ws_port"]
 HTTP_PORT = RUNTIME_CONFIG["http_port"]
 RECEIVER_ID = RUNTIME_CONFIG["receiver_id"]
+RX_MODE = RUNTIME_CONFIG["rx_mode"]
+RECEIVER_A_CONFIG = RUNTIME_CONFIG["receiver_a"]
+RECEIVER_B_CONFIG = RUNTIME_CONFIG["receiver_b"]
 
 # ==========================================
 # --- DARTS HTTP API SERVER (field registry + grid config) ---
@@ -1270,6 +1295,92 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             # Returns the default config structure; user preferences are stored client-side
             default_cols = [f["key"] for f in FIELD_REGISTRY if f["defaultVisible"]]
             self._send_json({"columns": default_cols, "sortKey": None, "sortDir": "asc"})
+        elif self.path == "/api/rx-config":
+            self._send_json({
+                "rx_mode": RX_MODE,
+                "receiver_a": RECEIVER_A_CONFIG,
+                "receiver_b": RECEIVER_B_CONFIG,
+            })
+        elif self.path == "/api/rx-status":
+            now = time.time()
+            status_out = {}
+            for label in ("A", "B"):
+                s = receiver_status[label]
+                last_t = s.get("last_frame_time", 0)
+                age_ms = int((now - last_t) * 1000) if last_t > 0 else None
+                status_out[label] = {
+                    "connected": s.get("connected", False),
+                    "port": s.get("port", ""),
+                    "last_frame_age_ms": age_ms,
+                }
+            self._send_json(status_out)
+        else:
+            self._send_json({"error": "Not found"}, status=404)
+
+    def do_POST(self):
+        if self.path == "/api/rx-config":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body.decode("utf-8"))
+            except Exception:
+                self._send_json({"error": "Invalid JSON"}, status=400)
+                return
+
+            global RX_MODE, RECEIVER_A_CONFIG, RECEIVER_B_CONFIG, RUNTIME_CONFIG
+
+            new_mode = data.get("rx_mode", RX_MODE)
+            if new_mode not in ("A", "B", "DUAL"):
+                self._send_json({"error": "Invalid rx_mode"}, status=400)
+                return
+
+            prev_mode = RX_MODE
+            new_a = data.get("receiver_a", RECEIVER_A_CONFIG)
+            new_b = data.get("receiver_b", RECEIVER_B_CONFIG)
+
+            # Validate sub-configs
+            for cfg in (new_a, new_b):
+                if not isinstance(cfg, dict):
+                    self._send_json({"error": "receiver_a/b must be objects"}, status=400)
+                    return
+
+            RX_MODE = new_mode
+            RECEIVER_A_CONFIG = new_a
+            RECEIVER_B_CONFIG = new_b
+
+            # Persist to runtime_config.json
+            try:
+                RUNTIME_CONFIG.update({"rx_mode": RX_MODE, "receiver_a": RECEIVER_A_CONFIG, "receiver_b": RECEIVER_B_CONFIG})
+                with open(CONFIG_PATH, "w") as f:
+                    json.dump(RUNTIME_CONFIG, f, indent=4)
+            except Exception as exc:
+                print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}WARNING: Failed to persist rx-config: {exc}{ANSI.RESET}")
+
+            # Determine which receivers to restart
+            restart_flag = data.get("restart")
+            if restart_flag == "A" or restart_flag == "BOTH":
+                threading.Thread(target=restart_receiver, args=("A",), daemon=True).start()
+            if restart_flag == "B" or restart_flag == "BOTH":
+                threading.Thread(target=restart_receiver, args=("B",), daemon=True).start()
+            if restart_flag is None:
+                # Mode changed — restart threads for newly active receivers
+                needs_a = new_mode in ("A", "DUAL")
+                needs_b = new_mode in ("B", "DUAL")
+                had_a = prev_mode in ("A", "DUAL")
+                had_b = prev_mode in ("B", "DUAL")
+                if needs_a and not had_a:
+                    threading.Thread(target=restart_receiver, args=("A",), daemon=True).start()
+                elif had_a and not needs_a:
+                    # Signal stop but don't restart
+                    receiver_stop_events["A"].set()
+                    receiver_status["A"]["connected"] = False
+                if needs_b and not had_b:
+                    threading.Thread(target=restart_receiver, args=("B",), daemon=True).start()
+                elif had_b and not needs_b:
+                    receiver_stop_events["B"].set()
+                    receiver_status["B"]["connected"] = False
+
+            self._send_json({"ok": True, "rx_mode": RX_MODE})
         else:
             self._send_json({"error": "Not found"}, status=404)
 
@@ -1574,6 +1685,41 @@ telemetry_last_logged = {}
 log_queue_warn_state = {"depth": 0, "telemetry_drop": 0}
 telemetry_drop_count = 0
 log_queue_warn_lock = threading.Lock()
+
+# --- Dual Receiver State ---
+receiver_status = {
+    "A": {"connected": False, "last_frame_time": 0, "port": RECEIVER_A_CONFIG.get("port", "")},
+    "B": {"connected": False, "last_frame_time": 0, "port": RECEIVER_B_CONFIG.get("port", "")},
+}
+receiver_stop_events = {
+    "A": threading.Event(),
+    "B": threading.Event(),
+}
+
+# --- Dedup Layer (DUAL mode only) ---
+dedup_cache = {}
+dedup_lock = threading.Lock()
+DEDUP_WINDOW_S = 0.30  # 300ms window: enough to cover both receivers decoding the same burst
+
+def dedup_check_and_record(payload_hex):
+    """Return True if payload should be processed; False if it's a duplicate within the dedup window.
+    
+    Only called in DUAL mode. In single-receiver mode this is bypassed entirely.
+    The key is the full raw payload hex string — identical ADS-B transmissions from two
+    antennas carry bit-for-bit identical payloads, so content-hashing is sufficient.
+    """
+    now = time.time()
+    cutoff = now - DEDUP_WINDOW_S
+    with dedup_lock:
+        # Purge stale entries
+        expired = [k for k, t in dedup_cache.items() if t < cutoff]
+        for k in expired:
+            del dedup_cache[k]
+        # Check for duplicate
+        if payload_hex in dedup_cache:
+            return False
+        dedup_cache[payload_hex] = now
+    return True
 
 
 def emit_throttled_warning(key, message):
@@ -2382,30 +2528,76 @@ def process_frame(frame):
 
         except Exception: pass
 
-def serial_reader_thread():
-    try:
-        ser = serial.Serial(PORT, BAUD, timeout=0.1)
-        in_frame = False
-        frame_data = bytearray()
-        while True:
-            if ser.in_waiting > 0:
-                byte = ser.read(1)
-                if not byte: continue 
-                if byte == b'\x1A':
-                    next_byte = ser.read(1)
-                    if next_byte == b'\x1A':
-                        if in_frame: frame_data.append(0x1A)
-                    elif next_byte in [b'\x32', b'\x33', b'\xEC']:
-                        if in_frame and len(frame_data) >= 8:
-                            process_frame(frame_data)
-                        in_frame = True
-                        frame_data = bytearray()
-                        frame_data.append(next_byte[0])
+def beast_reader_thread(label):
+    """Beast-raw serial reader for a single receiver (label = 'A' or 'B').
+
+    In single-receiver modes (A-RX or B-RX) this is the only active reader and
+    calls process_frame() directly — identical to the previous serial_reader_thread().
+    In DUAL mode both readers run simultaneously; frames pass through
+    dedup_check_and_record() before processing to suppress cross-receiver duplicates.
+    The thread checks receiver_stop_events[label] each iteration and exits cleanly
+    when signalled, allowing restart_receiver() to swap in a fresh thread.
+    """
+    cfg = RECEIVER_A_CONFIG if label == "A" else RECEIVER_B_CONFIG
+    stop_event = receiver_stop_events[label]
+
+    while not stop_event.is_set():
+        port = cfg.get("port", "COM5")
+        baud = int(cfg.get("baud", 115200))
+        receiver_status[label]["port"] = port
+        try:
+            ser = serial.Serial(port, baud, timeout=0.1)
+            receiver_status[label]["connected"] = True
+            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.GREEN}[RX-{label}] Connected: {port} @ {baud} baud{ANSI.RESET}")
+            in_frame = False
+            frame_data = bytearray()
+            while not stop_event.is_set():
+                if ser.in_waiting > 0:
+                    byte = ser.read(1)
+                    if not byte: continue
+                    if byte == b'\x1A':
+                        next_byte = ser.read(1)
+                        if next_byte == b'\x1A':
+                            if in_frame: frame_data.append(0x1A)
+                        elif next_byte in [b'\x32', b'\x33', b'\xEC']:
+                            if in_frame and len(frame_data) >= 8:
+                                raw_hex = binascii.hexlify(frame_data[8:]).decode('ascii').upper()
+                                # DUAL mode: deduplicate before processing
+                                if RX_MODE == "DUAL":
+                                    if dedup_check_and_record(raw_hex):
+                                        receiver_status[label]["last_frame_time"] = time.time()
+                                        process_frame(frame_data)
+                                else:
+                                    # Single mode: pass through directly, no overhead
+                                    receiver_status[label]["last_frame_time"] = time.time()
+                                    process_frame(frame_data)
+                            in_frame = True
+                            frame_data = bytearray()
+                            frame_data.append(next_byte[0])
+                    else:
+                        if in_frame: frame_data.append(byte[0])
                 else:
-                    if in_frame: frame_data.append(byte[0])
-            else:
-                time.sleep(0.01)
-    except Exception as e: print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}Serial Interface Drop: {e}{ANSI.RESET}")
+                    time.sleep(0.01)
+            ser.close()
+        except Exception as e:
+            receiver_status[label]["connected"] = False
+            if not stop_event.is_set():
+                print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[RX-{label}] Serial drop ({port}): {e} — retrying in 2s{ANSI.RESET}")
+                for _ in range(20):
+                    if stop_event.is_set(): break
+                    time.sleep(0.1)
+
+    receiver_status[label]["connected"] = False
+    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.DIM}[RX-{label}] Reader stopped.{ANSI.RESET}")
+
+
+def restart_receiver(label):
+    """Signal the existing reader for label to stop, then start a fresh one."""
+    receiver_stop_events[label].set()
+    time.sleep(0.5)
+    receiver_stop_events[label] = threading.Event()
+    threading.Thread(target=beast_reader_thread, args=(label,), daemon=True).start()
+    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}[RX-{label}] Restarted.{ANSI.RESET}")
 
 
 def compute_display_heading(data, now):
@@ -2555,7 +2747,13 @@ async def broadcast_state(websocket):
 
 
 async def main():
-    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}Serial source armed on {PORT} @ {BAUD} baud ({RECEIVER_ID}){ANSI.RESET}")
+    if RX_MODE == "DUAL":
+        rx_desc = f"DUAL ({RECEIVER_A_CONFIG.get('port','?')} + {RECEIVER_B_CONFIG.get('port','?')})"
+    elif RX_MODE == "B":
+        rx_desc = f"B-RX ({RECEIVER_B_CONFIG.get('port','?')} @ {RECEIVER_B_CONFIG.get('baud',115200)} baud)"
+    else:
+        rx_desc = f"A-RX ({RECEIVER_A_CONFIG.get('port','?')} @ {RECEIVER_A_CONFIG.get('baud',115200)} baud)"
+    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}Serial source armed — mode: {rx_desc}{ANSI.RESET}")
     print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.GREEN}Tactical Matrix Core {APP_VERSION} online on ws://{WS_HOST}:{WS_PORT}{ANSI.RESET}")
     print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}DARTS API online on http://localhost:{HTTP_PORT} (fields + grid config){ANSI.RESET}")
     async with websockets.serve(broadcast_state, WS_HOST, WS_PORT):
@@ -2565,7 +2763,11 @@ if __name__ == "__main__":
     load_airline_db()
     load_historical_state()
     load_airspace()
-    threading.Thread(target=serial_reader_thread, daemon=True).start()
+    # Start receiver threads according to configured mode
+    if RX_MODE in ("A", "DUAL"):
+        threading.Thread(target=beast_reader_thread, args=("A",), daemon=True).start()
+    if RX_MODE in ("B", "DUAL"):
+        threading.Thread(target=beast_reader_thread, args=("B",), daemon=True).start()
     threading.Thread(target=run_reaper_loop, daemon=True).start()
     threading.Thread(target=archivist_loop, daemon=True).start()
     threading.Thread(target=run_http_server, daemon=True).start()
