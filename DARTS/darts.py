@@ -1847,14 +1847,18 @@ def probe_receiver_identity(ser):
     for line in host_reply.splitlines():
         if line.upper().startswith("HOSTNAME="):
             _, _, value = line.partition("=")
-            module_name = value.strip()
+            parsed = value.strip()
+            if parsed:
+                module_name = parsed
             break
 
     dev_reply = send_at_query(ser, "AT+DEVICE_INFO?", timeout_s=0.65)
     for line in dev_reply.splitlines():
         if line.upper().startswith("PART CODE:"):
             _, _, value = line.partition(":")
-            module_id = value.strip()
+            parsed = value.strip()
+            if parsed:
+                module_id = parsed
             break
 
     if not module_name and module_id:
@@ -1869,7 +1873,7 @@ def run_rx_console_command(label, command, timeout_s=1.2):
     if not port:
         return {"ok": False, "error": f"Receiver {label} has no configured port"}
 
-    should_resume_stream = RX_MODE in ("DUAL", label)
+    should_resume_stream = (RX_MODE == "DUAL" or RX_MODE == label)
     stop_event = receiver_stop_events[label]
 
     with rx_console_lock:
@@ -1894,7 +1898,11 @@ def run_rx_console_command(label, command, timeout_s=1.2):
         "command": command,
         "response": response_text or "(no response)",
         "stream_resumed": bool(should_resume_stream),
-        "note": "Serial stream is temporarily paused while AT command executes.",
+        "note": (
+            "Serial stream is temporarily paused while AT command executes."
+            if should_resume_stream else
+            "Receiver stream is not active in the current RX mode."
+        ),
     }
 
 

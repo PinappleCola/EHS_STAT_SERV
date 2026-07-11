@@ -385,7 +385,9 @@
         function setReceiverModuleLabel(label, name, moduleId) {
             const el = document.getElementById(`rx-name-${label.toLowerCase()}`);
             if (!el) return;
-            const value = (name || moduleId || '').trim();
+            const primary = typeof name === 'string' ? name.trim() : '';
+            const secondary = typeof moduleId === 'string' ? moduleId.trim() : '';
+            const value = primary !== '' ? primary : secondary;
             const display = value ? `ID: ${value}` : 'ID: --';
             el.textContent = display;
             if (moduleId) {
@@ -667,6 +669,7 @@
         }
 
         function updateSliderThumbOrder(minSlider, maxSlider) {
+            // Small hysteresis keeps z-index switching smooth when handles are nearly co-located.
             const tight = (maxSlider - minSlider) <= (MIN_TRAIL_SPAN_MINUTES + SLIDER_ZINDEX_SWITCH_BUFFER);
             const minFocused = document.activeElement === trailMin;
             const maxFocused = document.activeElement === trailMax;
