@@ -1304,8 +1304,10 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/api/rx-status":
             now = time.time()
             status_out = {}
+            with rx_status_lock:
+                snapshot = {k: dict(v) for k, v in receiver_status.items()}
             for label in ("A", "B"):
-                s = receiver_status[label]
+                s = snapshot[label]
                 last_t = s.get("last_frame_time", 0)
                 age_ms = int((now - last_t) * 1000) if last_t > 0 else None
                 status_out[label] = {
@@ -1371,14 +1373,15 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                 if needs_a and not had_a:
                     threading.Thread(target=restart_receiver, args=("A",), daemon=True).start()
                 elif had_a and not needs_a:
-                    # Signal stop but don't restart
                     receiver_stop_events["A"].set()
-                    receiver_status["A"]["connected"] = False
+                    with rx_status_lock:
+                        receiver_status["A"]["connected"] = False
                 if needs_b and not had_b:
                     threading.Thread(target=restart_receiver, args=("B",), daemon=True).start()
                 elif had_b and not needs_b:
                     receiver_stop_events["B"].set()
-                    receiver_status["B"]["connected"] = False
+                    with rx_status_lock:
+                        receiver_status["B"]["connected"] = False
 
             self._send_json({"ok": True, "rx_mode": RX_MODE})
         else:
@@ -1687,6 +1690,7 @@ telemetry_drop_count = 0
 log_queue_warn_lock = threading.Lock()
 
 # --- Dual Receiver State ---
+rx_status_lock = threading.Lock()
 receiver_status = {
     "A": {"connected": False, "last_frame_time": 0, "port": RECEIVER_A_CONFIG.get("port", "")},
     "B": {"connected": False, "last_frame_time": 0, "port": RECEIVER_B_CONFIG.get("port", "")},
@@ -1696,26 +1700,28 @@ receiver_stop_events = {
     "B": threading.Event(),
 }
 
+RECONNECT_DELAY_S = 2.0  # seconds between serial reconnect attempts after a drop
+
 # --- Dedup Layer (DUAL mode only) ---
 dedup_cache = {}
 dedup_lock = threading.Lock()
-DEDUP_WINDOW_S = 0.30  # 300ms window: enough to cover both receivers decoding the same burst
+DEDUP_WINDOW_S = 0.30  # 300ms: sufficient to cover both receivers decoding the same burst
 
 def dedup_check_and_record(payload_hex):
-    """Return True if payload should be processed; False if it's a duplicate within the dedup window.
+    """Return True if payload should be processed; False if duplicate within the dedup window.
     
     Only called in DUAL mode. In single-receiver mode this is bypassed entirely.
     The key is the full raw payload hex string — identical ADS-B transmissions from two
     antennas carry bit-for-bit identical payloads, so content-hashing is sufficient.
+    Purges stale entries on each call; cache is bounded by DEDUP_WINDOW_S * frame_rate
+    which at typical ADS-B rates (~1000 msg/s combined) remains well under 1000 entries.
     """
     now = time.time()
     cutoff = now - DEDUP_WINDOW_S
     with dedup_lock:
-        # Purge stale entries
         expired = [k for k, t in dedup_cache.items() if t < cutoff]
         for k in expired:
             del dedup_cache[k]
-        # Check for duplicate
         if payload_hex in dedup_cache:
             return False
         dedup_cache[payload_hex] = now
@@ -2544,14 +2550,18 @@ def beast_reader_thread(label):
     while not stop_event.is_set():
         port = cfg.get("port", "COM5")
         baud = int(cfg.get("baud", 115200))
-        receiver_status[label]["port"] = port
+        with rx_status_lock:
+            receiver_status[label]["port"] = port
         try:
             ser = serial.Serial(port, baud, timeout=0.1)
-            receiver_status[label]["connected"] = True
+            with rx_status_lock:
+                receiver_status[label]["connected"] = True
             print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.GREEN}[RX-{label}] Connected: {port} @ {baud} baud{ANSI.RESET}")
             in_frame = False
             frame_data = bytearray()
             while not stop_event.is_set():
+                # Capture mode locally so the check is consistent within this iteration
+                active_mode = RX_MODE
                 if ser.in_waiting > 0:
                     byte = ser.read(1)
                     if not byte: continue
@@ -2563,13 +2573,15 @@ def beast_reader_thread(label):
                             if in_frame and len(frame_data) >= 8:
                                 raw_hex = binascii.hexlify(frame_data[8:]).decode('ascii').upper()
                                 # DUAL mode: deduplicate before processing
-                                if RX_MODE == "DUAL":
+                                if active_mode == "DUAL":
                                     if dedup_check_and_record(raw_hex):
-                                        receiver_status[label]["last_frame_time"] = time.time()
+                                        with rx_status_lock:
+                                            receiver_status[label]["last_frame_time"] = time.time()
                                         process_frame(frame_data)
                                 else:
                                     # Single mode: pass through directly, no overhead
-                                    receiver_status[label]["last_frame_time"] = time.time()
+                                    with rx_status_lock:
+                                        receiver_status[label]["last_frame_time"] = time.time()
                                     process_frame(frame_data)
                             in_frame = True
                             frame_data = bytearray()
@@ -2580,14 +2592,14 @@ def beast_reader_thread(label):
                     time.sleep(0.01)
             ser.close()
         except Exception as e:
-            receiver_status[label]["connected"] = False
+            with rx_status_lock:
+                receiver_status[label]["connected"] = False
             if not stop_event.is_set():
-                print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[RX-{label}] Serial drop ({port}): {e} — retrying in 2s{ANSI.RESET}")
-                for _ in range(20):
-                    if stop_event.is_set(): break
-                    time.sleep(0.1)
+                print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[RX-{label}] Serial drop ({port}): {e} — retrying in {RECONNECT_DELAY_S}s{ANSI.RESET}")
+                stop_event.wait(RECONNECT_DELAY_S)
 
-    receiver_status[label]["connected"] = False
+    with rx_status_lock:
+        receiver_status[label]["connected"] = False
     print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.DIM}[RX-{label}] Reader stopped.{ANSI.RESET}")
 
 

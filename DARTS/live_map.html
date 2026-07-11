@@ -316,11 +316,14 @@
             const baud = parseInt(document.getElementById(`rx-${label.toLowerCase()}-baud`).value) || 115200;
             if (!port) { alert(`Enter a port for Receiver ${label}`); return; }
             const key = label === 'A' ? 'receiver_a' : 'receiver_b';
+            // Preserve existing receiver_id from config if available
+            const curCfg = label === 'A' ? (window._rxCfgA || {}) : (window._rxCfgB || {});
+            const receiver_id = curCfg.receiver_id || `ADSBEE-0${label === 'A' ? 1 : 2}`;
             try {
                 await fetch(`${HTTP_API}/api/rx-config`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ [key]: {port, baud, receiver_id: `ADSBEE-0${label==='A'?1:2}`}, restart: label })
+                    body: JSON.stringify({ [key]: {port, baud, receiver_id}, restart: label })
                 });
             } catch(e) { console.warn('connectReceiver error:', e); }
         }
@@ -373,6 +376,8 @@
                 if (!r.ok) return;
                 const cfg = await r.json();
                 applyRxModeUI(cfg.rx_mode || 'A');
+                window._rxCfgA = cfg.receiver_a || {};
+                window._rxCfgB = cfg.receiver_b || {};
                 if (cfg.receiver_a) {
                     if (cfg.receiver_a.port) document.getElementById('rx-a-port').value = cfg.receiver_a.port;
                     if (cfg.receiver_a.baud) document.getElementById('rx-a-baud').value = cfg.receiver_a.baud;
@@ -384,9 +389,9 @@
             } catch(e) { /* server not yet up */ }
         }
 
-        // Init on load, then poll status every 200ms
+        // Init on load, then poll status every 500ms
         initRxConfig();
-        setInterval(pollRxStatus, 200);
+        setInterval(pollRxStatus, 500);
 
         // =============================================
 
