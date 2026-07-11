@@ -229,7 +229,7 @@ def decode_bds42_payload(payload_int):
     if (payload_int >> (55 - 20)) & 0x1:
         sign = (payload_int >> (55 - 21)) & 0x1
         mag = (payload_int >> (55 - 39)) & ((1 << 18) - 1)
-        result["next_waypoint_lon"] = signed_magnitude(mag, sign) * (90.0 / 131072.0)
+        result["next_waypoint_lon"] = signed_magnitude(mag, sign) * (180.0 / 262144.0)
 
     if (payload_int >> (55 - 40)) & 0x1:
         sign = (payload_int >> (55 - 41)) & 0x1
@@ -281,7 +281,12 @@ def decode_bds43_payload(payload_int):
 def decode_vhf_channel(raw_value):
     if raw_value <= 0:
         return None
+    # ICAO Doc 9871 BDS 4,8 channel encoding starts from 1 kHz indexing;
+    # normalize to nearest operational aviation spacing for display robustness.
     mhz = VHF_MIN_MHZ + (raw_value * 0.001)
+    mhz_25 = VHF_MIN_MHZ + (round((mhz - VHF_MIN_MHZ) / 0.025) * 0.025)
+    mhz_833 = VHF_MIN_MHZ + (round((mhz - VHF_MIN_MHZ) / (25.0 / 3.0 / 1000.0)) * (25.0 / 3.0 / 1000.0))
+    mhz = mhz_25 if abs(mhz - mhz_25) <= abs(mhz - mhz_833) else mhz_833
     if mhz < VHF_MIN_MHZ or mhz > VHF_MAX_MHZ:
         return None
     return round(mhz, 3)
