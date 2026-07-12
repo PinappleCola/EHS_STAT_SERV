@@ -1846,8 +1846,8 @@
             const modal = document.getElementById('tag-config-modal');
             if (!modal) return;
             // Preserve scroll positions across re-render
-            const prevActiveScroll = (document.getElementById('tag-active-list') || {}).scrollTop || 0;
-            const prevAvailScroll  = (document.getElementById('tag-avail-list')  || {}).scrollTop || 0;
+            const prevActiveScroll = document.getElementById('tag-active-list')?.scrollTop || 0;
+            const prevAvailScroll  = document.getElementById('tag-avail-list')?.scrollTop  || 0;
             modal.remove();
             openTagConfig();
             const newActiveList = document.getElementById('tag-active-list');
