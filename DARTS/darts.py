@@ -242,17 +242,36 @@ def is_bds42_payload(payload_int):
     return any(decoded.get(key) is not None for key in ("next_waypoint_lat", "next_waypoint_lon", "next_waypoint_crossing_alt"))
 
 def decode_bds42_payload(payload_int):
+    # ICAO Doc 9871 §A.2.2.2 specifies two's complement (TC) encoding for signed
+    # fields. Some avionics use sign-magnitude (SM) instead.  We try SM first; if
+    # the result is out of the valid geographic range we fall back to TC.  The same
+    # encoding detected for latitude is applied to longitude for consistency.
     result = {}
+    used_tc = False
 
     if (payload_int >> (55 - 0)) & 0x1:
         sign = (payload_int >> (55 - 1)) & 0x1
-        mag = (payload_int >> (55 - 19)) & ((1 << 18) - 1)
-        result["next_waypoint_lat"] = signed_magnitude(mag, sign) * (90.0 / 131072.0)
+        mag  = (payload_int >> (55 - 19)) & ((1 << 18) - 1)
+        lat  = signed_magnitude(mag, sign) * (90.0 / 131072.0)
+        if sign and abs(lat) > 90.0:
+            # SM out-of-range — try TC: negative = mag − 2^18
+            tc_lat = (mag - (1 << 18)) * (90.0 / 131072.0)
+            if abs(tc_lat) <= 90.0:
+                lat = tc_lat
+                used_tc = True
+        if abs(lat) <= 90.0:
+            result["next_waypoint_lat"] = lat
 
     if (payload_int >> (55 - 20)) & 0x1:
         sign = (payload_int >> (55 - 21)) & 0x1
-        mag = (payload_int >> (55 - 39)) & ((1 << 18) - 1)
-        result["next_waypoint_lon"] = signed_magnitude(mag, sign) * (180.0 / 262144.0)
+        mag  = (payload_int >> (55 - 39)) & ((1 << 18) - 1)
+        if used_tc:
+            # Apply TC decode consistently with latitude; 180/262144 == 90/131072
+            lon = ((mag - (1 << 18)) if sign else mag) * (180.0 / 262144.0)
+        else:
+            lon = signed_magnitude(mag, sign) * (180.0 / 262144.0)
+        if abs(lon) <= 180.0:
+            result["next_waypoint_lon"] = lon
 
     if (payload_int >> (55 - 40)) & 0x1:
         sign = (payload_int >> (55 - 41)) & 0x1
