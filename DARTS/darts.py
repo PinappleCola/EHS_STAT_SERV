@@ -1733,6 +1733,10 @@ TELEMETRY_EXCLUDED_FIELDS = {
     "latest_sys_log", "latest_intent", "latest_db_log",
     "last_seen", "last_msg_time", "current_burst_start", "ident_time",
     "first_seen_time", "age", "first_seen", "display_heading", "display_heading_source",
+    # BDS 4,8 VHF fields: kept live (WebSocket/state) and selectable, but not persisted to TELEMETRY.db
+    # (no standardised Mode S register carries tuned VHF COM frequency; snapping logic can make noise look valid)
+    "vhf1_freq_mhz", "vhf2_freq_mhz", "vhf3_freq_mhz",
+    "vhf1_audio", "vhf2_audio", "vhf3_audio", "vhf_guard_audio",
 }
 TELEMETRY_FIELDS = {
     field["key"] for field in FIELD_REGISTRY
