@@ -583,6 +583,15 @@
             {key:'data_age_heading', label:'HDG AGE',         category:'SURVEILLANCE'},
             {key:'data_age_position',label:'POS AGE',         category:'SURVEILLANCE'},
             {key:'rssi_dbfs',        label:'RSSI',            category:'SURVEILLANCE'},
+            {key:'vert_rate_baro',   label:'BARO VR',         category:'KINEMATICS'},
+            {key:'vert_rate_inertial',label:'INERT VR',       category:'KINEMATICS'},
+            {key:'wind_speed',       label:'WIND SPD',        category:'METEO'},
+            {key:'wind_direction',   label:'WIND DIR',        category:'METEO'},
+            {key:'static_pressure',  label:'STATIC P',        category:'METEO'},
+            {key:'turbulence_level', label:'TURB LVL',        category:'SAFETY'},
+            {key:'display_heading_source',label:'HDG SOURCE',  category:'KINEMATICS'},
+            {key:'nic_baro',         label:'NIC BARO',        category:'INTEGRITY'},
+            {key:'first_seen',       label:'FIRST SEEN',      category:'SYSTEM'},
         ];
         const MAP_TAG_FIELD_KEYS = MAP_TAG_FIELD_OPTIONS.map(f => f.key);
         const MAP_TAG_DEFAULTS = ['icao','callsign','squawk','alt','hdg_spd'];
@@ -1412,6 +1421,46 @@
                                 'data_age_heading': () => (p.data_age_heading && p.data_age_heading !== '----') ? p.data_age_heading + 's' : '----',
                                 'data_age_position': () => (p.data_age_position && p.data_age_position !== '----') ? p.data_age_position + 's' : '----',
                                 'rssi_dbfs': () => (p.rssi_dbfs !== undefined && p.rssi_dbfs !== '----') ? `${p.rssi_dbfs} dBFS` : '----',
+                                // --- FMS Intent (BDS 4,1 / 4,2 / 4,3) ---
+                                'intent_next_wp': () => (p.intent_next_wp && p.intent_next_wp !== '----') ? p.intent_next_wp : '----',
+                                'intent_wp_lat': () => (typeof p.intent_wp_lat === 'number') ? `${p.intent_wp_lat.toFixed(5)}°` : '----',
+                                'intent_wp_lon': () => (typeof p.intent_wp_lon === 'number') ? `${p.intent_wp_lon.toFixed(5)}°` : '----',
+                                'intent_wp_cross_alt': () => (typeof p.intent_wp_cross_alt === 'number') ? `${p.intent_wp_cross_alt} ft` : '----',
+                                'intent_bearing': () => (typeof p.intent_bearing === 'number') ? `${p.intent_bearing.toFixed(2)}°` : '----',
+                                'intent_time_to_go': () => (typeof p.intent_time_to_go === 'number') ? `${p.intent_time_to_go.toFixed(1)} min` : '----',
+                                'intent_dist_to_go': () => (typeof p.intent_dist_to_go === 'number') ? `${p.intent_dist_to_go.toFixed(1)} NM` : '----',
+                                // --- VHF Comms (BDS 4,8) ---
+                                'vhf1_freq_mhz': () => (typeof p.vhf1_freq_mhz === 'number') ? `${p.vhf1_freq_mhz.toFixed(3)} MHz` : '----',
+                                'vhf2_freq_mhz': () => (typeof p.vhf2_freq_mhz === 'number') ? `${p.vhf2_freq_mhz.toFixed(3)} MHz` : '----',
+                                'vhf3_freq_mhz': () => (typeof p.vhf3_freq_mhz === 'number') ? `${p.vhf3_freq_mhz.toFixed(3)} MHz` : '----',
+                                'vhf1_audio': () => (p.vhf1_audio && p.vhf1_audio !== '----') ? p.vhf1_audio : '----',
+                                'vhf2_audio': () => (p.vhf2_audio && p.vhf2_audio !== '----') ? p.vhf2_audio : '----',
+                                'vhf3_audio': () => (p.vhf3_audio && p.vhf3_audio !== '----') ? p.vhf3_audio : '----',
+                                'vhf_guard_audio': () => (p.vhf_guard_audio && p.vhf_guard_audio !== '----') ? p.vhf_guard_audio : '----',
+                                // --- Air-Referenced Vector (BDS 5,3) ---
+                                'air_vector_heading': () => (typeof p.air_vector_heading === 'number') ? `${p.air_vector_heading.toFixed(2)}°` : '----',
+                                'air_vector_ias': () => (typeof p.air_vector_ias === 'number') ? `${p.air_vector_ias} kt` : '----',
+                                'air_vector_mach': () => (typeof p.air_vector_mach === 'number') ? `M${p.air_vector_mach.toFixed(3)}` : '----',
+                                'air_vector_tas': () => (typeof p.air_vector_tas === 'number') ? `${p.air_vector_tas} kt` : '----',
+                                'air_vector_vr': () => (typeof p.air_vector_vr === 'number') ? `${p.air_vector_vr > 0 ? '+' : ''}${p.air_vector_vr} fpm` : '----',
+                                // --- Quasi-Static Parameters (BDS 5,F) ---
+                                'qsp_mcp_alt_change': () => (p.qsp_mcp_alt_change !== undefined && p.qsp_mcp_alt_change !== '----') ? String(p.qsp_mcp_alt_change) : '----',
+                                'qsp_next_wp_change': () => (p.qsp_next_wp_change !== undefined && p.qsp_next_wp_change !== '----') ? String(p.qsp_next_wp_change) : '----',
+                                'qsp_fms_vmode_change': () => (p.qsp_fms_vmode_change !== undefined && p.qsp_fms_vmode_change !== '----') ? String(p.qsp_fms_vmode_change) : '----',
+                                'qsp_vhf_change': () => (p.qsp_vhf_change !== undefined && p.qsp_vhf_change !== '----') ? String(p.qsp_vhf_change) : '----',
+                                'qsp_meteo_change': () => (p.qsp_meteo_change !== undefined && p.qsp_meteo_change !== '----') ? String(p.qsp_meteo_change) : '----',
+                                'qsp_fms_alt_change': () => (p.qsp_fms_alt_change !== undefined && p.qsp_fms_alt_change !== '----') ? String(p.qsp_fms_alt_change) : '----',
+                                'qsp_baro_change': () => (p.qsp_baro_change !== undefined && p.qsp_baro_change !== '----') ? String(p.qsp_baro_change) : '----',
+                                // --- Deep fields ---
+                                'wind_speed': () => (typeof p.wind_speed === 'number') ? `${p.wind_speed} kt` : '----',
+                                'wind_direction': () => (typeof p.wind_direction === 'number') ? `${p.wind_direction}°` : '----',
+                                'static_pressure': () => (typeof p.static_pressure === 'number') ? `${p.static_pressure} hPa` : '----',
+                                'turbulence_level': () => (typeof p.turbulence_level === 'number') ? String(p.turbulence_level) : '----',
+                                'vert_rate_baro': () => (typeof p.vert_rate_baro === 'number') ? `${p.vert_rate_baro > 0 ? '+' : ''}${p.vert_rate_baro} fpm` : '----',
+                                'vert_rate_inertial': () => (typeof p.vert_rate_inertial === 'number') ? `${p.vert_rate_inertial > 0 ? '+' : ''}${p.vert_rate_inertial} fpm` : '----',
+                                'display_heading_source': () => (p.display_heading_source && p.display_heading_source !== 'none') ? p.display_heading_source : '----',
+                                'nic_baro': () => (p.nic_baro !== null && p.nic_baro !== undefined && p.nic_baro !== '----') ? (p.nic_baro ? 'BARO✓' : 'BARO✗') : '----',
+                                'first_seen': () => (p.first_seen && p.first_seen !== '----') ? p.first_seen : '----',
                             };
                             
                             const lineEntries = mapTagFields.map(f => ({ key: f, text: (tagFieldRenderers[f] || (() => '----'))() }));
