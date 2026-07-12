@@ -1761,7 +1761,7 @@
                 
                 // Active fields (reorderable)
                 html += '<div style="color:#94a3b8;font-size:0.75em;margin-bottom:4px;">ACTIVE FIELDS (drag or ▲▼ to reorder):</div>';
-                html += '<div id="tag-active-list" style="max-height:140px;overflow-y:auto;border:1px solid #1e293b;border-radius:3px;margin-bottom:8px;">';
+                html += '<div id="tag-active-list" style="min-height:104px;max-height:140px;overflow-y:auto;border:1px solid #1e293b;border-radius:3px;margin-bottom:8px;">';
                 mapTagFields.forEach((key, idx) => {
                     const def = MAP_TAG_FIELD_OPTIONS.find(f => f.key === key);
                     const label = def ? def.label : key.toUpperCase();
@@ -1844,7 +1844,16 @@
         
         window.rerenderTagConfig = function() {
             const modal = document.getElementById('tag-config-modal');
-            if (modal) { modal.remove(); openTagConfig(); }
+            if (!modal) return;
+            // Preserve scroll positions across re-render
+            const prevActiveScroll = (document.getElementById('tag-active-list') || {}).scrollTop || 0;
+            const prevAvailScroll  = (document.getElementById('tag-avail-list')  || {}).scrollTop || 0;
+            modal.remove();
+            openTagConfig();
+            const newActiveList = document.getElementById('tag-active-list');
+            if (newActiveList) newActiveList.scrollTop = prevActiveScroll;
+            const newAvailList  = document.getElementById('tag-avail-list');
+            if (newAvailList)  newAvailList.scrollTop  = prevAvailScroll;
         };
 
         window.moveTagField = function(key, dir) {
