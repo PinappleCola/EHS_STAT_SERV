@@ -191,6 +191,7 @@
             <button id="btn-clean-snap" class="btn-action">CLEAN SCREENSHOT</button>
             <button onclick="openTagConfig()" class="btn-action" title="Ctrl+Shift+T">DATA TAGS</button>
             <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Ctrl+Shift+P">PERF</button>
+            <button id="btn-intent-coord" class="btn-action btn-toggle" onclick="toggleIntentCoord()" title="Show FMS intent waypoint overlay (BDS 4,2)">INTENT COORD</button>
 
             <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
 
@@ -632,6 +633,19 @@
         // --- Performance / latency counters (Phase 4) ---
         let perfCounters = { frames: 0, lastWsTime: 0, wsLatency: 0, renderMs: 0, aircraftCount: 0 };
         let showPerfOverlay = false;
+
+        // --- Intent Coord overlay state (BDS 4,2 FMS next waypoint) ---
+        let showIntentCoord = (() => {
+            try { return JSON.parse(localStorage.getItem('darts_intent_coord') || 'false'); } catch(e) { return false; }
+        })();
+        function toggleIntentCoord() {
+            showIntentCoord = !showIntentCoord;
+            localStorage.setItem('darts_intent_coord', JSON.stringify(showIntentCoord));
+            const btn = document.getElementById('btn-intent-coord');
+            if (btn) btn.classList.toggle('active', showIntentCoord);
+        }
+        // Apply initial button state (DOM is already ready at this point)
+        document.getElementById('btn-intent-coord').classList.toggle('active', showIntentCoord);
 
         const rCanvas = document.getElementById('radar-canvas');
         const mapContainer = document.getElementById('map-container');
@@ -1514,6 +1528,51 @@
                         }
                     }
                 });
+
+                // --- Intent Coord overlay (BDS 4,2 FMS next waypoint) ---
+                if (showIntentCoord) {
+                    planes.forEach(p => {
+                        if (typeof p.intent_wp_lat !== 'number' || typeof p.intent_wp_lon !== 'number') return;
+                        const renderPos = getRenderablePos(p);
+                        if (!renderPos) return;
+
+                        const acPt  = getCanvasPoint(renderPos.lat, renderPos.lon, R_CX, R_CY, ppd);
+                        const wptPt = getCanvasPoint(p.intent_wp_lat, p.intent_wp_lon, R_CX, R_CY, ppd);
+
+                        const isDimmed = ((lockedEntity || secondaryEntity) && p.icao !== lockedEntity && p.icao !== secondaryEntity && p.icao !== hoveredEntity);
+                        rCtx.globalAlpha = isDimmed ? 0.25 : 0.85;
+
+                        // Dotted line from aircraft to intent waypoint
+                        rCtx.beginPath();
+                        rCtx.moveTo(acPt.x, acPt.y);
+                        rCtx.lineTo(wptPt.x, wptPt.y);
+                        rCtx.strokeStyle = '#f59e0b';
+                        rCtx.lineWidth = 1.5;
+                        rCtx.setLineDash([5, 4]);
+                        rCtx.stroke();
+                        rCtx.setLineDash([]);
+
+                        // Diamond marker at intent waypoint
+                        const ds = 6;
+                        rCtx.beginPath();
+                        rCtx.moveTo(wptPt.x,      wptPt.y - ds);
+                        rCtx.lineTo(wptPt.x + ds, wptPt.y);
+                        rCtx.lineTo(wptPt.x,      wptPt.y + ds);
+                        rCtx.lineTo(wptPt.x - ds, wptPt.y);
+                        rCtx.closePath();
+                        rCtx.strokeStyle = '#f59e0b';
+                        rCtx.lineWidth = 1.5;
+                        rCtx.stroke();
+
+                        // Label: waypoint name (if available) or lat/lon
+                        const wptName = (p.intent_next_wp && p.intent_next_wp !== '----') ? p.intent_next_wp : `${p.intent_wp_lat.toFixed(2)},${p.intent_wp_lon.toFixed(2)}`;
+                        rCtx.font = "bold 9px 'B612 Mono', monospace";
+                        rCtx.fillStyle = '#f59e0b';
+                        rCtx.fillText(wptName, wptPt.x + ds + 3, wptPt.y + 3);
+
+                        rCtx.globalAlpha = 1.0;
+                    });
+                }
 
                 if (lockedEntity && secondaryEntity) {
                     const e1 = entityCache[lockedEntity];
