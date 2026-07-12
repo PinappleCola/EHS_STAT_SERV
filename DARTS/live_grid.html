@@ -740,6 +740,56 @@
                 return { html: (typeof plane.rssi_dbfs === 'number') ? `${plane.rssi_dbfs.toFixed(1)} dBFS` : EM };
             case 'display_heading_source':
                 return { html: (plane.display_heading_source && plane.display_heading_source !== 'none') ? `<span style="color:#a78bfa;">${plane.display_heading_source}</span>` : EM };
+            // --- FMS Intent (BDS 4,1 / 4,2 / 4,3) ---
+            case 'intent_next_wp':
+                return { html: (plane.intent_next_wp && plane.intent_next_wp !== '----') ? plane.intent_next_wp : EM, cls: 'intent' };
+            case 'intent_wp_lat':
+                return { html: (typeof plane.intent_wp_lat === 'number') ? `${plane.intent_wp_lat.toFixed(5)}°` : EM, cls: 'intent' };
+            case 'intent_wp_lon':
+                return { html: (typeof plane.intent_wp_lon === 'number') ? `${plane.intent_wp_lon.toFixed(5)}°` : EM, cls: 'intent' };
+            case 'intent_wp_cross_alt':
+                return { html: (typeof plane.intent_wp_cross_alt === 'number') ? `${plane.intent_wp_cross_alt} ft` : EM, cls: 'intent' };
+            case 'intent_bearing':
+                return { html: (typeof plane.intent_bearing === 'number') ? `${plane.intent_bearing.toFixed(2)}°` : EM, cls: 'intent' };
+            case 'intent_time_to_go':
+                return { html: (typeof plane.intent_time_to_go === 'number') ? `${plane.intent_time_to_go.toFixed(1)} min` : EM, cls: 'intent' };
+            case 'intent_dist_to_go':
+                return { html: (typeof plane.intent_dist_to_go === 'number') ? `${plane.intent_dist_to_go.toFixed(1)} NM` : EM, cls: 'intent' };
+            // --- VHF Comms (BDS 4,8) ---
+            case 'vhf1_freq_mhz':
+                return { html: (typeof plane.vhf1_freq_mhz === 'number') ? `${plane.vhf1_freq_mhz.toFixed(3)} MHz` : EM };
+            case 'vhf2_freq_mhz':
+                return { html: (typeof plane.vhf2_freq_mhz === 'number') ? `${plane.vhf2_freq_mhz.toFixed(3)} MHz` : EM };
+            case 'vhf3_freq_mhz':
+                return { html: (typeof plane.vhf3_freq_mhz === 'number') ? `${plane.vhf3_freq_mhz.toFixed(3)} MHz` : EM };
+            case 'vhf1_audio':
+            case 'vhf2_audio':
+            case 'vhf3_audio':
+            case 'vhf_guard_audio':
+                return { html: (plane[key] && plane[key] !== '----') ? plane[key] : EM };
+            // --- Air-Referenced Vector (BDS 5,3) ---
+            case 'air_vector_heading':
+                return { html: (typeof plane.air_vector_heading === 'number') ? `${plane.air_vector_heading.toFixed(2)}°` : EM };
+            case 'air_vector_ias':
+                return { html: (typeof plane.air_vector_ias === 'number') ? `${plane.air_vector_ias} kt` : EM };
+            case 'air_vector_mach':
+                return { html: (typeof plane.air_vector_mach === 'number') ? `M${plane.air_vector_mach.toFixed(3)}` : EM };
+            case 'air_vector_tas':
+                return { html: (typeof plane.air_vector_tas === 'number') ? `${plane.air_vector_tas} kt` : EM };
+            case 'air_vector_vr':
+                return { html: (typeof plane.air_vector_vr === 'number') ? `${plane.air_vector_vr > 0 ? '+' : ''}${plane.air_vector_vr} fpm` : EM };
+            // --- Quasi-Static Parameters (BDS 5,F) ---
+            case 'qsp_mcp_alt_change':
+            case 'qsp_next_wp_change':
+            case 'qsp_fms_vmode_change':
+            case 'qsp_vhf_change':
+            case 'qsp_meteo_change':
+            case 'qsp_fms_alt_change':
+            case 'qsp_baro_change': {
+                const v = plane[key];
+                if (v === '----' || v === null || v === undefined) return { html: EM };
+                return { html: String(v) };
+            }
             default:
                 return { html: EM };
         }
