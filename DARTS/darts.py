@@ -266,8 +266,8 @@ def decode_bds42_payload(payload_int):
         sign = (payload_int >> (55 - 21)) & 0x1
         mag  = (payload_int >> (55 - 39)) & ((1 << 18) - 1)
         if used_tc:
-            # Apply TC decode consistently with latitude
-            lon = ((mag - (1 << 18)) if sign else mag) * (90.0 / 131072.0)
+            # Apply TC decode consistently with latitude; 180/262144 == 90/131072
+            lon = ((mag - (1 << 18)) if sign else mag) * (180.0 / 262144.0)
         else:
             lon = signed_magnitude(mag, sign) * (180.0 / 262144.0)
         if abs(lon) <= 180.0:
