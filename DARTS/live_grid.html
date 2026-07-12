@@ -777,7 +777,7 @@
             case 'air_vector_tas':
                 return { html: (typeof plane.air_vector_tas === 'number') ? `${plane.air_vector_tas} kt` : EM };
             case 'air_vector_vr':
-                return { html: (typeof plane.air_vector_vr === 'number') ? `${plane.air_vector_vr > 0 ? '+' : ''}${plane.air_vector_vr} ft/min` : EM };
+                return { html: (typeof plane.air_vector_vr === 'number') ? `${plane.air_vector_vr > 0 ? '+' : ''}${plane.air_vector_vr} fpm` : EM };
             // --- Quasi-Static Parameters (BDS 5,F) ---
             case 'qsp_mcp_alt_change':
             case 'qsp_next_wp_change':

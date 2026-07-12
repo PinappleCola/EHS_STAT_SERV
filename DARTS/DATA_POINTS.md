@@ -19,7 +19,7 @@ All fields are stored in the `aircraft_state` dictionary, emitted over WebSocket
 | BDS 4,0 | `alt_fms` | FMS selected altitude (raw) | ft | 12 bits | `36000` | `36000` | `36000` |
 | BDS 4,5 | `radio_height` | Radio altimeter height | ft | 12 bits | `1520` | `1520 ft` | `1520 ft` |
 | **KINEMATICS** | | | | | | | |
-| BDS 6,0 | `vert_rate` | Primary vertical rate (baro or inertial) | ft/min | 10 bits | `-1280` | `<span>-1280 ft/min</span>` | `---- (virtual)` |
+| BDS 6,0 | `vert_rate` | Primary vertical rate (baro or inertial) | ft/min | 10 bits | `-1280` | `-1280 ft/min` | `---- (virtual)` |
 | BDS 6,0 | `vert_rate_baro` | Barometric vertical rate | ft/min | 10 bits (1+9) | `-640` | `-640` | `-640 fpm` |
 | BDS 6,0 | `vert_rate_inertial` | Inertial vertical rate | ft/min | 10 bits (1+9) | `512` | `512` | `+512 fpm` |
 | BDS 6,0 | `inertial_vr` | Inertial VR (display alias) | ft/min | 10 bits (1+9) | `512` | `+512 ft/min` | `512 fpm` |
