@@ -2799,6 +2799,8 @@ def beast_reader_thread(label):
                 # repeated 1-byte blocking reads that added latency on Pi 5's
                 # higher-overhead USB controller.
                 active_mode = RX_MODE
+                # ser has timeout=0.1, so the blocking read below stalls
+                # at most 100 ms before the stop_event check fires again.
                 n = ser.in_waiting
                 data = ser.read(n if n > 0 else 1)
                 if not data:
@@ -2807,8 +2809,10 @@ def beast_reader_thread(label):
                     if escape_next:
                         escape_next = False
                         if b == 0x1A:
+                            # Escaped 0x1A — literal data byte
                             if in_frame: frame_data.append(0x1A)
                         elif b in (0x32, 0x33, 0xEC):
+                            # Frame-type marker: finalise previous frame, start new one
                             if in_frame and len(frame_data) >= 8:
                                 raw_hex = binascii.hexlify(frame_data[8:]).decode('ascii').upper()
                                 # DUAL mode: deduplicate before processing
@@ -2825,8 +2829,7 @@ def beast_reader_thread(label):
                             in_frame = True
                             frame_data = bytearray()
                             frame_data.append(b)
-                        else:
-                            if in_frame: frame_data.append(b)
+                        # Unknown escape sequence — drop silently (matches original behaviour)
                     elif b == 0x1A:
                         escape_next = True
                     else:
