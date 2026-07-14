@@ -31,8 +31,14 @@ except ImportError:
     pms = None
 
 def load_runtime_config():
+    # Use OS-appropriate default serial ports so the app works out-of-the-box on
+    # both Windows (COMx) and Linux/Raspberry Pi (ADSBee 1090 is a USB CDC device
+    # that enumerates as /dev/ttyACM0 on Pi 5).
+    _default_port_a = "COM5"       if os.name == "nt" else "/dev/ttyACM0"
+    _default_port_b = "COM4"       if os.name == "nt" else "/dev/ttyACM1"
+
     config = {
-        "port": "COM5",
+        "port": _default_port_a,
         "baud": 115200,
         "ws_host": "localhost",
         "ws_port": 8765,
@@ -68,7 +74,7 @@ def load_runtime_config():
         }
     if not config["receiver_b"].get("port"):
         config["receiver_b"] = {
-            "port": "COM4",
+            "port": _default_port_b,
             "baud": 115200,
             "receiver_id": "ADSBEE-02",
         }
@@ -2994,6 +3000,11 @@ async def main():
         await asyncio.Future()
 
 if __name__ == "__main__":
+    # On Windows, Python 3.8+ defaults to ProactorEventLoop which can cause
+    # issues with some socket/websockets patterns. Force the Selector loop for
+    # compatibility with the websockets library.
+    if os.name == "nt":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     load_airline_db()
     load_historical_state()
     load_airspace()
