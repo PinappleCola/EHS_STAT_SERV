@@ -2787,17 +2787,32 @@ def beast_reader_thread(label):
             print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.GREEN}[RX-{label}] Connected: {port} @ {baud} baud{ANSI.RESET}")
             in_frame = False
             frame_data = bytearray()
+            escape_next = False
             while not stop_event.is_set():
-                # Capture mode locally so the check is consistent within this iteration
+                # Read all buffered bytes at once; if the buffer is empty, issue
+                # a short blocking read for 1 byte.  Keeping an active read
+                # pending at all times prevents the Linux USB autosuspend timer
+                # from suspending the ttyACM device — the root cause of the
+                # ADSBee data LED going nearly dark on Pi 5 when the previous
+                # code did time.sleep() with no I/O in flight.
+                # A second benefit: reading available bytes in bulk avoids the
+                # repeated 1-byte blocking reads that added latency on Pi 5's
+                # higher-overhead USB controller.
                 active_mode = RX_MODE
-                if ser.in_waiting > 0:
-                    byte = ser.read(1)
-                    if not byte: continue
-                    if byte == b'\x1A':
-                        next_byte = ser.read(1)
-                        if next_byte == b'\x1A':
+                # ser has timeout=0.1, so the blocking read below stalls
+                # at most 100 ms before the stop_event check fires again.
+                n = ser.in_waiting
+                data = ser.read(n if n > 0 else 1)
+                if not data:
+                    continue
+                for b in data:
+                    if escape_next:
+                        escape_next = False
+                        if b == 0x1A:
+                            # Escaped 0x1A — literal data byte
                             if in_frame: frame_data.append(0x1A)
-                        elif next_byte in [b'\x32', b'\x33', b'\xEC']:
+                        elif b in (0x32, 0x33, 0xEC):
+                            # Frame-type marker: finalise previous frame, start new one
                             if in_frame and len(frame_data) >= 8:
                                 raw_hex = binascii.hexlify(frame_data[8:]).decode('ascii').upper()
                                 # DUAL mode: deduplicate before processing
@@ -2813,11 +2828,12 @@ def beast_reader_thread(label):
                                     process_frame(frame_data)
                             in_frame = True
                             frame_data = bytearray()
-                            frame_data.append(next_byte[0])
+                            frame_data.append(b)
+                        # Unknown escape sequence — drop silently (matches original behaviour)
+                    elif b == 0x1A:
+                        escape_next = True
                     else:
-                        if in_frame: frame_data.append(byte[0])
-                else:
-                    time.sleep(0.01)
+                        if in_frame: frame_data.append(b)
             ser.close()
         except Exception as e:
             with rx_status_lock:
