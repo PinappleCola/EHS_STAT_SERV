@@ -15,8 +15,7 @@ fi
 
 # Activate and install/upgrade dependencies
 source "$VENV_DIR/bin/activate"
-echo "[DARTS] Installing dependencies..."
-pip install --quiet --upgrade pip
+echo "[DARTS] Checking dependencies (skipped if already satisfied)..."
 pip install --quiet -r "$SCRIPT_DIR/requirements.txt"
 
 echo "[DARTS] Starting DART-B core..."

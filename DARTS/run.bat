@@ -22,8 +22,7 @@ if not exist "%VENV_DIR%\Scripts\activate.bat" (
 
 REM Activate and install/upgrade dependencies
 call "%VENV_DIR%\Scripts\activate.bat"
-echo [DARTS] Installing dependencies...
-python -m pip install --quiet --upgrade pip
+echo [DARTS] Checking dependencies (skipped if already satisfied)...
 python -m pip install --quiet -r "%SCRIPT_DIR%requirements.txt"
 
 echo [DARTS] Starting DART-B core...
