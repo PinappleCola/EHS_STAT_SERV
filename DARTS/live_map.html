@@ -85,7 +85,7 @@
 
         #db-modal {
             display: none; position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
-            width: 700px; max-height: 60vh; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(8px);
+            width: 820px; max-height: 65vh; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(8px);
             border: 1px solid #38bdf8; border-radius: 6px; z-index: 100; box-shadow: 0 15px 40px rgba(0,0,0,0.9);
             flex-direction: column; pointer-events: auto; overflow: hidden;
         }
@@ -116,6 +116,7 @@
             box-shadow: 0 10px 25px rgba(0,0,0,0.9); flex-direction: column; gap: 8px; pointer-events: auto;
         }
         .wpt-input { background: #030712; color: #e2e8f0; border: 1px solid #1e293b; font-size: 0.9em; padding: 6px; font-family: monospace; }
+        .elem-colour-swatch { width: 28px; height: 22px; padding: 1px; border: 1px solid #475569; border-radius: 3px; cursor: pointer; background: transparent; }
 
         /* RX Config Modal */
         #rx-config-modal {
@@ -186,7 +187,9 @@
             </select>
             
             <button id="btn-network" class="btn-action btn-toggle">MAP TOGGLE</button>
-            <button id="btn-db" class="btn-action btn-action-alt">WAYPOINTS</button>
+            <button id="btn-db" class="btn-action btn-action-alt">ELEMENT MANAGER</button>
+            <button id="btn-elem-toggle" class="btn-action btn-toggle" title="Show/hide all elements from JSON">ELEMENT TOGGLE</button>
+            <button id="btn-elem-refresh" class="btn-action btn-action-alt" title="Force re-import of airspace.geojson">ELEMENT REFRESH</button>
             <button id="btn-lock" class="btn-action">SNAP CURRENT LOC</button>
             <button id="btn-clean-snap" class="btn-action">CLEAN SCREENSHOT</button>
             <button onclick="openTagConfig()" class="btn-action" title="Ctrl+Shift+T">DATA TAGS</button>
@@ -270,50 +273,36 @@
 
     <div id="db-modal">
         <div class="db-header">
-            <span>SPATIAL DATABASE MANAGER</span>
+            <span>ELEMENT MANAGER</span>
             <div class="db-header-actions">
-                <button id="btn-db-add-wpt" class="db-header-btn">ADD WAYPOINT</button>
                 <span class="db-close" id="btn-close-db">X</span>
             </div>
         </div>
         <div class="db-content">
+            <!-- Per-category colour pickers -->
+            <div id="elem-colour-panel" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #1e293b;">
+                <span style="font-size:0.78em;color:#94a3b8;align-self:center;white-space:nowrap;">CATEGORY COLOURS:</span>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.78em;color:#e2e8f0;">AUDIT <input type="color" id="clr-AUDIT" class="elem-colour-swatch"></label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.78em;color:#e2e8f0;">WAYPOINT <input type="color" id="clr-WAYPOINT" class="elem-colour-swatch"></label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.78em;color:#e2e8f0;">VOR <input type="color" id="clr-VOR" class="elem-colour-swatch"></label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.78em;color:#e2e8f0;">LANDMARK <input type="color" id="clr-LANDMARK" class="elem-colour-swatch"></label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.78em;color:#e2e8f0;">RUNWAY <input type="color" id="clr-RUNWAY" class="elem-colour-swatch"></label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.78em;color:#e2e8f0;">MISC <input type="color" id="clr-MISC" class="elem-colour-swatch"></label>
+            </div>
             <table class="db-table" id="db-table">
                 <thead>
                     <tr>
                         <th onclick="sortTable(0)">GEOMETRY ↕</th>
                         <th onclick="sortTable(1)">NAME ↕</th>
-                        <th onclick="sortTable(2)">ICON / CLASS ↕</th>
+                        <th onclick="sortTable(2)">CATEGORY ↕</th>
                         <th>COORDINATES (LAT, LON)</th>
+                        <th>STATUS</th>
                         <th>ACTION</th>
                     </tr>
                 </thead>
                 <tbody id="db-tbody">
                     </tbody>
             </table>
-        </div>
-    </div>
-
-    <div id="wpt-form">
-        <div style="font-size: 0.8em; color: #38bdf8; font-weight: bold; margin-bottom: 2px;">INJECT CUSTOM WAYPOINT</div>
-        <input type="text" id="wpt-name" class="wpt-input" placeholder="NAME (e.g. HOME)">
-        <div style="display: flex; gap: 6px;">
-            <input type="text" id="wpt-lat" class="wpt-input" placeholder="LAT (-33.8)" style="width: 80px;">
-            <input type="text" id="wpt-lon" class="wpt-input" placeholder="LON (151.2)" style="width: 80px;">
-        </div>
-        <select id="wpt-type" class="wpt-input" style="width: 100%;">
-            <option value="FIX">FIX</option>
-            <option value="AIRPORT">AIRPORT</option>
-            <option value="VOR">VOR</option>
-            <option value="RADAR">RADAR</option>
-        </select>
-        <div style="display: flex; gap: 6px; margin-top: 4px;">
-            <button id="btn-save-wpt" style="flex: 1; background: #10b981; border: none; color: #000; font-weight:bold; cursor: pointer; padding: 6px; border-radius:3px;">SAVE</button>
-            <button id="btn-cancel-wpt" style="background: #ef4444; border: none; color: #fff; font-weight:bold; cursor: pointer; padding: 6px 10px; border-radius:3px;">X</button>
-        </div>
-        <div style="display: flex; gap: 6px; margin-top: 6px; border-top: 1px solid #1e293b; padding-top: 6px;">
-            <button onclick="useGPSLocation()" style="flex:1; background:#8b5cf6; border:none; color:#fff; font-weight:bold; cursor:pointer; padding:5px; border-radius:3px; font-size:0.8em;">📍 GPS</button>
-            <button onclick="exportWaypoints()" style="flex:1; background:#334155; border:1px solid #475569; color:#e2e8f0; font-weight:bold; cursor:pointer; padding:5px; border-radius:3px; font-size:0.8em;">EXPORT</button>
-            <button onclick="importWaypoints()" style="flex:1; background:#334155; border:1px solid #475569; color:#e2e8f0; font-weight:bold; cursor:pointer; padding:5px; border-radius:3px; font-size:0.8em;">IMPORT</button>
         </div>
     </div>
 
@@ -784,18 +773,55 @@
             populateDbTable();
         };
 
+        // --- Element colour persistence (localStorage) ---
+        const ELEM_CATEGORIES = ['AUDIT','WAYPOINT','VOR','LANDMARK','RUNWAY','MISC'];
+        const ELEM_COLOUR_DEFAULTS = {
+            AUDIT:   '#38bdf8',
+            WAYPOINT:'#e2e8f0',
+            VOR:     '#a78bfa',
+            LANDMARK:'#fb923c',
+            RUNWAY:  '#4ade80',
+            MISC:    '#94a3b8'
+        };
+        const ELEM_COLOUR_KEY = 'darts_elem_colours';
+
+        // In-memory colour cache — avoids repeated JSON.parse on every render frame
+        let elemColourCache = {};
+        function loadElemColours() {
+            try { return JSON.parse(localStorage.getItem(ELEM_COLOUR_KEY)) || {}; } catch(e) { return {}; }
+        }
+        function saveElemColours(map) { localStorage.setItem(ELEM_COLOUR_KEY, JSON.stringify(map)); elemColourCache = { ...map }; }
+        function getElemColour(cat) {
+            return elemColourCache[cat] || ELEM_COLOUR_DEFAULTS[cat] || '#e2e8f0';
+        }
+        function initColourPickers() {
+            const stored = loadElemColours();
+            elemColourCache = { ...stored };
+            ELEM_CATEGORIES.forEach(cat => {
+                const el = document.getElementById('clr-' + cat);
+                if (!el) return;
+                el.value = stored[cat] || ELEM_COLOUR_DEFAULTS[cat] || '#e2e8f0';
+                el.addEventListener('input', () => {
+                    elemColourCache[cat] = el.value;
+                    saveElemColours(elemColourCache);
+                });
+            });
+        }
+        initColourPickers();
+
         function populateDbTable() {
             const tbody = document.getElementById('db-tbody');
             tbody.innerHTML = '';
             
             if (!airspaceGeoJSON.features || airspaceGeoJSON.features.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No Spatial Data Available in Memory.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;">No Spatial Data Available in Memory.</td></tr>`;
                 return;
             }
 
             airspaceGeoJSON.features.forEach((feature, idx) => {
                 const props = feature.properties || {};
                 const geom = feature.geometry || {};
+                const isMasked = !!props.masked;
                 
                 let coordStr = 'N/A';
                 if (geom.type === 'Point' && geom.coordinates) {
@@ -805,47 +831,42 @@
                 }
 
                 const tr = document.createElement('tr');
+                tr.style.opacity = isMasked ? '0.45' : '1';
                 tr.innerHTML = `
                     <td><span class="type-badge ${geom.type === 'Point' ? 'type-point' : 'type-line'}">${geom.type.toUpperCase()}</span></td>
                     <td style="font-weight:bold; color:#38bdf8;">${props.name || 'UNNAMED'}</td>
                     <td>${props.icon || props.type || 'DEFAULT'}</td>
                     <td style="color:#94a3b8;">${coordStr}</td>
-                    <td><button style="background:#ef4444; color:white; border:none; padding:2px 8px; cursor:pointer;" onclick="deleteFeature(${idx})">DEL</button></td>
+                    <td style="color:${isMasked ? '#f59e0b' : '#4ade80'}; font-weight:bold;">${isMasked ? 'MASKED' : 'ACTIVE'}</td>
+                    <td><button style="background:${isMasked ? '#334155' : '#78350f'}; color:${isMasked ? '#e2e8f0' : '#fde68a'}; border:1px solid #475569; padding:2px 8px; cursor:pointer; border-radius:3px; font-weight:bold;" onclick="maskFeature(${idx})">${isMasked ? 'UNMASK' : 'MASK'}</button></td>
                 `;
                 tbody.appendChild(tr);
             });
         }
 
-        window.deleteFeature = function(idx) {
-            if(confirm("Purge geometry feature from database?")) {
-                if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ action: "delete_feature", index: idx })); }
-                airspaceGeoJSON.features.splice(idx, 1);
-                populateDbTable();
+        window.maskFeature = function(idx) {
+            const feature = airspaceGeoJSON.features[idx];
+            if (!feature) return;
+            const nowMasked = !feature.properties.masked;
+            feature.properties.masked = nowMasked;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: "mask_feature", index: idx, masked: nowMasked }));
             }
+            populateDbTable();
         };
 
-        // Inject Waypoint Logic
-        const btnDbAddWpt = document.getElementById('btn-db-add-wpt');
-        if (btnDbAddWpt) {
-            btnDbAddWpt.addEventListener('click', () => document.getElementById('wpt-form').style.display = 'flex');
-        }
-        document.getElementById('btn-cancel-wpt').addEventListener('click', () => document.getElementById('wpt-form').style.display = 'none');
-        
-        document.getElementById('btn-save-wpt').addEventListener('click', () => {
-            const Waypoint_Name = document.getElementById('wpt-name').value.trim();
-            const LAT = parseFloat(document.getElementById('wpt-lat').value);
-            const LONG = parseFloat(document.getElementById('wpt-lon').value);
-            const type = document.getElementById('wpt-type').value.trim().toUpperCase() || 'FIX';
-            
-            if (Waypoint_Name && !isNaN(LAT) && !isNaN(LONG)) {
-                const newWpt = { Waypoint_Name, LAT, LONG, type };
-                if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ action: "add_wpt", waypoint: newWpt })); }
-                
-                document.getElementById('wpt-name').value = '';
-                document.getElementById('wpt-lat').value = '';
-                document.getElementById('wpt-lon').value = '';
-                document.getElementById('wpt-type').value = '';
-                document.getElementById('wpt-form').style.display = 'none';
+        // --- Element Toggle (show/hide all elements) ---
+        let elementsHidden = false;
+        document.getElementById('btn-elem-toggle').addEventListener('click', () => {
+            elementsHidden = !elementsHidden;
+            const btn = document.getElementById('btn-elem-toggle');
+            btn.classList.toggle('active', elementsHidden);
+        });
+
+        // --- Element Refresh (force re-import of airspace.geojson from server) ---
+        document.getElementById('btn-elem-refresh').addEventListener('click', () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: "reload_airspace" }));
             }
         });
 
@@ -1162,15 +1183,22 @@
                     }
                 });
                 
-                if (airspaceGeoJSON && airspaceGeoJSON.features) {
+                if (airspaceGeoJSON && airspaceGeoJSON.features && !elementsHidden) {
                     airspaceGeoJSON.features.forEach((feature, idx) => {
                         const geom = feature.geometry;
                         const props = feature.properties || {};
                         if (!geom) return;
+                        // Skip masked features
+                        if (props.masked) return;
+
+                        // Resolve category and colour
+                        const catRaw = (props.icon || props.type || 'MISC').toUpperCase();
+                        const catColour = getElemColour(catRaw);
 
                         if (geom.type === 'LineString') {
                             rCtx.beginPath();
-                            rCtx.strokeStyle = props.color || 'rgba(16, 185, 129, 0.5)';
+                            // RUNWAY category uses category colour; fallback to stored color or default
+                            rCtx.strokeStyle = catColour || props.color || 'rgba(16, 185, 129, 0.5)';
                             rCtx.lineWidth = props.weight || 2;
                             geom.coordinates.forEach((coord, idx) => {
                                 const pt = getCanvasPoint(coord[1], coord[0], R_CX, R_CY, ppd);
@@ -1182,15 +1210,15 @@
                             if (props.name) {
                                 const pt0 = getCanvasPoint(geom.coordinates[0][1], geom.coordinates[0][0], R_CX, R_CY, ppd);
                                 rCtx.font = "10px monospace";
-                                rCtx.fillStyle = props.color || 'rgba(16, 185, 129, 0.8)';
+                                rCtx.fillStyle = catColour || props.color || 'rgba(16, 185, 129, 0.8)';
                                 rCtx.fillText(props.name, pt0.x + 5, pt0.y - 5);
                             }
                         }
 
                         if (geom.type === 'Point') {
                             const pt = getCanvasPoint(geom.coordinates[1], geom.coordinates[0], R_CX, R_CY, ppd);
-                            // Fail-safe: ensure we always have an iconType to prevent silent failures.
-                            const iconType = (props.icon || props.type || 'FIX').toUpperCase();
+                            // Map new categories to icon type for rendering
+                            const iconType = catRaw;
                             const wpId = 'WPT_' + (props.name || idx);
                             
                             entityCache[wpId] = { lat: geom.coordinates[1], lon: geom.coordinates[0], alt: 'GROUND', _latency: null, _isWaypoint: true, _lastPosSeenMs: renderTime };
@@ -1199,21 +1227,34 @@
                             const isSelected = (wpId === hoveredEntity || wpId === lockedEntity || wpId === secondaryEntity);
                             const isDimmed = ((lockedEntity || secondaryEntity) && !isSelected);
                             
-                            let color = isSelected ? '#38bdf8' : (props.color || 'rgba(226, 232, 240, 0.7)');
+                            // Per-category colour overrides any inline props.color
+                            let color = isSelected ? '#38bdf8' : catColour;
                             
                             rCtx.globalAlpha = isDimmed ? 0.3 : 1.0;
                             rCtx.strokeStyle = color; rCtx.fillStyle = color; rCtx.lineWidth = 1.5;
                             
                             if (isSelected && !isDimmed) { rCtx.shadowBlur = 8; rCtx.shadowColor = '#38bdf8'; }
                             
-                            if (iconType === 'RADAR') {
+                            // AUDIT and LANDMARK: airport symbol (circle + crosshairs)
+                            if (iconType === 'AUDIT' || iconType === 'LANDMARK' || iconType === 'AIRPORT') {
+                                rCtx.beginPath(); rCtx.arc(pt.x, pt.y, 5, 0, Math.PI*2); rCtx.stroke();
+                                rCtx.beginPath(); rCtx.moveTo(pt.x-8, pt.y); rCtx.lineTo(pt.x+8, pt.y); rCtx.stroke();
+                                rCtx.beginPath(); rCtx.moveTo(pt.x, pt.y-8); rCtx.lineTo(pt.x, pt.y+8); rCtx.stroke();
+                            } else if (iconType === 'VOR') {
+                                // VOR: hexagon with centre dot
+                                rCtx.beginPath();
+                                for (let i = 0; i < 6; i++) {
+                                    const hx = pt.x + 5 * Math.cos(i * Math.PI / 3);
+                                    const hy = pt.y + 5 * Math.sin(i * Math.PI / 3);
+                                    if (i === 0) rCtx.moveTo(hx, hy); else rCtx.lineTo(hx, hy);
+                                }
+                                rCtx.closePath(); rCtx.stroke();
+                                rCtx.beginPath(); rCtx.arc(pt.x, pt.y, 1, 0, Math.PI*2); rCtx.fill();
+                            } else if (iconType === 'RADAR') {
                                 rCtx.beginPath(); rCtx.arc(pt.x, pt.y, 6, 0, Math.PI*2); rCtx.fill();
-                                
-                                // Fallback sweep interval if the Python engine drops it.
                                 const sweepInt = props.sweep || 4.8;
                                 const now = Date.now();
                                 const beamAngle = ((now % (sweepInt * 1000)) / (sweepInt * 1000)) * Math.PI * 2;
-                                
                                 const beamLen = 200; 
                                 rCtx.beginPath();
                                 rCtx.moveTo(pt.x, pt.y);
@@ -1221,22 +1262,13 @@
                                 rCtx.strokeStyle = 'rgba(16, 185, 129, 0.8)';
                                 rCtx.lineWidth = 2;
                                 rCtx.stroke();
-                                
                                 rCtx.beginPath();
                                 rCtx.arc(pt.x, pt.y, beamLen, beamAngle - 0.2 - (Math.PI/2), beamAngle - (Math.PI/2));
                                 rCtx.lineTo(pt.x, pt.y);
                                 rCtx.fillStyle = 'rgba(16, 185, 129, 0.2)';
                                 rCtx.fill();
-                            } else if (iconType === 'AIRPORT') {
-                                rCtx.beginPath(); rCtx.arc(pt.x, pt.y, 5, 0, Math.PI*2); rCtx.stroke();
-                                rCtx.beginPath(); rCtx.moveTo(pt.x-8, pt.y); rCtx.lineTo(pt.x+8, pt.y); rCtx.stroke();
-                                rCtx.beginPath(); rCtx.moveTo(pt.x, pt.y-8); rCtx.lineTo(pt.x, pt.y+8); rCtx.stroke();
-                            } else if (iconType === 'VOR') {
-                                rCtx.beginPath();
-                                for (let i = 0; i < 6; i++) rCtx.lineTo(pt.x + 5 * Math.cos(i * Math.PI / 3), pt.y + 5 * Math.sin(i * Math.PI / 3));
-                                rCtx.closePath(); rCtx.stroke();
-                                rCtx.beginPath(); rCtx.arc(pt.x, pt.y, 1, 0, Math.PI*2); rCtx.fill();
                             } else {
+                                // WAYPOINT, MISC, FIX, and any unknown: triangle symbol
                                 rCtx.beginPath(); rCtx.moveTo(pt.x, pt.y - 5); rCtx.lineTo(pt.x + 5, pt.y + 3); rCtx.lineTo(pt.x - 5, pt.y + 3); rCtx.closePath(); rCtx.stroke();
                             }
 
@@ -1873,60 +1905,6 @@
             }
             saveMapTagConfig();
             rerenderTagConfig();
-        }
-
-        // --- Waypoint GPS + Import/Export (Phase 7) ---
-        function useGPSLocation() {
-            if (!navigator.geolocation) { alert('Geolocation not supported'); return; }
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    document.getElementById('wpt-lat').value = pos.coords.latitude.toFixed(6);
-                    document.getElementById('wpt-lon').value = pos.coords.longitude.toFixed(6);
-                },
-                (err) => { alert('GPS error: ' + err.message); },
-                { enableHighAccuracy: true, timeout: 10000 }
-            );
-        }
-
-        function exportWaypoints() {
-            const features = airspaceGeoJSON.features || [];
-            const blob = new Blob([JSON.stringify(features, null, 2)], { type: 'application/json' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = 'waypoints_export.json';
-            a.click();
-        }
-
-        function importWaypoints() {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.json';
-            input.onchange = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (evt) => {
-                    try {
-                        const features = JSON.parse(evt.target.result);
-                        const arr = Array.isArray(features) ? features : (features.features || []);
-                        arr.forEach(f => {
-                            if (f.type === 'Feature' && f.geometry && f.properties) {
-                                ws.send(JSON.stringify({
-                                    action: 'add_wpt',
-                                    waypoint: {
-                                        Waypoint_Name: f.properties.name || 'IMPORTED',
-                                        LAT: f.geometry.coordinates[1],
-                                        LONG: f.geometry.coordinates[0],
-                                        type: f.properties.icon || 'FIX'
-                                    }
-                                }));
-                            }
-                        });
-                    } catch (err) { alert('Import error: ' + err.message); }
-                };
-                reader.readAsText(file);
-            };
-            input.click();
         }
 
         // --- Hold-Alt Tool: Time-aligned measurement with confidence (Phase 6) ---
