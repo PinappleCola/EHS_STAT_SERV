@@ -680,8 +680,6 @@ FIELD_REGISTRY = [
     {"key": "microburst_level", "label": "MB LEVEL",       "type": "number", "unit": None,   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,5"},
     {"key": "icing_level",      "label": "ICING LEVEL",    "type": "number", "unit": None,   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,5"},
     {"key": "wake_vortex_level","label": "WV LEVEL",       "type": "number", "unit": None,   "category": "SAFETY",         "sortable": True,  "defaultVisible": False, "source": "BDS 4,5"},
-    # --- Surveillance ---
-    {"key": "radar_sweep",      "label": "RADAR SWEEP",    "type": "text",   "unit": "s",    "category": "SURVEILLANCE",   "sortable": False, "defaultVisible": True,  "source": "Δt(Burst) Calc"},
     # --- Position ---
     {"key": "gnss_qual",        "label": "GNSS QUAL",      "type": "text",   "unit": None,   "category": "POSITION",       "sortable": False, "defaultVisible": True,  "source": "DF17 TC:31"},
     {"key": "latlon",           "label": "LAT / LON",      "type": "virtual","unit": "deg",  "category": "POSITION",       "sortable": False, "defaultVisible": True,  "source": "Local CPR Math"},
@@ -1575,155 +1573,6 @@ def save_airspace():
     except Exception as e:
         print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}Error saving 'airspace.geojson': {e}{ANSI.RESET}")
 
-# ==========================================
-# --- Active Tracking SIGINT System ---
-# ==========================================
-class SIGINT_Triangulator:
-    def __init__(self):
-        self.paint_buffer = [] 
-        self.lock = threading.Lock()
-        self.active_radars = {} 
-        self.solving_sweeps = set()
-        
-        for f in AIRSPACE_GEOJSON.get("features", []):
-            if f.get("properties", {}).get("icon") in ("RADAR", "RADAR_POINT"):
-                sweep = f.get("properties", {}).get("sweep")
-                if sweep:
-                    sweep_key = round(sweep, 1)
-                    self.active_radars[sweep_key] = {
-                        "lat": f["geometry"]["coordinates"][1],
-                        "lon": f["geometry"]["coordinates"][0],
-                        "health": 100
-                    }
-
-    def log_paint(self, icao, lat, lon, time_hit, sweep_interval):
-        if not (3.5 < sweep_interval < 15.0): return
-        sweep_rounded = round(sweep_interval, 1)
-        
-        with self.lock:
-            self.paint_buffer.append({"icao": icao, "lat": lat, "lon": lon, "time": time_hit, "raw_sweep": sweep_interval})
-            if len(self.paint_buffer) > 1000: self.paint_buffer.pop(0)
-            
-            # Prevent thread explosion if solver is already running for this sweep
-            if sweep_rounded in self.solving_sweeps: return 
-
-            cluster = [p for p in self.paint_buffer if abs(p["raw_sweep"] - sweep_interval) <= 0.15]
-            
-            # Restored 12 point gate to reject immediate noise.
-            if len(cluster) >= 12:
-                self.solving_sweeps.add(sweep_rounded)
-                print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}[SIGINT MATH] Firing active tracker for {sweep_rounded}s sweep. ({len(cluster)} hits){ANSI.RESET}")
-                threading.Thread(target=self.solve_radar_origin, args=(cluster, sweep_rounded), daemon=True).start()
-                
-                # Strip used points to prevent immediate re-triggering
-                self.paint_buffer = [p for p in self.paint_buffer if p not in cluster]
-
-    def solve_radar_origin(self, points, sweep_interval):
-        avg_lat = sum(p["lat"] for p in points) / len(points)
-        avg_lon = sum(p["lon"] for p in points) / len(points)
-        
-        # If tracking an active radar, center the coarse search on the known coordinates.
-        with self.lock:
-            if sweep_interval in self.active_radars:
-                avg_lat = self.active_radars[sweep_interval]["lat"]
-                avg_lon = self.active_radars[sweep_interval]["lon"]
-        
-        best_point = (avg_lat, avg_lon)
-        min_variance = float('inf')
-        
-        step = 0.1
-        for dLat in [x * step for x in range(-10, 11)]:
-            for dLon in [x * step for x in range(-10, 11)]:
-                test_lat = avg_lat + dLat
-                test_lon = avg_lon + dLon
-                var = self.calculate_variance(test_lat, test_lon, points, sweep_interval)
-                if var < min_variance:
-                    min_variance = var
-                    best_point = (test_lat, test_lon)
-                    
-        fine_step = 0.01
-        fine_min_var = min_variance
-        fine_best = best_point
-        for dLat in [x * fine_step for x in range(-10, 11)]:
-            for dLon in [x * fine_step for x in range(-10, 11)]:
-                test_lat = best_point[0] + dLat
-                test_lon = best_point[1] + dLon
-                var = self.calculate_variance(test_lat, test_lon, points, sweep_interval)
-                if var < fine_min_var:
-                    fine_min_var = var
-                    fine_best = (test_lat, test_lon)
-
-        with self.lock:
-            if fine_min_var < 500:
-                if sweep_interval in self.active_radars:
-                    # Center of Mass refinement.
-                    old_lat = self.active_radars[sweep_interval]["lat"]
-                    old_lon = self.active_radars[sweep_interval]["lon"]
-                    new_lat = (old_lat * 0.7) + (fine_best[0] * 0.3)
-                    new_lon = (old_lon * 0.7) + (fine_best[1] * 0.3)
-                    
-                    self.active_radars[sweep_interval]["lat"] = new_lat
-                    self.active_radars[sweep_interval]["lon"] = new_lon
-                    self.active_radars[sweep_interval]["health"] = 100
-                    
-                    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.MAGENTA}[SIGINT TRACK] {sweep_interval}s Emitter Refined. Pulling coordinates to truer center.{ANSI.RESET}")
-                    self.update_geojson(sweep_interval, new_lat, new_lon)
-                else:
-                    # New Lock
-                    self.active_radars[sweep_interval] = {"lat": fine_best[0], "lon": fine_best[1], "health": 100}
-                    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.MAGENTA}[SIGINT LOCK] New Emitter Verified [{sweep_interval}s]. Lat: {round(fine_best[0],4)}, Lon: {round(fine_best[1],4)}{ANSI.RESET}")
-                    self.add_geojson(sweep_interval, fine_best[0], fine_best[1])
-            else:
-                # Confidence decay (ghost purge).
-                if sweep_interval in self.active_radars:
-                    self.active_radars[sweep_interval]["health"] -= 25
-                    health = self.active_radars[sweep_interval]["health"]
-                    print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.YELLOW}[SIGINT WARN] {sweep_interval}s Variance High. Emitter Health dropping: {health}%{ANSI.RESET}")
-                    
-                    if health <= 0:
-                        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[SIGINT PURGE] Ghost Emitter {sweep_interval}s completely eradicated from active matrix.{ANSI.RESET}")
-                        del self.active_radars[sweep_interval]
-                        self.remove_geojson(sweep_interval)
-
-            self.solving_sweeps.discard(sweep_interval)
-
-    def calculate_variance(self, r_lat, r_lon, points, sweep_interval):
-        errors = []
-        for p in points:
-            brg = math.degrees(math.atan2(p["lon"] - r_lon, p["lat"] - r_lat)) % 360
-            expected_brg = ((p["time"] % sweep_interval) / sweep_interval) * 360
-            diff = (brg - expected_brg) % 360
-            if diff > 180: diff = 360 - diff
-            errors.append(diff)
-        mean_err = sum(errors) / len(errors)
-        return sum((e - mean_err) ** 2 for e in errors) / len(errors)
-
-    def add_geojson(self, sweep, lat, lon):
-        feature = {
-            "type": "Feature",
-            "geometry": { "type": "Point", "coordinates": [round(lon,4), round(lat,4)] },
-            "properties": { "name": f"SSR {sweep}s", "icon": "RADAR_POINT", "sweep": sweep, "color": "rgba(16, 185, 129, 0.9)" }
-        }
-        AIRSPACE_GEOJSON["features"].append(feature)
-        save_airspace()
-
-    def update_geojson(self, sweep, lat, lon):
-        for f in AIRSPACE_GEOJSON["features"]:
-            if f.get("properties", {}).get("sweep") == sweep:
-                f["geometry"]["coordinates"] = [round(lon,4), round(lat,4)]
-                f["properties"]["icon"] = "RADAR_POINT"
-                break
-        save_airspace()
-
-    def remove_geojson(self, sweep):
-        AIRSPACE_GEOJSON["features"] = [
-            f for f in AIRSPACE_GEOJSON["features"] 
-            if f.get("properties", {}).get("sweep") != sweep
-        ]
-        save_airspace()
-
-sigint = SIGINT_Triangulator()
-
 # --- State Engines & Queues ---
 aircraft_state = {}
 historical_state = {} 
@@ -1737,7 +1586,7 @@ LOG_QUEUE_WARN_INTERVAL = 5.0
 TELEMETRY_EXCLUDED_FIELDS = {
     "sys_mode", "ias_mach", "track_info", "latlon", "meteo",
     "latest_sys_log", "latest_intent", "latest_db_log",
-    "last_seen", "last_msg_time", "current_burst_start", "ident_time",
+    "last_seen", "last_msg_time", "ident_time",
     "first_seen_time", "age", "first_seen", "display_heading", "display_heading_source",
     # BDS 4,8 VHF fields: kept live (WebSocket/state) and selectable, but not persisted to TELEMETRY.db
     # (no standardised Mode S register carries tuned VHF COM frequency; snapping logic can make noise look valid)
@@ -2245,7 +2094,7 @@ def update_aircraft(icao, key, value):
                 "target_alt": "----", "baro": "----", "squawk": "----", "tcas_ra": "CLEAN",
                 "air_ground": "----",
                 "ident_time": 0, "wind": "----", "sat": "----", "discretes": "HAND", "hazard": "----",       
-                "gnss_qual": "----", "radar_sweep": "----", "raw_sweep_interval": 1.5,
+                "gnss_qual": "----",
                 "capability_summary": "----", "supported_bds": [], "last_bds_hit": "----",
                 "lat": "----", "lon": "----",
                 # Extended integrity / accuracy (BDS 6,2 / TC29)
@@ -2282,7 +2131,7 @@ def update_aircraft(icao, key, value):
                 # System timing
                 "first_seen": datetime.datetime.now().strftime('%H:%M:%S'),
                 "latest_intent": {}, "latest_db_log": {}, "latest_sys_log": {}, "last_msg_time": 0, 
-                "current_burst_start": 0, "last_seen": now, "first_seen_time": now
+                "last_seen": now, "first_seen_time": now
             }
 
         previous_value = aircraft_state[icao].get(key)
@@ -2335,23 +2184,6 @@ def update_aircraft(icao, key, value):
         
         p = aircraft_state[icao]
         if key == "last_seen":
-            if p["last_msg_time"] > 0:
-                gap = now - p["last_msg_time"]
-                if gap > 1.5:
-                    if p["current_burst_start"] > 0:
-                        sweep_interval = now - p["current_burst_start"]
-                        if 3.0 <= sweep_interval <= 15.0:
-                            estimated_rpm = 60.0 / sweep_interval
-                            p["radar_sweep"] = f"{round(sweep_interval, 1)}s ({round(estimated_rpm, 1)} RPM)"
-                            p["raw_sweep_interval"] = sweep_interval
-                            
-                            # SIGINT injection.
-                            if p.get("lat") != "----" and p.get("lon") != "----":
-                                sigint.log_paint(icao, float(p["lat"]), float(p["lon"]), now, sweep_interval)
-                                
-                    p["current_burst_start"] = now
-            else:
-                p["current_burst_start"] = now
             p["last_msg_time"] = now
 
 
@@ -2945,8 +2777,7 @@ async def broadcast_state(websocket):
                         else:
                             plane["age"] = int(age)
                             
-                        raw_sweep = data.get("raw_sweep_interval", 1.5)
-                        coast_threshold = max(5.0, min(raw_sweep + 2.5, 15.0))
+                        coast_threshold = 5.0
                         plane["is_coasting"] = age > coast_threshold
                         plane["is_identing"] = (now - data["ident_time"]) < 18
                         

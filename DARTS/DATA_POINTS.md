@@ -105,7 +105,6 @@ All fields are stored in the `aircraft_state` dictionary, emitted over WebSocket
 | BDS 6,2 / TC29 | `sil` | Surveillance integrity level | — | 2 bits | `3` | `SIL:3` | `SIL:3` |
 | BDS 6,2 / TC29 | `nic_baro` | NIC barometric flag | — | 1 bit | `1` | `BARO✓` | `BARO✓` |
 | **SURVEILLANCE** | | | | | | | |
-| Δt(Burst) Calc | `radar_sweep` | Estimated SSR sweep interval | s | derived | `4.1s (14.6 RPM)` | `4.1s (14.6 RPM)` | `4.1s (14.6 RPM)s` |
 | Sys Counter | `msg_count` | Total messages received | — | counter | `847` | `847` | `847` |
 | Sys Clock | `data_age_heading` | Age of last heading update | s | virtual | `1.2` | `1.2` | `1.2s` |
 | Sys Clock | `data_age_position` | Age of last position update | s | virtual | `0.8` | `0.8` | `0.8s` |

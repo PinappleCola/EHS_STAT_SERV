@@ -148,10 +148,8 @@ Displayed alongside separation measurements with exact Δt value.
 
 ## Residual Risks
 
-1. **GeoJSON race condition**: `AIRSPACE_GEOJSON` still has no dedicated lock for concurrent writes from SIGINT solver and WebSocket receiver. Low probability of corruption but theoretically possible under high SIGINT activity.
+1. **Shallow copy in broadcast**: Nested dicts (`latest_sys_log`, `latest_intent`) use `.copy()` which is shallow. Safe only because nested objects are replaced atomically, never mutated in-place.
 
-2. **Shallow copy in broadcast**: Nested dicts (`latest_sys_log`, `latest_intent`) use `.copy()` which is shallow. Safe only because nested objects are replaced atomically, never mutated in-place.
+2. **Heading arbitration edge case**: During rapid heading source switching (e.g., aircraft transitioning from radar-only to ADS-B), there may be a single 1s frame where hysteresis holds an incorrect value. This is by design (stability over immediate accuracy).
 
-3. **Heading arbitration edge case**: During rapid heading source switching (e.g., aircraft transitioning from radar-only to ADS-B), there may be a single 1s frame where hysteresis holds an incorrect value. This is by design (stability over immediate accuracy).
-
-4. **No position extrapolation**: Aircraft positions are displayed only at last-received coordinates. During data gaps, aircraft appear stationary rather than continuing on predicted path. This is intentional for a surveillance display but may confuse operators unfamiliar with the system.
+3. **No position extrapolation**: Aircraft positions are displayed only at last-received coordinates. During data gaps, aircraft appear stationary rather than continuing on predicted path. This is intentional for a surveillance display but may confuse operators unfamiliar with the system.
