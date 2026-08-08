@@ -2823,6 +2823,16 @@ async def broadcast_state(websocket):
                         AIRSPACE_GEOJSON["features"].append(feature)
                         save_airspace()
                         
+                elif data.get("action") == "mask_feature":
+                    idx = data.get("index")
+                    masked = bool(data.get("masked", True))
+                    if idx is not None and 0 <= idx < len(AIRSPACE_GEOJSON["features"]):
+                        AIRSPACE_GEOJSON["features"][idx].setdefault("properties", {})["masked"] = masked
+                        save_airspace()
+
+                elif data.get("action") == "reload_airspace":
+                    load_airspace()
+
                 elif data.get("action") == "delete_feature":
                     idx = data.get("index")
                     if idx is not None and 0 <= idx < len(AIRSPACE_GEOJSON["features"]):
