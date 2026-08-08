@@ -2184,8 +2184,6 @@ def update_aircraft(icao, key, value):
         
         p = aircraft_state[icao]
         if key == "last_seen":
-            if p["last_msg_time"] > 0:
-                pass
             p["last_msg_time"] = now
 
 
