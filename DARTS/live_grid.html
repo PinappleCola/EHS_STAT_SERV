@@ -329,8 +329,6 @@
         { key:'qsp_meteo_change', label:'QSP METEO',      category:'SYSTEM',         source:'BDS 5,F',         sortable:true,  defaultVisible:false             },
         { key:'qsp_fms_alt_change',label:'QSP FMS ALT',   category:'SYSTEM',         source:'BDS 5,F',         sortable:true,  defaultVisible:false             },
         { key:'qsp_baro_change',  label:'QSP BARO',       category:'SYSTEM',         source:'BDS 5,F',         sortable:true,  defaultVisible:false             },
-        // --- Surveillance ---
-        { key:'radar_sweep',      label:'RADAR SWEEP',    category:'SURVEILLANCE',   source:'Δt(Burst) Calc',  sortable:false, defaultVisible:true,  unit:'s'     },
         // --- Position ---
         { key:'gnss_qual',        label:'GNSS QUAL',      category:'POSITION',       source:'DF17 TC:31',      sortable:false, defaultVisible:true              },
         { key:'latlon',           label:'LAT / LON',      category:'POSITION',       source:'Local CPR Math',  sortable:false, defaultVisible:true              },
@@ -397,7 +395,7 @@
         vhf1_freq_mhz: 88, vhf2_freq_mhz: 88, vhf3_freq_mhz: 88, vhf1_audio: 104, vhf2_audio: 104, vhf3_audio: 104, vhf_guard_audio: 108,
         air_vector_heading: 92, air_vector_ias: 86, air_vector_mach: 92, air_vector_tas: 86, air_vector_vr: 96,
         qsp_mcp_alt_change: 112, qsp_next_wp_change: 112, qsp_fms_vmode_change: 124, qsp_vhf_change: 92, qsp_meteo_change: 102, qsp_fms_alt_change: 102, qsp_baro_change: 96,
-        radar_sweep: 106, gnss_qual: 106,
+        gnss_qual: 106,
         latlon: 164, lat: 90, lon: 94,
         meteo: 148, wind: 92, sat: 72, humidity: 72, meteo_source: 92,
         selected_heading: 88, selected_alt_source: 108, autopilot_mode: 94, vnav_mode: 88, alt_hold_mode: 88, approach_mode: 88, lnav_mode: 88, tcas_operational: 88, nac_p: 72, sil: 56, nic_baro: 76,
@@ -640,8 +638,6 @@
             }
             case 'hazard':
                 return { html: (plane.hazard && plane.hazard !== '----') ? `<span style="color:#ef4444;font-weight:bold;animation:text-flash 0.5s infinite alternate;">${plane.hazard}</span>` : EM };
-            case 'radar_sweep':
-                return { html: (plane.radar_sweep && plane.radar_sweep !== '----') ? plane.radar_sweep : EM, cls: 'radar-cell' };
             case 'gnss_qual':
                 return { html: (plane.gnss_qual && plane.gnss_qual !== '----') ? plane.gnss_qual : EM, cls: 'gnss-cell' };
             case 'latlon': {
@@ -996,10 +992,8 @@
     //      which diffs and repaints only changed cells to avoid layout thrash.
     //
     // STALENESS / "GREY" BEHAVIOUR:
-    //   - Each aircraft track has a "coast threshold":
-    //       coast_threshold = max(5.0 s, min(raw_sweep_interval + 2.5 s, 15.0 s))
-    //     where raw_sweep_interval is the measured SSR radar sweep period.
-    //     Default (unknown sweep): coast_threshold = 5.0 s.
+    //   - Each aircraft track has a "coast threshold" of 5.0 s.
+    //     Default coast_threshold = 5.0 s.
     //   - When age > coast_threshold, is_coasting = true → the row gets
     //     the .row-coasting class (opacity: 0.35, CSS transition 2.5 s).
     //   - Individual fields do NOT have per-field staleness: each field retains
