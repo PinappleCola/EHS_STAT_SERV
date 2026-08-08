@@ -785,24 +785,25 @@
         };
         const ELEM_COLOUR_KEY = 'darts_elem_colours';
 
+        // In-memory colour cache — avoids repeated JSON.parse on every render frame
+        let elemColourCache = {};
         function loadElemColours() {
             try { return JSON.parse(localStorage.getItem(ELEM_COLOUR_KEY)) || {}; } catch(e) { return {}; }
         }
-        function saveElemColours(map) { localStorage.setItem(ELEM_COLOUR_KEY, JSON.stringify(map)); }
+        function saveElemColours(map) { localStorage.setItem(ELEM_COLOUR_KEY, JSON.stringify(map)); elemColourCache = { ...map }; }
         function getElemColour(cat) {
-            const stored = loadElemColours();
-            return stored[cat] || ELEM_COLOUR_DEFAULTS[cat] || '#e2e8f0';
+            return elemColourCache[cat] || ELEM_COLOUR_DEFAULTS[cat] || '#e2e8f0';
         }
         function initColourPickers() {
             const stored = loadElemColours();
+            elemColourCache = { ...stored };
             ELEM_CATEGORIES.forEach(cat => {
                 const el = document.getElementById('clr-' + cat);
                 if (!el) return;
                 el.value = stored[cat] || ELEM_COLOUR_DEFAULTS[cat] || '#e2e8f0';
                 el.addEventListener('input', () => {
-                    const map = loadElemColours();
-                    map[cat] = el.value;
-                    saveElemColours(map);
+                    elemColourCache[cat] = el.value;
+                    saveElemColours(elemColourCache);
                 });
             });
         }
@@ -1242,7 +1243,11 @@
                             } else if (iconType === 'VOR') {
                                 // VOR: hexagon with centre dot
                                 rCtx.beginPath();
-                                for (let i = 0; i < 6; i++) rCtx.lineTo(pt.x + 5 * Math.cos(i * Math.PI / 3), pt.y + 5 * Math.sin(i * Math.PI / 3));
+                                for (let i = 0; i < 6; i++) {
+                                    const hx = pt.x + 5 * Math.cos(i * Math.PI / 3);
+                                    const hy = pt.y + 5 * Math.sin(i * Math.PI / 3);
+                                    if (i === 0) rCtx.moveTo(hx, hy); else rCtx.lineTo(hx, hy);
+                                }
                                 rCtx.closePath(); rCtx.stroke();
                                 rCtx.beginPath(); rCtx.arc(pt.x, pt.y, 1, 0, Math.PI*2); rCtx.fill();
                             } else if (iconType === 'RADAR') {
