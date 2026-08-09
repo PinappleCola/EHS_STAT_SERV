@@ -1811,7 +1811,7 @@
 
                     const drawBearingGuide = (originX, originY, targetX, targetY, relativeBrg, entityHdgDeg) => {
                         // Draw reference line in the direction the aircraft is pointing
-                        const hdgRad = (entityHdgDeg - 90) * Math.PI / 180; // -90 because canvas Y is down
+                        const hdgRad = (entityHdgDeg - 90) * Math.PI / 180; // -90 converts geographic heading (north=0) to canvas angle (east=0)
                         const refLen = 18;
                         const refEndX = originX + Math.cos(hdgRad) * refLen;
                         const refEndY = originY + Math.sin(hdgRad) * refLen;
