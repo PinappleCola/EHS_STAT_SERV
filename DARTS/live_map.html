@@ -1406,7 +1406,7 @@
                             const lblCall = (p.callsign && p.callsign !== '----') ? p.callsign : '----';
                             const lblSqk = (p.squawk && p.squawk !== '----') ? p.squawk : '----';
                             const lblAlt = (p.alt !== '----' && p.alt !== undefined) ? (typeof p.alt === 'number' ? `${p.alt.toLocaleString()} ft ${vRateSym}` : `${p.alt} ${vRateSym}`) : `---- ${vRateSym}`;
-                            const strHdg = (p.display_heading && p.display_heading !== '----') ? Math.round(p.display_heading) + '°' : ((p.heading && p.heading !== '----') ? Math.round(p.heading) + '°' : '----');
+                            const strHdg = (p.display_heading && p.display_heading !== '----') ? Math.round(p.display_heading) + '°' : ((p.track && p.track !== '----') ? Math.round(p.track) + '°' : '----');
                             const strSpd = (p.speed && p.speed !== '----') ? p.speed + ' kt' : '----';
                             
                             const tagFieldRenderers = {
