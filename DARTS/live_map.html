@@ -1793,11 +1793,31 @@
                     rCtx.beginPath(); rCtx.arc(endX, endY, 4, 0, Math.PI*2);
                     rCtx.fillStyle = measureColor; rCtx.fill();
 
-                    const drawBearingGuide = (originX, originY, targetX, targetY, bearingDeg) => {
-                        const northLen = 18;
+                    // Get aircraft heading (direction) — static objects treated as pointing north (0°)
+                    const getEntityHeading = (entity) => {
+                        if (!entity) return 0;
+                        if (entity._isWaypoint || entity._isLineEndpoint) return 0;
+                        const p = entity;
+                        if (p.display_heading && p.display_heading !== '----') return parseFloat(p.display_heading);
+                        if (p.track && p.track !== '----') return parseFloat(p.track);
+                        return 0;
+                    };
+                    const startHdg = getEntityHeading(startEntity);
+                    const endHdg = getEntityHeading(endEntity);
+
+                    // Relative bearings: bearing to target minus own heading
+                    const relBrgStart = ((brg - startHdg) + 360) % 360;
+                    const relBrgEnd = ((revBrg - endHdg) + 360) % 360;
+
+                    const drawBearingGuide = (originX, originY, targetX, targetY, relativeBrg, entityHdgDeg) => {
+                        // Draw reference line in the direction the aircraft is pointing
+                        const hdgRad = (entityHdgDeg - 90) * Math.PI / 180; // -90 because canvas Y is down
+                        const refLen = 18;
+                        const refEndX = originX + Math.cos(hdgRad) * refLen;
+                        const refEndY = originY + Math.sin(hdgRad) * refLen;
                         rCtx.beginPath();
                         rCtx.moveTo(originX, originY);
-                        rCtx.lineTo(originX, originY - northLen);
+                        rCtx.lineTo(refEndX, refEndY);
                         rCtx.strokeStyle = measureColor;
                         rCtx.lineWidth = 1;
                         rCtx.stroke();
@@ -1813,14 +1833,12 @@
                         rCtx.lineTo(rayX, rayY);
                         rCtx.stroke();
 
-                        // Position label outward, centred between north line and ray
-                        const northAngle = -Math.PI / 2;
+                        // Position label outward, centred between heading ref line and ray
+                        const refAngle = hdgRad;
                         const rayAngle = Math.atan2(vecDy, vecDx);
-                        // Compute bisector of the smaller arc between north and ray
-                        let diff = rayAngle - northAngle;
-                        // Normalize diff to (-PI, PI]
+                        let diff = rayAngle - refAngle;
                         diff = diff - 2 * Math.PI * Math.floor((diff + Math.PI) / (2 * Math.PI));
-                        const midAngle = northAngle + diff / 2;
+                        const midAngle = refAngle + diff / 2;
                         const labelDist = 28;
                         const labelX = originX + Math.cos(midAngle) * labelDist;
                         const labelY = originY + Math.sin(midAngle) * labelDist;
@@ -1829,18 +1847,21 @@
                         rCtx.font = "bold 13px 'B612 Mono', monospace";
                         rCtx.textAlign = 'center';
                         rCtx.textBaseline = 'middle';
-                        rCtx.fillText(`${Math.round(bearingDeg)}°`, labelX, labelY);
+                        rCtx.fillText(`${Math.round(relativeBrg)}°`, labelX, labelY);
                         rCtx.textAlign = 'left';
                         rCtx.textBaseline = 'alphabetic';
                     };
 
-                    drawBearingGuide(startPt.x, startPt.y, endX, endY, brg);
-                    drawBearingGuide(endX, endY, startPt.x, startPt.y, revBrg);
+                    drawBearingGuide(startPt.x, startPt.y, endX, endY, relBrgStart, startHdg);
+                    drawBearingGuide(endX, endY, startPt.x, startPt.y, relBrgEnd, endHdg);
 
                     // Centered info box
                     const midX = (startPt.x + endX) / 2;
                     const midY = (startPt.y + endY) / 2;
-                    const boxW = 210, boxH = 70;
+                    const distKm = distNm * 1.852;
+                    const altKm = deltaAlt !== null ? (deltaAlt * 0.0003048) : null;
+                    const lineKm = deltaLine * 0.0003048;
+                    const boxW = 260, boxH = 70;
                     let bx = midX - (boxW / 2), by = midY - (boxH / 2);
                     bx = Math.max(8, Math.min(rCanvas.width - boxW - 8, bx));
                     by = Math.max(8, Math.min(rCanvas.height - boxH - 8, by));
@@ -1848,13 +1869,29 @@
                     rCtx.fillRect(bx, by, boxW, boxH);
                     rCtx.strokeStyle = measureColor;
                     rCtx.strokeRect(bx, by, boxW, boxH);
-                    rCtx.fillStyle = measureColor;
                     rCtx.font = "bold 11px 'B612 Mono', monospace";
-                    rCtx.fillText(`Delta Dist: ${distNm.toFixed(2)} NM`, bx + 6, by + 15);
-                    rCtx.fillText(`Delta Alt: ${deltaAlt !== null ? `${deltaAlt.toLocaleString()} FT` : '----'}`, bx + 6, by + 29);
-                    rCtx.fillText(`Delta Line: ${deltaLine.toLocaleString(undefined, {maximumFractionDigits:0})} FT`, bx + 6, by + 43);
+                    // Δdist
+                    rCtx.fillStyle = measureColor;
+                    rCtx.fillText(`\u0394dist: ${distNm.toFixed(2)} NM`, bx + 6, by + 15);
+                    rCtx.fillStyle = '#facc15';
+                    rCtx.fillText(`(${distKm.toFixed(3)} KM)`, bx + 6 + rCtx.measureText(`\u0394dist: ${distNm.toFixed(2)} NM `).width, by + 15);
+                    // Δalt
+                    rCtx.fillStyle = measureColor;
+                    const altStr = deltaAlt !== null ? `${deltaAlt.toLocaleString()} FT` : '----';
+                    rCtx.fillText(`\u0394alt:  ${altStr}`, bx + 6, by + 29);
+                    if (altKm !== null) {
+                        rCtx.fillStyle = '#facc15';
+                        rCtx.fillText(`(${altKm.toFixed(3)} KM)`, bx + 6 + rCtx.measureText(`\u0394alt:  ${altStr} `).width, by + 29);
+                    }
+                    // Δline
+                    rCtx.fillStyle = measureColor;
+                    const lineStr = `${deltaLine.toLocaleString(undefined, {maximumFractionDigits:0})} FT`;
+                    rCtx.fillText(`\u0394line: ${lineStr}`, bx + 6, by + 43);
+                    rCtx.fillStyle = '#facc15';
+                    rCtx.fillText(`(${lineKm.toFixed(3)} KM)`, bx + 6 + rCtx.measureText(`\u0394line: ${lineStr} `).width, by + 43);
+                    // Health
                     rCtx.fillStyle = health.color;
-                    rCtx.fillText(`Heath: ${health.label}`, bx + 6, by + 57);
+                    rCtx.fillText(`Health: ${health.label}`, bx + 6, by + 57);
                 }
 
             } catch (radarError) { console.warn("Radar Render Suppressed:", radarError); }
