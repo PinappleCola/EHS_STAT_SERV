@@ -759,11 +759,21 @@
             return km < 1 ? `${(km * 1000).toFixed(0)} m` : `${km.toFixed(2)} km`;
         }
 
-        window.toggleMeasure = function() {
-            measureActive = !measureActive;
+        function cancelMeasure() {
+            measureActive = false;
             measureStart = null;
             measureEnd = null;
-            document.getElementById('btn-measure').classList.toggle('selected', measureActive);
+            // Purge stale line-endpoint snap entries from the entity cache
+            Object.keys(entityCache).forEach(k => { if (k.startsWith('LSE_')) delete entityCache[k]; });
+            document.getElementById('btn-measure').classList.remove('selected');
+        }
+
+        window.toggleMeasure = function() {
+            if (measureActive) { cancelMeasure(); return; }
+            measureActive = true;
+            measureStart = null;
+            measureEnd = null;
+            document.getElementById('btn-measure').classList.add('selected');
         };
 
         // Database Manager Logic
@@ -1857,7 +1867,7 @@
             if (e.key === 'Escape') {
                 if (measureActive) {
                     if (measureEnd) { measureEnd = null; }
-                    else { measureStart = null; }
+                    else { cancelMeasure(); }
                 }
             }
             if (e.key === 'T' && e.shiftKey && e.ctrlKey) {
