@@ -191,6 +191,7 @@
             <button id="btn-elem-toggle" class="btn-action btn-toggle" title="Show/hide all elements from JSON">ELEMENT TOGGLE</button>
             <button id="btn-elem-refresh" class="btn-action btn-action-alt" title="Force re-import of airspace.geojson">ELEMENT REFRESH</button>
             <button id="btn-lock" class="btn-action">SNAP CURRENT LOC</button>
+            <button id="btn-measure" class="btn-action btn-toggle" onclick="toggleMeasure()" title="Click to start measuring. ESC to cancel.">MEASURE</button>
             <button id="btn-clean-snap" class="btn-action">CLEAN SCREENSHOT</button>
             <button onclick="openTagConfig()" class="btn-action" title="Ctrl+Shift+T">DATA TAGS</button>
             <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Ctrl+Shift+P">PERF</button>
@@ -316,8 +317,14 @@
         let lockedEntity = null; 
         let secondaryEntity = null; 
         
-        let isShiftDown = false; 
+        let isShiftDown = false; // kept for compatibility
         let mouseX = 0, mouseY = 0;
+        let mouseLat = 0, mouseLon = 0;
+
+        // Measure tool state
+        let measureActive = false;
+        let measureStart = null;  // { lat, lon }
+        let measureEnd = null;    // { lat, lon } when locked
         let dragStartPos = { x: 0, y: 0 };
         
         let lastAircraftList = []; 
@@ -746,6 +753,29 @@
         window.addEventListener('keydown', e => { if (e.key === 'Shift') isShiftDown = true; });
         window.addEventListener('keyup', e => { if (e.key === 'Shift') isShiftDown = false; });
 
+        // Measure Tool
+        function nmToDisplay(nm) {
+            const km = nm * 1.852;
+            return km < 1 ? `${(km * 1000).toFixed(0)} m` : `${km.toFixed(2)} km`;
+        }
+
+        function cancelMeasure() {
+            measureActive = false;
+            measureStart = null;
+            measureEnd = null;
+            // Purge stale line-endpoint snap entries from the entity cache
+            Object.keys(entityCache).forEach(k => { if (k.startsWith('LSE_')) delete entityCache[k]; });
+            document.getElementById('btn-measure').classList.remove('selected');
+        }
+
+        window.toggleMeasure = function() {
+            if (measureActive) { cancelMeasure(); return; }
+            measureActive = true;
+            measureStart = null;
+            measureEnd = null;
+            document.getElementById('btn-measure').classList.add('selected');
+        };
+
         // Database Manager Logic
         let sortCol = -1; let sortAsc = true;
         const dbModal = document.getElementById('db-modal');
@@ -971,6 +1001,21 @@
             isDragging = false;
             const dist = Math.hypot(e.clientX - dragStartPos.x, e.clientY - dragStartPos.y);
             if (dist < 5) {
+                if (measureActive) {
+                    // Snap to hovered entity/line-endpoint if available, else use geo coords under cursor
+                    let clickLat = mouseLat, clickLon = mouseLon;
+                    if (hoveredEntity && entityCache[hoveredEntity]) {
+                        clickLat = entityCache[hoveredEntity].lat;
+                        clickLon = entityCache[hoveredEntity].lon;
+                    }
+                    if (!measureStart) {
+                        measureStart = { lat: clickLat, lon: clickLon };
+                        measureEnd = null;
+                    } else {
+                        measureEnd = { lat: clickLat, lon: clickLon };
+                    }
+                    return;
+                }
                 if (hoveredEntity) {
                     if (e.ctrlKey || e.metaKey) {
                         if (lockedEntity && lockedEntity !== hoveredEntity) secondaryEntity = hoveredEntity;
@@ -1212,6 +1257,24 @@
                                 rCtx.font = "10px monospace";
                                 rCtx.fillStyle = catColour || props.color || 'rgba(16, 185, 129, 0.8)';
                                 rCtx.fillText(props.name, pt0.x + 5, pt0.y - 5);
+                            }
+
+                            // Register start and end endpoints as measure snap targets
+                            if (measureActive && geom.coordinates.length >= 2) {
+                                const sc = geom.coordinates[0];
+                                const ec = geom.coordinates[geom.coordinates.length - 1];
+                                const sPt = getCanvasPoint(sc[1], sc[0], R_CX, R_CY, ppd);
+                                const ePt = getCanvasPoint(ec[1], ec[0], R_CX, R_CY, ppd);
+                                const lsBase = 'LSE_' + (props.name || idx);
+                                entityCache[lsBase + '_S'] = { lat: sc[1], lon: sc[0], alt: 'GROUND', _latency: null, _isLineEndpoint: true, _lastPosSeenMs: renderTime };
+                                entityCache[lsBase + '_E'] = { lat: ec[1], lon: ec[0], alt: 'GROUND', _latency: null, _isLineEndpoint: true, _lastPosSeenMs: renderTime };
+                                renderHitboxes.push({ id: lsBase + '_S', x: sPt.x, y: sPt.y });
+                                renderHitboxes.push({ id: lsBase + '_E', x: ePt.x, y: ePt.y });
+                                // Draw small endpoint markers
+                                rCtx.strokeStyle = catColour || '#e2e8f0';
+                                rCtx.lineWidth = 1;
+                                rCtx.beginPath(); rCtx.arc(sPt.x, sPt.y, 3, 0, Math.PI*2); rCtx.stroke();
+                                rCtx.beginPath(); rCtx.arc(ePt.x, ePt.y, 3, 0, Math.PI*2); rCtx.stroke();
                             }
                         }
 
@@ -1648,34 +1711,73 @@
                     }
                 }
 
-                if (isShiftDown && (!lockedEntity || !secondaryEntity)) {
-                    let startLat = REF_LAT, startLon = REF_LON;
-                    let startPt = getCanvasPoint(startLat, startLon, R_CX, R_CY, ppd);
-                    
-                    if (lockedEntity && entityCache[lockedEntity]) {
-                        startLat = entityCache[lockedEntity].lat; startLon = entityCache[lockedEntity].lon; 
-                        startPt = getCanvasPoint(startLat, startLon, R_CX, R_CY, ppd);
+                // Update geo-coords under cursor (used by measure click handler)
+                if (networkMode === 'ONLINE' && leafMap) {
+                    const ll = leafMap.containerPointToLatLng([mouseX, mouseY]);
+                    mouseLat = ll.lat; mouseLon = ll.lng;
+                } else {
+                    mouseLon = REF_LON + ((mouseX - R_CX) / (COS_LAT * ppd));
+                    mouseLat = REF_LAT - ((mouseY - R_CY) / ppd);
+                }
+
+                // Measure Tool rendering
+                if (measureActive && measureStart) {
+                    let endLat = mouseLat, endLon = mouseLon;
+                    let endX = mouseX, endY = mouseY;
+                    let locked = false;
+
+                    if (measureEnd) {
+                        endLat = measureEnd.lat; endLon = measureEnd.lon;
+                        const endPt = getCanvasPoint(endLat, endLon, R_CX, R_CY, ppd);
+                        endX = endPt.x; endY = endPt.y;
+                        locked = true;
+                    } else if (hoveredEntity && entityCache[hoveredEntity]) {
+                        // Snap preview to hovered entity
+                        endLat = entityCache[hoveredEntity].lat;
+                        endLon = entityCache[hoveredEntity].lon;
+                        const snapPt = getCanvasPoint(endLat, endLon, R_CX, R_CY, ppd);
+                        endX = snapPt.x; endY = snapPt.y;
                     }
-                    
-                    let targetLon = REF_LON + ((mouseX - R_CX) / (COS_LAT * ppd));
-                    let targetLat = REF_LAT - ((mouseY - R_CY) / ppd);
-                    if (networkMode === 'ONLINE' && leafMap) {
-                        const ll = leafMap.containerPointToLatLng([mouseX, mouseY]);
-                        targetLat = ll.lat; targetLon = ll.lng;
+
+                    const startPt = getCanvasPoint(measureStart.lat, measureStart.lon, R_CX, R_CY, ppd);
+
+                    const dLat = endLat - measureStart.lat;
+                    const dLon = (endLon - measureStart.lon) * COS_LAT;
+                    const distNm = Math.sqrt(dLat*dLat + dLon*dLon) * 60;
+                    const brg = ((Math.atan2(dLon, dLat) * 180 / Math.PI) + 360) % 360;
+                    const distStr = nmToDisplay(distNm);
+
+                    // Draw line
+                    rCtx.beginPath(); rCtx.moveTo(startPt.x, startPt.y); rCtx.lineTo(endX, endY);
+                    rCtx.strokeStyle = locked ? '#f59e0b' : '#f43f5e';
+                    rCtx.lineWidth = locked ? 2 : 1.5;
+                    rCtx.setLineDash([4, 4]); rCtx.stroke(); rCtx.setLineDash([]);
+
+                    // Start-point marker
+                    rCtx.beginPath(); rCtx.arc(startPt.x, startPt.y, 4, 0, Math.PI*2);
+                    rCtx.fillStyle = locked ? '#f59e0b' : '#f43f5e'; rCtx.fill();
+
+                    // End-point marker (locked only)
+                    if (locked) {
+                        rCtx.beginPath(); rCtx.arc(endX, endY, 4, 0, Math.PI*2);
+                        rCtx.fillStyle = '#f59e0b'; rCtx.fill();
                     }
-                    
-                    let dLat = targetLat - startLat; let dLon = (targetLon - startLon) * COS_LAT;
-                    let distNm = Math.sqrt(dLat*dLat + dLon*dLon) * 60;
-                    let brg = (Math.atan2(dLon, dLat) * 180 / Math.PI);
-                    if (brg < 0) brg += 360;
-                    
-                    rCtx.beginPath(); rCtx.moveTo(startPt.x, startPt.y); rCtx.lineTo(mouseX, mouseY);
-                    rCtx.strokeStyle = '#f43f5e'; rCtx.lineWidth = 1.5; rCtx.setLineDash([4, 4]); rCtx.stroke(); rCtx.setLineDash([]);
-                    
-                    rCtx.fillStyle = 'rgba(15, 23, 42, 0.9)'; rCtx.fillRect(mouseX + 12, mouseY - 25, 115, 20);
-                    rCtx.strokeStyle = '#f43f5e'; rCtx.strokeRect(mouseX + 12, mouseY - 25, 115, 20);
-                    rCtx.fillStyle = '#f43f5e'; rCtx.font = "bold 11px monospace";
-                    rCtx.fillText(`${distNm.toFixed(1)} NM | ${Math.round(brg)}°`, mouseX + 16, mouseY - 11);
+
+                    // Info box near end/cursor
+                    const boxW = 140, boxH = locked ? 38 : 22;
+                    let bx = endX + 12, by = endY - 30;
+                    rCtx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+                    rCtx.fillRect(bx, by, boxW, boxH);
+                    rCtx.strokeStyle = locked ? '#f59e0b' : '#f43f5e';
+                    rCtx.strokeRect(bx, by, boxW, boxH);
+                    rCtx.fillStyle = locked ? '#f59e0b' : '#f43f5e';
+                    rCtx.font = "bold 11px 'B612 Mono', monospace";
+                    rCtx.fillText(`${distStr} | ${Math.round(brg)}°`, bx + 5, by + 14);
+                    if (locked) {
+                        rCtx.font = "9px 'B612 Mono', monospace";
+                        rCtx.fillStyle = '#94a3b8';
+                        rCtx.fillText(`${distNm.toFixed(2)} NM  [ESC] clear`, bx + 5, by + 28);
+                    }
                 }
 
             } catch (radarError) { console.warn("Radar Render Suppressed:", radarError); }
@@ -1762,6 +1864,12 @@
 
         // --- Tag Configurator UI (Phase 8) ---
         document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (measureActive) {
+                    if (measureEnd) { measureEnd = null; }
+                    else { cancelMeasure(); }
+                }
+            }
             if (e.key === 'T' && e.shiftKey && e.ctrlKey) {
                 openTagConfig();
             }
