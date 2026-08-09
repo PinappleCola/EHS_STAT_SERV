@@ -1724,6 +1724,18 @@
 
                 // Measure Tool rendering
                 if (measureActive && measureStart) {
+                    // Dynamically track aircraft positions
+                    if (measureStartEntityId && entityCache[measureStartEntityId]) {
+                        const se = entityCache[measureStartEntityId];
+                        measureStart.lat = se.lat;
+                        measureStart.lon = se.lon;
+                    }
+                    if (measureEndEntityId && entityCache[measureEndEntityId]) {
+                        const ee = entityCache[measureEndEntityId];
+                        measureEnd.lat = ee.lat;
+                        measureEnd.lon = ee.lon;
+                    }
+
                     let endLat = mouseLat, endLon = mouseLon;
                     let endX = mouseX, endY = mouseY;
                     let locked = false;
@@ -1801,9 +1813,25 @@
                         rCtx.lineTo(rayX, rayY);
                         rCtx.stroke();
 
+                        // Position label outward, centred between north line and ray
+                        const northAngle = -Math.PI / 2;
+                        const rayAngle = Math.atan2(vecDy, vecDx);
+                        // Compute bisector of the smaller arc between north and ray
+                        let diff = rayAngle - northAngle;
+                        // Normalize diff to (-PI, PI]
+                        diff = diff - 2 * Math.PI * Math.floor((diff + Math.PI) / (2 * Math.PI));
+                        const midAngle = northAngle + diff / 2;
+                        const labelDist = 28;
+                        const labelX = originX + Math.cos(midAngle) * labelDist;
+                        const labelY = originY + Math.sin(midAngle) * labelDist;
+
                         rCtx.fillStyle = measureColor;
-                        rCtx.font = "bold 10px 'B612 Mono', monospace";
-                        rCtx.fillText(`${Math.round(bearingDeg)}°`, rayX + 3, rayY - 3);
+                        rCtx.font = "bold 13px 'B612 Mono', monospace";
+                        rCtx.textAlign = 'center';
+                        rCtx.textBaseline = 'middle';
+                        rCtx.fillText(`${Math.round(bearingDeg)}°`, labelX, labelY);
+                        rCtx.textAlign = 'left';
+                        rCtx.textBaseline = 'alphabetic';
                     };
 
                     drawBearingGuide(startPt.x, startPt.y, endX, endY, brg);
