@@ -890,7 +890,7 @@
         const ptr = td.querySelector('.hdg-pointer');
         if (ptr) ptr.style.transform = `rotate(${state.hdg}deg)`;
         const txt = td.querySelector('.val-text');
-        if (txt) txt.innerHTML = hasHdg ? `${plane.heading}°` : EM;
+        if (txt) txt.innerHTML = hasHdg ? `${Math.round(state.hdg)}°` : EM;
     }
 
     function updateRollWidget(td, plane) {
