@@ -1211,6 +1211,8 @@
                             lat: parseFloat(p.lat),
                             lon: parseFloat(p.lon),
                             alt: p.alt,
+                            display_heading: p.display_heading,
+                            track: p.track,
                             _latency: p._latency || null,
                             _lastPosSeenMs: renderTime,
                             _isWaypoint: false
@@ -1219,6 +1221,8 @@
                         entityCache[p.icao] = {
                             ...entityCache[p.icao],
                             alt: p.alt,
+                            display_heading: p.display_heading !== undefined ? p.display_heading : entityCache[p.icao].display_heading,
+                            track: p.track !== undefined ? p.track : entityCache[p.icao].track,
                             _latency: p._latency || entityCache[p.icao]._latency || null,
                             // Keep _lastPosSeenMs unchanged to track actual position freshness.
                             _isWaypoint: false
