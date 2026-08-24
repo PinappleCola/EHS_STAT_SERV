@@ -1984,10 +1984,7 @@
                             currentOuterKeys.add(a.icao + '|' + a.point_name);
                         }
                     });
-                    let hasNewOuter = false;
-                    currentOuterKeys.forEach(k => {
-                        if (!_prevOuterAlertKeys.has(k)) hasNewOuter = true;
-                    });
+                    let hasNewOuter = [...currentOuterKeys].some(k => !_prevOuterAlertKeys.has(k));
                     if (hasNewOuter) {
                         _auditAlertAudio.currentTime = 0;
                         _auditAlertAudio.play().catch(() => {});
