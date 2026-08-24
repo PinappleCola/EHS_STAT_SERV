@@ -1975,7 +1975,23 @@
                 const parsedData = JSON.parse(event.data);
                 if (parsedData.airspace) airspaceGeoJSON = parsedData.airspace;
                 if (parsedData.audit_config) auditConfig = parsedData.audit_config;
-                if (parsedData.audit_alerts) { auditAlerts = parsedData.audit_alerts; updateAuditHud(); }
+                if (parsedData.audit_alerts) {
+                    auditAlerts = parsedData.audit_alerts;
+                    // Detect new outer circle crossings and play alert sound
+                    const currentOuterKeys = new Set();
+                    auditAlerts.forEach(a => {
+                        if (a.perimeter === 'OUTER') {
+                            currentOuterKeys.add(a.icao + '|' + a.point_name);
+                        }
+                    });
+                    let hasNewOuter = [...currentOuterKeys].some(k => !_prevOuterAlertKeys.has(k));
+                    if (hasNewOuter) {
+                        _auditAlertAudio.currentTime = 0;
+                        _auditAlertAudio.play().catch(() => {});
+                    }
+                    _prevOuterAlertKeys = currentOuterKeys;
+                    updateAuditHud();
+                }
                 
                 let aircraftList = Array.isArray(parsedData.airframes) ? parsedData.airframes : (Array.isArray(parsedData) ? parsedData : []);
                 lastAircraftList = aircraftList; 
@@ -2227,6 +2243,8 @@
         // =============================================
         let auditConfig = {};   // server-pushed config: { pointName: { outer_radius_nm, inner_radius_nm, colour_r, colour_g, colour_b } }
         let auditAlerts = [];   // server-pushed active alerts: [ { point_name, perimeter, icao, callsign } ]
+        let _prevOuterAlertKeys = new Set();  // track previous outer alert keys to detect new crossings
+        const _auditAlertAudio = new Audio('ALERT_01.wav');
 
         function toggleAuditModal() {
             const modal = document.getElementById('audit-modal');
