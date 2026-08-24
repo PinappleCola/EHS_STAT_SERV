@@ -1318,12 +1318,46 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             # Returns the default config structure; user preferences are stored client-side
             default_cols = [f["key"] for f in FIELD_REGISTRY if f["defaultVisible"]]
             self._send_json({"columns": default_cols, "sortKey": None, "sortDir": "asc"})
+        elif self.path == "/api/audit-config":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body.decode("utf-8"))
+            except Exception:
+                self._send_json({"error": "Invalid JSON"}, status=400)
+                return
+
+            point_name = data.get("point_name", "").strip()
+            if not point_name:
+                self._send_json({"error": "point_name is required"}, status=400)
+                return
+            outer_nm = float(data.get("outer_radius_nm", 5.0))
+            inner_nm = float(data.get("inner_radius_nm", 2.0))
+            colour_r = int(data.get("colour_r", 255))
+            colour_g = int(data.get("colour_g", 165))
+            colour_b = int(data.get("colour_b", 0))
+            # Clamp values
+            outer_nm = max(0.1, min(100.0, outer_nm))
+            inner_nm = max(0.05, min(outer_nm, inner_nm))
+            colour_r = max(0, min(255, colour_r))
+            colour_g = max(0, min(255, colour_g))
+            colour_b = max(0, min(255, colour_b))
+            save_audit_point_config(point_name, outer_nm, inner_nm, colour_r, colour_g, colour_b)
+            self._send_json({"ok": True, "point_name": point_name})
         elif self.path == "/api/rx-config":
             self._send_json({
                 "rx_mode": RX_MODE,
                 "receiver_a": RECEIVER_A_CONFIG,
                 "receiver_b": RECEIVER_B_CONFIG,
             })
+        elif self.path == "/api/audit-config":
+            with audit_config_lock:
+                cfg = dict(audit_config_cache)
+            self._send_json(cfg)
+        elif self.path == "/api/audit-alerts":
+            with audit_alerts_lock:
+                alerts = list(audit_active_alerts)
+            self._send_json(alerts)
         elif self.path == "/api/rx-status":
             now = time.time()
             status_out = {}
@@ -1869,6 +1903,225 @@ with db_lock:
     except Exception:
         pass
     db_conn.commit()
+
+# ==========================================
+# --- AUDIT DATABASE (separate AUDIT.db) ---
+# ==========================================
+AUDIT_DB_PATH = os.path.join(BASE_DIR, "AUDIT.db")
+audit_db_conn = sqlite3.connect(AUDIT_DB_PATH, check_same_thread=False)
+audit_db_cursor = audit_db_conn.cursor()
+audit_db_lock = threading.Lock()
+
+with audit_db_lock:
+    audit_db_cursor.execute("PRAGMA journal_mode=WAL;")
+    audit_db_cursor.execute("PRAGMA synchronous=NORMAL;")
+    # Audit configuration per point (persists user-defined radii/colour)
+    audit_db_cursor.execute('''CREATE TABLE IF NOT EXISTS audit_config
+                               (point_name TEXT PRIMARY KEY,
+                                outer_radius_nm REAL DEFAULT 5.0,
+                                inner_radius_nm REAL DEFAULT 2.0,
+                                colour_r INTEGER DEFAULT 255,
+                                colour_g INTEGER DEFAULT 165,
+                                colour_b INTEGER DEFAULT 0)''')
+    # Audit crossing log — snapshot of aircraft data when crossing a boundary
+    audit_db_cursor.execute('''CREATE TABLE IF NOT EXISTS audit_crossings
+                               (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                timestamp TEXT,
+                                point_name TEXT,
+                                perimeter TEXT,
+                                icao TEXT,
+                                callsign TEXT,
+                                airline TEXT,
+                                squawk TEXT,
+                                lat REAL,
+                                lon REAL,
+                                alt TEXT,
+                                speed TEXT,
+                                heading TEXT,
+                                track TEXT,
+                                vert_rate TEXT,
+                                ias TEXT,
+                                mach TEXT,
+                                tas TEXT,
+                                baro TEXT,
+                                tcas_ra TEXT,
+                                roll TEXT,
+                                wind TEXT,
+                                sat TEXT)''')
+    audit_db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_crossings(timestamp)")
+    audit_db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_icao ON audit_crossings(icao)")
+    audit_db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_point ON audit_crossings(point_name)")
+    audit_db_conn.commit()
+
+# In-memory audit config cache — loaded from AUDIT.db, updated via API
+audit_config_cache = {}
+audit_config_lock = threading.Lock()
+
+def load_audit_config():
+    global audit_config_cache
+    with audit_db_lock:
+        audit_db_cursor.execute("SELECT point_name, outer_radius_nm, inner_radius_nm, colour_r, colour_g, colour_b FROM audit_config")
+        rows = audit_db_cursor.fetchall()
+    cache = {}
+    for row in rows:
+        cache[row[0]] = {
+            "outer_radius_nm": row[1],
+            "inner_radius_nm": row[2],
+            "colour_r": row[3],
+            "colour_g": row[4],
+            "colour_b": row[5],
+        }
+    with audit_config_lock:
+        audit_config_cache = cache
+
+def save_audit_point_config(point_name, outer_nm, inner_nm, r, g, b):
+    with audit_db_lock:
+        audit_db_cursor.execute(
+            "INSERT INTO audit_config (point_name, outer_radius_nm, inner_radius_nm, colour_r, colour_g, colour_b) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(point_name) DO UPDATE SET "
+            "outer_radius_nm=excluded.outer_radius_nm, inner_radius_nm=excluded.inner_radius_nm, "
+            "colour_r=excluded.colour_r, colour_g=excluded.colour_g, colour_b=excluded.colour_b",
+            (point_name, outer_nm, inner_nm, r, g, b)
+        )
+        audit_db_conn.commit()
+    with audit_config_lock:
+        audit_config_cache[point_name] = {
+            "outer_radius_nm": outer_nm,
+            "inner_radius_nm": inner_nm,
+            "colour_r": r,
+            "colour_g": g,
+            "colour_b": b,
+        }
+
+def log_audit_crossing(point_name, perimeter, aircraft_data):
+    ts = get_iso_time()
+    with audit_db_lock:
+        audit_db_cursor.execute(
+            "INSERT INTO audit_crossings (timestamp, point_name, perimeter, icao, callsign, airline, squawk, "
+            "lat, lon, alt, speed, heading, track, vert_rate, ias, mach, tas, baro, tcas_ra, roll, wind, sat) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ts, point_name, perimeter,
+             str(aircraft_data.get("icao", "----")),
+             str(aircraft_data.get("callsign", "----")),
+             str(aircraft_data.get("airline", "----")),
+             str(aircraft_data.get("squawk", "----")),
+             aircraft_data.get("lat") if aircraft_data.get("lat") != "----" else None,
+             aircraft_data.get("lon") if aircraft_data.get("lon") != "----" else None,
+             str(aircraft_data.get("alt", "----")),
+             str(aircraft_data.get("speed", "----")),
+             str(aircraft_data.get("heading", "----")),
+             str(aircraft_data.get("track", "----")),
+             str(aircraft_data.get("vert_rate", "----")),
+             str(aircraft_data.get("ias", "----")),
+             str(aircraft_data.get("mach", "----")),
+             str(aircraft_data.get("tas", "----")),
+             str(aircraft_data.get("baro", "----")),
+             str(aircraft_data.get("tcas_ra", "----")),
+             str(aircraft_data.get("roll", "----")),
+             str(aircraft_data.get("wind", "----")),
+             str(aircraft_data.get("sat", "----")))
+        )
+        audit_db_conn.commit()
+
+# Track which aircraft are currently inside each audit zone to detect crossings
+# Key: (point_name, perimeter) -> set of ICAOs
+audit_zone_occupants = {}
+audit_zone_lock = threading.Lock()
+# Active audit alerts sent to frontend: list of {point_name, perimeter, icao, callsign}
+audit_active_alerts = []
+audit_alerts_lock = threading.Lock()
+
+def haversine_nm(lat1, lon1, lat2, lon2):
+    """Great-circle distance in nautical miles between two points."""
+    R_NM = 3440.065  # Earth radius in NM
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return R_NM * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+def get_audit_points():
+    """Return list of audit-type GeoJSON points with their config."""
+    points = []
+    with audit_config_lock:
+        cfg_snapshot = dict(audit_config_cache)
+    for feature in AIRSPACE_GEOJSON.get("features", []):
+        props = feature.get("properties", {})
+        geom = feature.get("geometry", {})
+        if geom.get("type") != "Point":
+            continue
+        cat = (props.get("icon") or props.get("type") or "").upper()
+        if cat != "AUDIT":
+            continue
+        if props.get("masked"):
+            continue
+        name = props.get("name") or props.get("id") or "UNNAMED"
+        lon, lat = geom["coordinates"][0], geom["coordinates"][1]
+        cfg = cfg_snapshot.get(name, {"outer_radius_nm": 5.0, "inner_radius_nm": 2.0, "colour_r": 255, "colour_g": 165, "colour_b": 0})
+        points.append({"name": name, "lat": lat, "lon": lon, **cfg})
+    return points
+
+def run_audit_monitor():
+    """Background thread that checks aircraft positions against audit circles."""
+    while True:
+        time.sleep(1)
+        try:
+            audit_points = get_audit_points()
+            if not audit_points:
+                with audit_alerts_lock:
+                    audit_active_alerts.clear()
+                continue
+
+            with state_lock:
+                ac_snapshot = {icao: data.copy() for icao, data in aircraft_state.items()}
+
+            new_alerts = []
+            for ap in audit_points:
+                for perimeter_key, radius_key in [("OUTER", "outer_radius_nm"), ("INNER", "inner_radius_nm")]:
+                    radius = ap[radius_key]
+                    zone_key = (ap["name"], perimeter_key)
+
+                    with audit_zone_lock:
+                        if zone_key not in audit_zone_occupants:
+                            audit_zone_occupants[zone_key] = set()
+                        prev_occupants = set(audit_zone_occupants[zone_key])
+
+                    current_occupants = set()
+                    for icao, data in ac_snapshot.items():
+                        ac_lat = data.get("lat")
+                        ac_lon = data.get("lon")
+                        if ac_lat in [None, "----"] or ac_lon in [None, "----"]:
+                            continue
+                        try:
+                            dist = haversine_nm(ap["lat"], ap["lon"], float(ac_lat), float(ac_lon))
+                        except (ValueError, TypeError):
+                            continue
+                        if dist <= radius:
+                            current_occupants.add(icao)
+                            new_alerts.append({
+                                "point_name": ap["name"],
+                                "perimeter": perimeter_key,
+                                "icao": icao,
+                                "callsign": str(data.get("callsign", "----")),
+                            })
+
+                    # Detect new entries (crossing into the circle)
+                    new_entries = current_occupants - prev_occupants
+                    for icao in new_entries:
+                        ac_data = ac_snapshot.get(icao, {})
+                        log_audit_crossing(ap["name"], perimeter_key, ac_data)
+                        iso = get_iso_time()
+                        cs = ac_data.get("callsign", "----")
+                        print(f"{ANSI.DIM}[{iso}]{ANSI.RESET} {ANSI.MAGENTA}[AUDIT] {icao} ({cs}) entered {perimeter_key} zone of {ap['name']}{ANSI.RESET}")
+
+                    with audit_zone_lock:
+                        audit_zone_occupants[zone_key] = current_occupants
+
+            with audit_alerts_lock:
+                audit_active_alerts.clear()
+                audit_active_alerts.extend(new_alerts)
+
+        except Exception as e:
+            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[AUDIT] Monitor error: {e}{ANSI.RESET}")
 
 
 def load_historical_state():
@@ -2799,10 +3052,16 @@ async def broadcast_state(websocket):
                         
                         payload.append(plane)
                 
+                with audit_config_lock:
+                    _audit_cfg_snap = dict(audit_config_cache)
+                with audit_alerts_lock:
+                    _audit_alerts_snap = list(audit_active_alerts)
                 out_data = {
                     "airframes": payload,
                     "airspace": AIRSPACE_GEOJSON,
-                    "meta": { "ledger_count": ledger_count }
+                    "meta": { "ledger_count": ledger_count },
+                    "audit_config": _audit_cfg_snap,
+                    "audit_alerts": _audit_alerts_snap,
                 }
                 await websocket.send(json.dumps(out_data))
                 await asyncio.sleep(1)
@@ -2865,6 +3124,7 @@ if __name__ == "__main__":
     load_airline_db()
     load_historical_state()
     load_airspace()
+    load_audit_config()
     # Start receiver threads according to configured mode
     if RX_MODE in ("A", "DUAL"):
         threading.Thread(target=beast_reader_thread, args=("A",), daemon=True).start()
@@ -2873,5 +3133,6 @@ if __name__ == "__main__":
     threading.Thread(target=run_reaper_loop, daemon=True).start()
     threading.Thread(target=archivist_loop, daemon=True).start()
     threading.Thread(target=run_http_server, daemon=True).start()
+    threading.Thread(target=run_audit_monitor, daemon=True).start()
     try: asyncio.run(main())
     except KeyboardInterrupt: print(f"\n{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}Shutting down Tactical Matrix...{ANSI.RESET}")
