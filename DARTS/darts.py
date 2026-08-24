@@ -1908,14 +1908,13 @@ with db_lock:
 # ==========================================
 AUDIT_DB_PATH = os.path.join(BASE_DIR, "AUDIT.db")
 audit_db_conn = sqlite3.connect(AUDIT_DB_PATH, check_same_thread=False)
-audit_db_cursor = audit_db_conn.cursor()
 audit_db_lock = threading.Lock()
 
 with audit_db_lock:
-    audit_db_cursor.execute("PRAGMA journal_mode=WAL;")
-    audit_db_cursor.execute("PRAGMA synchronous=NORMAL;")
-    # Audit configuration per point (persists user-defined radii/colour)
-    audit_db_cursor.execute('''CREATE TABLE IF NOT EXISTS audit_config
+    _c = audit_db_conn.cursor()
+    _c.execute("PRAGMA journal_mode=WAL;")
+    _c.execute("PRAGMA synchronous=NORMAL;")
+    _c.execute('''CREATE TABLE IF NOT EXISTS audit_config
                                (point_name TEXT PRIMARY KEY,
                                 outer_radius_nm REAL DEFAULT 5.0,
                                 inner_radius_nm REAL DEFAULT 2.0,
@@ -1923,7 +1922,7 @@ with audit_db_lock:
                                 colour_g INTEGER DEFAULT 165,
                                 colour_b INTEGER DEFAULT 0)''')
     # Audit crossing log — snapshot of aircraft data when crossing a boundary
-    audit_db_cursor.execute('''CREATE TABLE IF NOT EXISTS audit_crossings
+    _c.execute('''CREATE TABLE IF NOT EXISTS audit_crossings
                                (id INTEGER PRIMARY KEY AUTOINCREMENT,
                                 timestamp TEXT,
                                 point_name TEXT,
@@ -1947,9 +1946,9 @@ with audit_db_lock:
                                 roll TEXT,
                                 wind TEXT,
                                 sat TEXT)''')
-    audit_db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_crossings(timestamp)")
-    audit_db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_icao ON audit_crossings(icao)")
-    audit_db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_point ON audit_crossings(point_name)")
+    _c.execute("CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_crossings(timestamp)")
+    _c.execute("CREATE INDEX IF NOT EXISTS idx_audit_icao ON audit_crossings(icao)")
+    _c.execute("CREATE INDEX IF NOT EXISTS idx_audit_point ON audit_crossings(point_name)")
     audit_db_conn.commit()
 
 # In-memory audit config cache — loaded from AUDIT.db, updated via API
@@ -1959,8 +1958,9 @@ audit_config_lock = threading.Lock()
 def load_audit_config():
     global audit_config_cache
     with audit_db_lock:
-        audit_db_cursor.execute("SELECT point_name, outer_radius_nm, inner_radius_nm, colour_r, colour_g, colour_b FROM audit_config")
-        rows = audit_db_cursor.fetchall()
+        c = audit_db_conn.cursor()
+        c.execute("SELECT point_name, outer_radius_nm, inner_radius_nm, colour_r, colour_g, colour_b FROM audit_config")
+        rows = c.fetchall()
     cache = {}
     for row in rows:
         cache[row[0]] = {
@@ -1975,7 +1975,8 @@ def load_audit_config():
 
 def save_audit_point_config(point_name, outer_nm, inner_nm, r, g, b):
     with audit_db_lock:
-        audit_db_cursor.execute(
+        c = audit_db_conn.cursor()
+        c.execute(
             "INSERT INTO audit_config (point_name, outer_radius_nm, inner_radius_nm, colour_r, colour_g, colour_b) "
             "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(point_name) DO UPDATE SET "
             "outer_radius_nm=excluded.outer_radius_nm, inner_radius_nm=excluded.inner_radius_nm, "
@@ -1995,7 +1996,8 @@ def save_audit_point_config(point_name, outer_nm, inner_nm, r, g, b):
 def log_audit_crossing(point_name, perimeter, aircraft_data):
     ts = get_iso_time()
     with audit_db_lock:
-        audit_db_cursor.execute(
+        c = audit_db_conn.cursor()
+        c.execute(
             "INSERT INTO audit_crossings (timestamp, point_name, perimeter, icao, callsign, airline, squawk, "
             "lat, lon, alt, speed, heading, track, vert_rate, ias, mach, tas, baro, tcas_ra, roll, wind, sat) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2074,6 +2076,7 @@ def run_audit_monitor():
                 ac_snapshot = {icao: data.copy() for icao, data in aircraft_state.items()}
 
             new_alerts = []
+            seen_alerts = set()
             for ap in audit_points:
                 for perimeter_key, radius_key in [("OUTER", "outer_radius_nm"), ("INNER", "inner_radius_nm")]:
                     radius = ap[radius_key]
@@ -2083,7 +2086,7 @@ def run_audit_monitor():
                     for icao, data in ac_snapshot.items():
                         ac_lat = data.get("lat")
                         ac_lon = data.get("lon")
-                        if ac_lat in [None, "----"] or ac_lon in [None, "----"]:
+                        if ac_lat in (None, "----") or ac_lon in (None, "----"):
                             continue
                         try:
                             dist = haversine_nm(ap["lat"], ap["lon"], float(ac_lat), float(ac_lon))
@@ -2091,12 +2094,15 @@ def run_audit_monitor():
                             continue
                         if dist <= radius:
                             current_occupants.add(icao)
-                            new_alerts.append({
-                                "point_name": ap["name"],
-                                "perimeter": perimeter_key,
-                                "icao": icao,
-                                "callsign": str(data.get("callsign", "----")),
-                            })
+                            alert_key = (icao, ap["name"], perimeter_key)
+                            if alert_key not in seen_alerts:
+                                seen_alerts.add(alert_key)
+                                new_alerts.append({
+                                    "point_name": ap["name"],
+                                    "perimeter": perimeter_key,
+                                    "icao": icao,
+                                    "callsign": str(data.get("callsign", "----")),
+                                })
 
                     # Atomic read-compare-write under a single lock acquisition
                     with audit_zone_lock:

@@ -2344,15 +2344,15 @@
 
                 // Draw outer circle
                 const outerActive = !!activePerimeters[name + '_OUTER'];
-                drawDottedCircleNm(rCtx, centLat, centLon, cfg.outer_radius_nm, R_CX, R_CY, ppd, baseColour, outerActive);
+                drawDottedCircleNm(rCtx, centLat, centLon, cfg.outer_radius_nm, R_CX, R_CY, ppd, baseColour, outerActive, [r, g, b]);
 
                 // Draw inner circle
                 const innerActive = !!activePerimeters[name + '_INNER'];
-                drawDottedCircleNm(rCtx, centLat, centLon, cfg.inner_radius_nm, R_CX, R_CY, ppd, baseColour, innerActive);
+                drawDottedCircleNm(rCtx, centLat, centLon, cfg.inner_radius_nm, R_CX, R_CY, ppd, baseColour, innerActive, [r, g, b]);
             });
         }
 
-        function drawDottedCircleNm(ctx, centLat, centLon, radiusNm, R_CX, R_CY, ppd, colour, isActive) {
+        function drawDottedCircleNm(ctx, centLat, centLon, radiusNm, R_CX, R_CY, ppd, colour, isActive, colourRgb) {
             // Draw a geodetically-accurate dotted circle by plotting points around the center
             const segments = 120;
             ctx.beginPath();
@@ -2378,7 +2378,7 @@
 
             // If active, draw a subtle fill
             if (isActive) {
-                ctx.fillStyle = colour.replace('rgb', 'rgba').replace(')', ',0.06)');
+                ctx.fillStyle = `rgba(${colourRgb[0]},${colourRgb[1]},${colourRgb[2]},0.06)`;
                 ctx.fill();
             }
         }
