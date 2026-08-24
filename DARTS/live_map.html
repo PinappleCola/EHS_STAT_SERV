@@ -155,6 +155,33 @@
 
 
 
+        /* Audit Modal */
+        #audit-modal {
+            display: none; position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
+            width: 620px; max-height: 65vh; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(8px);
+            border: 1px solid #f59e0b; border-radius: 6px; z-index: 100; box-shadow: 0 15px 40px rgba(0,0,0,0.9);
+            flex-direction: column; pointer-events: auto; overflow: hidden;
+        }
+        .audit-header { background: #92400e; padding: 10px 15px; font-weight: bold; color: white; display: flex; justify-content: space-between; align-items: center; }
+        .audit-content { padding: 15px; overflow-y: auto; }
+        .audit-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85em; }
+        .audit-table th { background: #1e293b; padding: 8px; border-bottom: 2px solid #334155; color: #94a3b8; }
+        .audit-table td { padding: 8px; border-bottom: 1px solid #1e293b; color: #e2e8f0; }
+        .audit-table tr:hover { background: rgba(245, 158, 11, 0.1); }
+        .audit-input { width: 70px; background: #030712; color: #e2e8f0; border: 1px solid #334155; border-radius: 3px; padding: 3px 6px; font-size: 0.85em; font-family: monospace; }
+        .audit-save-btn { background: #f59e0b; border: none; color: #000; font-weight: bold; cursor: pointer; padding: 4px 10px; border-radius: 3px; font-size: 0.8em; font-family: monospace; }
+        .audit-save-btn:hover { background: #fbbf24; }
+
+        /* Audit HUD (bottom-left overlay for aircraft in audit zones) */
+        #audit-hud {
+            display: none; position: absolute; bottom: 140px; left: 20px; z-index: 50;
+            background: rgba(3, 7, 18, 0.85); backdrop-filter: blur(4px);
+            border: 1px solid #f59e0b; border-radius: 4px; padding: 10px 16px;
+            pointer-events: none; max-width: 360px;
+        }
+        #audit-hud .audit-hud-label { color: #f59e0b; font-size: 1.4em; font-weight: bold; letter-spacing: 1px; }
+        #audit-hud .audit-hud-zone { color: #94a3b8; font-size: 0.85em; margin-top: 2px; }
+
         #map-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; display: none; background-color: #040811; pointer-events: none; }
         #radar-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; display: block; cursor: crosshair; }
     </style>
@@ -195,6 +222,7 @@
             <button onclick="openTagConfig()" class="btn-action" title="Open data tag field configuration">DATA TAGS</button>
             <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Toggle performance overlay">PERF</button>
             <button id="btn-intent-coord" class="btn-action btn-toggle" onclick="toggleIntentCoord()" title="Show FMS intent waypoint overlay (BDS 4,2)">INTENT COORD</button>
+            <button id="btn-audit" class="btn-action btn-action-alt" onclick="toggleAuditModal()" title="Configure audit point radii and colours">AUDIT</button>
 
             <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
 
@@ -269,6 +297,35 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Audit Modal -->
+    <div id="audit-modal">
+        <div class="audit-header">
+            <span>AUDIT CONFIGURATION</span>
+            <span style="cursor:pointer;color:white;font-weight:bold;" onclick="toggleAuditModal()">✕</span>
+        </div>
+        <div class="audit-content">
+            <table class="audit-table" id="audit-table">
+                <thead>
+                    <tr>
+                        <th>AUDIT POINT</th>
+                        <th>OUTER RADIUS (NM)</th>
+                        <th>INNER RADIUS (NM)</th>
+                        <th>LINE COLOUR</th>
+                        <th>ACTION</th>
+                    </tr>
+                </thead>
+                <tbody id="audit-tbody"></tbody>
+            </table>
+            <div id="audit-no-points" style="text-align:center;color:#94a3b8;padding:20px;display:none;">No AUDIT-type points found in GeoJSON. Add points with icon/type "AUDIT" to configure.</div>
+        </div>
+    </div>
+
+    <!-- Audit HUD (bottom-left) -->
+    <div id="audit-hud">
+        <div class="audit-hud-label" id="audit-hud-label"></div>
+        <div class="audit-hud-zone" id="audit-hud-zone"></div>
     </div>
 
     <div id="db-modal">
@@ -1349,6 +1406,9 @@
                     });
                 }
 
+                // Draw audit circles around AUDIT-type points
+                drawAuditCircles(rCtx, R_CX, R_CY, ppd);
+
                 const centerProj = getCanvasPoint(REF_LAT, REF_LON, R_CX, R_CY, ppd);
                 rCtx.shadowBlur = 10; rCtx.shadowColor = '#f43f5e'; rCtx.fillStyle = '#f43f5e';
                 rCtx.beginPath(); rCtx.arc(centerProj.x, centerProj.y, 2.5, 0, Math.PI*2); rCtx.fill(); rCtx.shadowBlur = 0; 
@@ -1914,6 +1974,8 @@
                 
                 const parsedData = JSON.parse(event.data);
                 if (parsedData.airspace) airspaceGeoJSON = parsedData.airspace;
+                if (parsedData.audit_config) auditConfig = parsedData.audit_config;
+                if (parsedData.audit_alerts) { auditAlerts = parsedData.audit_alerts; updateAuditHud(); }
                 
                 let aircraftList = Array.isArray(parsedData.airframes) ? parsedData.airframes : (Array.isArray(parsedData) ? parsedData : []);
                 lastAircraftList = aircraftList; 
@@ -2158,6 +2220,203 @@
             if (ageDelta > 10) return { confidence: 'LOW', ageDelta, color: '#ef4444' };
             if (ageDelta > 5) return { confidence: 'MED', ageDelta, color: '#fbbf24' };
             return { confidence: 'HIGH', ageDelta, color: '#4ade80' };
+        }
+
+        // =============================================
+        // --- AUDIT SYSTEM ---
+        // =============================================
+        let auditConfig = {};   // server-pushed config: { pointName: { outer_radius_nm, inner_radius_nm, colour_r, colour_g, colour_b } }
+        let auditAlerts = [];   // server-pushed active alerts: [ { point_name, perimeter, icao, callsign } ]
+
+        function toggleAuditModal() {
+            const modal = document.getElementById('audit-modal');
+            const visible = modal.style.display === 'flex';
+            modal.style.display = visible ? 'none' : 'flex';
+            if (!visible) populateAuditTable();
+        }
+
+        function getAuditPoints() {
+            // Extract AUDIT-type points from the current airspace GeoJSON
+            if (!airspaceGeoJSON || !airspaceGeoJSON.features) return [];
+            return airspaceGeoJSON.features
+                .map((f, idx) => ({ feature: f, idx }))
+                .filter(({ feature }) => {
+                    const geom = feature.geometry;
+                    const props = feature.properties || {};
+                    if (!geom || geom.type !== 'Point') return false;
+                    if (props.masked) return false;
+                    const cat = (props.icon || props.type || '').toUpperCase();
+                    return cat === 'AUDIT';
+                })
+                .map(({ feature }) => {
+                    const props = feature.properties || {};
+                    return props.name || props.id || 'UNNAMED';
+                });
+        }
+
+        function populateAuditTable() {
+            const tbody = document.getElementById('audit-tbody');
+            const noPoints = document.getElementById('audit-no-points');
+            const points = getAuditPoints();
+            if (points.length === 0) {
+                tbody.innerHTML = '';
+                noPoints.style.display = 'block';
+                return;
+            }
+            noPoints.style.display = 'none';
+            tbody.innerHTML = '';
+            points.forEach(name => {
+                const cfg = auditConfig[name] || { outer_radius_nm: 5.0, inner_radius_nm: 2.0, colour_r: 255, colour_g: 165, colour_b: 0 };
+                const hexColour = '#' + [cfg.colour_r, cfg.colour_g, cfg.colour_b].map(c => (c || 0).toString(16).padStart(2, '0')).join('');
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="font-weight:bold;color:#f59e0b;">${name}</td>
+                    <td><input class="audit-input" type="number" step="0.1" min="0.1" max="100" value="${cfg.outer_radius_nm}" id="audit-outer-${name}"></td>
+                    <td><input class="audit-input" type="number" step="0.1" min="0.05" max="100" value="${cfg.inner_radius_nm}" id="audit-inner-${name}"></td>
+                    <td><input type="color" value="${hexColour}" id="audit-colour-${name}" class="elem-colour-swatch"></td>
+                    <td><button class="audit-save-btn" onclick="saveAuditPoint('${name}')">SAVE</button></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function saveAuditPoint(name) {
+            const outerEl = document.getElementById('audit-outer-' + name);
+            const innerEl = document.getElementById('audit-inner-' + name);
+            const colourEl = document.getElementById('audit-colour-' + name);
+            if (!outerEl || !innerEl || !colourEl) return;
+            const hex = colourEl.value;
+            const r = parseInt(hex.substr(1, 2), 16);
+            const g = parseInt(hex.substr(3, 2), 16);
+            const b = parseInt(hex.substr(5, 2), 16);
+            try {
+                await fetch(`${HTTP_API}/api/audit-config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        point_name: name,
+                        outer_radius_nm: parseFloat(outerEl.value) || 5.0,
+                        inner_radius_nm: parseFloat(innerEl.value) || 2.0,
+                        colour_r: r, colour_g: g, colour_b: b,
+                    })
+                });
+            } catch (e) { console.warn('saveAuditPoint error:', e); }
+        }
+
+        // Haversine distance in NM (for drawing circles accurately)
+        function haversineNm(lat1, lon1, lat2, lon2) {
+            const R = 3440.065;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        // Convert NM radius to approximate degrees at a given latitude (for circle drawing)
+        function nmToDegLat(nm) { return nm / 60.0; }
+        function nmToDegLon(nm, lat) { return nm / (60.0 * Math.cos(lat * Math.PI / 180)); }
+
+        function drawAuditCircles(rCtx, R_CX, R_CY, ppd) {
+            if (elementsHidden) return;
+            if (!airspaceGeoJSON || !airspaceGeoJSON.features) return;
+
+            const activePerimeters = {};
+            auditAlerts.forEach(a => {
+                const key = a.point_name + '_' + a.perimeter;
+                activePerimeters[key] = true;
+            });
+
+            airspaceGeoJSON.features.forEach(feature => {
+                const geom = feature.geometry;
+                const props = feature.properties || {};
+                if (!geom || geom.type !== 'Point') return;
+                if (props.masked) return;
+                const cat = (props.icon || props.type || '').toUpperCase();
+                if (cat !== 'AUDIT') return;
+
+                const name = props.name || props.id || 'UNNAMED';
+                const cfg = auditConfig[name] || { outer_radius_nm: 5.0, inner_radius_nm: 2.0, colour_r: 255, colour_g: 165, colour_b: 0 };
+                const centLat = geom.coordinates[1];
+                const centLon = geom.coordinates[0];
+                const centPt = getCanvasPoint(centLat, centLon, R_CX, R_CY, ppd);
+                const r = cfg.colour_r || 255, g = cfg.colour_g || 165, b = cfg.colour_b || 0;
+                const baseColour = `rgb(${r},${g},${b})`;
+
+                // Draw outer circle
+                const outerActive = !!activePerimeters[name + '_OUTER'];
+                drawDottedCircleNm(rCtx, centLat, centLon, cfg.outer_radius_nm, R_CX, R_CY, ppd, baseColour, outerActive, [r, g, b]);
+
+                // Draw inner circle
+                const innerActive = !!activePerimeters[name + '_INNER'];
+                drawDottedCircleNm(rCtx, centLat, centLon, cfg.inner_radius_nm, R_CX, R_CY, ppd, baseColour, innerActive, [r, g, b]);
+            });
+        }
+
+        function drawDottedCircleNm(ctx, centLat, centLon, radiusNm, R_CX, R_CY, ppd, colour, isActive, colourRgb) {
+            // Draw a geodetically-accurate dotted circle by plotting points around the center
+            const segments = 120;
+            ctx.beginPath();
+            for (let i = 0; i <= segments; i++) {
+                const angle = (i / segments) * 2 * Math.PI;
+                const dLat = nmToDegLat(radiusNm) * Math.cos(angle);
+                const dLon = nmToDegLon(radiusNm, centLat) * Math.sin(angle);
+                const pt = getCanvasPoint(centLat + dLat, centLon + dLon, R_CX, R_CY, ppd);
+                if (i === 0) ctx.moveTo(pt.x, pt.y);
+                else ctx.lineTo(pt.x, pt.y);
+            }
+            ctx.closePath();
+            ctx.strokeStyle = colour;
+            ctx.lineWidth = isActive ? 2.5 : 1.5;
+            ctx.setLineDash([6, 4]);
+            if (isActive) {
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = colour;
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.shadowBlur = 0;
+
+            // If active, draw a subtle fill
+            if (isActive) {
+                ctx.fillStyle = `rgba(${colourRgb[0]},${colourRgb[1]},${colourRgb[2]},0.06)`;
+                ctx.fill();
+            }
+        }
+
+        function updateAuditHud() {
+            const hud = document.getElementById('audit-hud');
+            const labelEl = document.getElementById('audit-hud-label');
+            const zoneEl = document.getElementById('audit-hud-zone');
+
+            if (!auditAlerts || auditAlerts.length === 0) {
+                hud.style.display = 'none';
+                return;
+            }
+
+            // Deduplicate by ICAO, keep the innermost perimeter per aircraft
+            const byIcao = {};
+            auditAlerts.forEach(a => {
+                const existing = byIcao[a.icao];
+                // INNER takes priority over OUTER for the same aircraft
+                if (!existing || a.perimeter === 'INNER') {
+                    byIcao[a.icao] = a;
+                }
+            });
+            const uniqueAlerts = Object.values(byIcao);
+
+            // Display the most recent aircraft prominently
+            const latest = uniqueAlerts[uniqueAlerts.length - 1];
+            const icao = latest.icao || '------';
+            const callsign = (latest.callsign && latest.callsign !== '----') ? latest.callsign : '';
+            const displayText = callsign ? `${icao}  ${callsign}` : icao;
+
+            labelEl.textContent = displayText;
+            let zoneText = `${latest.perimeter} ZONE — ${latest.point_name}`;
+            if (uniqueAlerts.length > 1) {
+                zoneText += ` (+${uniqueAlerts.length - 1} more)`;
+            }
+            zoneEl.textContent = zoneText;
+            hud.style.display = 'block';
         }
 
     </script>
