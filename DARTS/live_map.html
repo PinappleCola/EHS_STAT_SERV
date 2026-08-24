@@ -299,8 +299,6 @@
         </div>
     </div>
 
-    <div id="db-modal">
-
     <!-- Audit Modal -->
     <div id="audit-modal">
         <div class="audit-header">
@@ -2395,14 +2393,29 @@
                 return;
             }
 
-            // Show the most recent/latest alert (overrides with newest)
-            const latest = auditAlerts[auditAlerts.length - 1];
+            // Deduplicate by ICAO, keep the innermost perimeter per aircraft
+            const byIcao = {};
+            auditAlerts.forEach(a => {
+                const existing = byIcao[a.icao];
+                // INNER takes priority over OUTER for the same aircraft
+                if (!existing || a.perimeter === 'INNER') {
+                    byIcao[a.icao] = a;
+                }
+            });
+            const uniqueAlerts = Object.values(byIcao);
+
+            // Display the most recent aircraft prominently
+            const latest = uniqueAlerts[uniqueAlerts.length - 1];
             const icao = latest.icao || '------';
             const callsign = (latest.callsign && latest.callsign !== '----') ? latest.callsign : '';
             const displayText = callsign ? `${icao}  ${callsign}` : icao;
 
             labelEl.textContent = displayText;
-            zoneEl.textContent = `${latest.perimeter} ZONE — ${latest.point_name}`;
+            let zoneText = `${latest.perimeter} ZONE — ${latest.point_name}`;
+            if (uniqueAlerts.length > 1) {
+                zoneText += ` (+${uniqueAlerts.length - 1} more)`;
+            }
+            zoneEl.textContent = zoneText;
             hud.style.display = 'block';
         }
 

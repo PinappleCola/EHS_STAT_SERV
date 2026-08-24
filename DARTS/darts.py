@@ -1319,38 +1319,6 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             default_cols = [f["key"] for f in FIELD_REGISTRY if f["defaultVisible"]]
             self._send_json({"columns": default_cols, "sortKey": None, "sortDir": "asc"})
         elif self.path == "/api/audit-config":
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(length)
-                data = json.loads(body.decode("utf-8"))
-            except Exception:
-                self._send_json({"error": "Invalid JSON"}, status=400)
-                return
-
-            point_name = data.get("point_name", "").strip()
-            if not point_name:
-                self._send_json({"error": "point_name is required"}, status=400)
-                return
-            outer_nm = float(data.get("outer_radius_nm", 5.0))
-            inner_nm = float(data.get("inner_radius_nm", 2.0))
-            colour_r = int(data.get("colour_r", 255))
-            colour_g = int(data.get("colour_g", 165))
-            colour_b = int(data.get("colour_b", 0))
-            # Clamp values
-            outer_nm = max(0.1, min(100.0, outer_nm))
-            inner_nm = max(0.05, min(outer_nm, inner_nm))
-            colour_r = max(0, min(255, colour_r))
-            colour_g = max(0, min(255, colour_g))
-            colour_b = max(0, min(255, colour_b))
-            save_audit_point_config(point_name, outer_nm, inner_nm, colour_r, colour_g, colour_b)
-            self._send_json({"ok": True, "point_name": point_name})
-        elif self.path == "/api/rx-config":
-            self._send_json({
-                "rx_mode": RX_MODE,
-                "receiver_a": RECEIVER_A_CONFIG,
-                "receiver_b": RECEIVER_B_CONFIG,
-            })
-        elif self.path == "/api/audit-config":
             with audit_config_lock:
                 cfg = dict(audit_config_cache)
             self._send_json(cfg)
@@ -1358,6 +1326,12 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             with audit_alerts_lock:
                 alerts = list(audit_active_alerts)
             self._send_json(alerts)
+        elif self.path == "/api/rx-config":
+            self._send_json({
+                "rx_mode": RX_MODE,
+                "receiver_a": RECEIVER_A_CONFIG,
+                "receiver_b": RECEIVER_B_CONFIG,
+            })
         elif self.path == "/api/rx-status":
             now = time.time()
             status_out = {}
@@ -1379,7 +1353,32 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"error": "Not found"}, status=404)
 
     def do_POST(self):
-        if self.path == "/api/rx-config":
+        if self.path == "/api/audit-config":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body.decode("utf-8"))
+            except Exception:
+                self._send_json({"error": "Invalid JSON"}, status=400)
+                return
+
+            point_name = data.get("point_name", "").strip()
+            if not point_name:
+                self._send_json({"error": "point_name is required"}, status=400)
+                return
+            outer_nm = float(data.get("outer_radius_nm", 5.0))
+            inner_nm = float(data.get("inner_radius_nm", 2.0))
+            colour_r = int(data.get("colour_r", 255))
+            colour_g = int(data.get("colour_g", 165))
+            colour_b = int(data.get("colour_b", 0))
+            outer_nm = max(0.1, min(100.0, outer_nm))
+            inner_nm = max(0.05, min(outer_nm, inner_nm))
+            colour_r = max(0, min(255, colour_r))
+            colour_g = max(0, min(255, colour_g))
+            colour_b = max(0, min(255, colour_b))
+            save_audit_point_config(point_name, outer_nm, inner_nm, colour_r, colour_g, colour_b)
+            self._send_json({"ok": True, "point_name": point_name})
+        elif self.path == "/api/rx-config":
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
@@ -2080,11 +2079,6 @@ def run_audit_monitor():
                     radius = ap[radius_key]
                     zone_key = (ap["name"], perimeter_key)
 
-                    with audit_zone_lock:
-                        if zone_key not in audit_zone_occupants:
-                            audit_zone_occupants[zone_key] = set()
-                        prev_occupants = set(audit_zone_occupants[zone_key])
-
                     current_occupants = set()
                     for icao, data in ac_snapshot.items():
                         ac_lat = data.get("lat")
@@ -2104,17 +2098,19 @@ def run_audit_monitor():
                                 "callsign": str(data.get("callsign", "----")),
                             })
 
-                    # Detect new entries (crossing into the circle)
-                    new_entries = current_occupants - prev_occupants
+                    # Atomic read-compare-write under a single lock acquisition
+                    with audit_zone_lock:
+                        prev_occupants = audit_zone_occupants.get(zone_key, set())
+                        new_entries = current_occupants - prev_occupants
+                        audit_zone_occupants[zone_key] = current_occupants
+
+                    # Log crossing events outside the lock to avoid holding it during I/O
                     for icao in new_entries:
                         ac_data = ac_snapshot.get(icao, {})
                         log_audit_crossing(ap["name"], perimeter_key, ac_data)
                         iso = get_iso_time()
                         cs = ac_data.get("callsign", "----")
                         print(f"{ANSI.DIM}[{iso}]{ANSI.RESET} {ANSI.MAGENTA}[AUDIT] {icao} ({cs}) entered {perimeter_key} zone of {ap['name']}{ANSI.RESET}")
-
-                    with audit_zone_lock:
-                        audit_zone_occupants[zone_key] = current_occupants
 
             with audit_alerts_lock:
                 audit_active_alerts.clear()
