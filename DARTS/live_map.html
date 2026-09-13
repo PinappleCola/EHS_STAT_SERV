@@ -2002,19 +2002,20 @@
 
                 aircraftList.forEach(p => {
                     if (p.lat && p.lon && p.lat !== '----' && p.lon !== '----') {
-                        if (!trailHistory[p.icao]) trailHistory[p.icao] = { path: [], lastUpdate: now };
+                        if (!trailHistory[p.icao]) trailHistory[p.icao] = { path: [], lastUpdate: now, lastPointTime: now };
                         const latF = parseFloat(p.lat); const lonF = parseFloat(p.lon);
                         const historyObj = trailHistory[p.icao];
-                        const gapSinceLastPointMs = now - historyObj.lastUpdate;
+                        const gapSinceLastPointMs = (historyObj.lastPointTime === null) ? 0 : (now - historyObj.lastPointTime);
+                        const history = historyObj.path;
                         if (historyObj.path.length > 0 && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS) {
                             historyObj.path.push({ time: now, gapBreak: true });
                         }
                         historyObj.lastUpdate = now;
-                        
-                        const history = historyObj.path;
+
                         if (history.length === 0 || history[history.length - 1].lat !== latF || history[history.length - 1].lon !== lonF) {
                             history.push({ lat: latF, lon: lonF, time: now, alt: p.alt });
                         }
+                        historyObj.lastPointTime = now;
                         if (history.length > 10000) history.shift();
                     }
                 });
