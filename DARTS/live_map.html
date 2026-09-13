@@ -718,6 +718,7 @@
         const MIN_TRAIL_SPAN_MINUTES = 0.1;
         const SLIDER_ZINDEX_SWITCH_BUFFER = 0.05;
         const MAX_STALE_POSITION_MS = 15000;
+        const TRAIL_REACQUIRE_GAP_MS = 65000;
         const HAZARD_LEVEL_LABELS = ['NIL', 'LIGHT', 'MOD', 'SEV'];
         let suppressTimecodeSync = false;
 
@@ -1152,6 +1153,7 @@
                 const validPoints = historyObj.path.filter(pt => { const age = renderTime - pt.time; return age >= minAgeMs && age <= maxAgeMs; });
                 if (validPoints.length < 2) return;
                 for (let i = 1; i < validPoints.length; i++) {
+                    if (validPoints[i - 1].gapBreak || validPoints[i].gapBreak) continue;
                     const p1 = getPoint(validPoints[i - 1].lat, validPoints[i - 1].lon);
                     const p2 = getPoint(validPoints[i].lat, validPoints[i].lon);
                     const age = renderTime - validPoints[i].time;
@@ -1441,6 +1443,7 @@
                     if (isDimmed) return; 
                     
                     for(let i = 1; i < validPoints.length; i++) {
+                        if (validPoints[i - 1].gapBreak || validPoints[i].gapBreak) continue;
                         const pt1 = getCanvasPoint(validPoints[i-1].lat, validPoints[i-1].lon, R_CX, R_CY, ppd);
                         const pt2 = getCanvasPoint(validPoints[i].lat, validPoints[i].lon, R_CX, R_CY, ppd);
 
@@ -2002,6 +2005,10 @@
                         if (!trailHistory[p.icao]) trailHistory[p.icao] = { path: [], lastUpdate: now };
                         const latF = parseFloat(p.lat); const lonF = parseFloat(p.lon);
                         const historyObj = trailHistory[p.icao];
+                        const gapSinceLastPointMs = now - historyObj.lastUpdate;
+                        if (historyObj.path.length > 0 && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS) {
+                            historyObj.path.push({ time: now, gapBreak: true });
+                        }
                         historyObj.lastUpdate = now;
                         
                         const history = historyObj.path;
