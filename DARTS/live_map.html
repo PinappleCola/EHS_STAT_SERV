@@ -624,7 +624,7 @@
 
         // Init on load, then poll status every 500ms
         initRxConfig();
-        loadAltitudeColourLookup().catch(() => applyAltitudeColourLevels(DEFAULT_ALTITUDE_COLOUR_LEVELS));
+        loadAltitudeColourLookup();
         setInterval(pollRxStatus, 500);
 
         // =============================================
