@@ -718,6 +718,7 @@
         const MIN_TRAIL_SPAN_MINUTES = 0.1;
         const SLIDER_ZINDEX_SWITCH_BUFFER = 0.05;
         const MAX_STALE_POSITION_MS = 15000;
+        const TRAIL_REACQUIRE_GAP_MS = 65000;
         const HAZARD_LEVEL_LABELS = ['NIL', 'LIGHT', 'MOD', 'SEV'];
         let suppressTimecodeSync = false;
 
@@ -1152,6 +1153,7 @@
                 const validPoints = historyObj.path.filter(pt => { const age = renderTime - pt.time; return age >= minAgeMs && age <= maxAgeMs; });
                 if (validPoints.length < 2) return;
                 for (let i = 1; i < validPoints.length; i++) {
+                    if (validPoints[i - 1].gapBreak || validPoints[i].gapBreak) continue;
                     const p1 = getPoint(validPoints[i - 1].lat, validPoints[i - 1].lon);
                     const p2 = getPoint(validPoints[i].lat, validPoints[i].lon);
                     const age = renderTime - validPoints[i].time;
@@ -1441,6 +1443,7 @@
                     if (isDimmed) return; 
                     
                     for(let i = 1; i < validPoints.length; i++) {
+                        if (validPoints[i - 1].gapBreak || validPoints[i].gapBreak) continue;
                         const pt1 = getCanvasPoint(validPoints[i-1].lat, validPoints[i-1].lon, R_CX, R_CY, ppd);
                         const pt2 = getCanvasPoint(validPoints[i].lat, validPoints[i].lon, R_CX, R_CY, ppd);
 
@@ -1998,17 +2001,47 @@
                 const now = Date.now();
 
                 aircraftList.forEach(p => {
-                    if (p.lat && p.lon && p.lat !== '----' && p.lon !== '----') {
-                        if (!trailHistory[p.icao]) trailHistory[p.icao] = { path: [], lastUpdate: now };
+                    if (p.lat !== undefined && p.lon !== undefined && p.lat !== null && p.lon !== null && p.lat !== '----' && p.lon !== '----') {
                         const latF = parseFloat(p.lat); const lonF = parseFloat(p.lon);
+                        if (!Number.isFinite(latF) || !Number.isFinite(lonF)) return;
+                        if (!trailHistory[p.icao]) trailHistory[p.icao] = { path: [], lastUpdate: now, lastPointTime: null };
                         const historyObj = trailHistory[p.icao];
-                        historyObj.lastUpdate = now;
-                        
+                        const gapSinceLastPointMs = (historyObj.lastPointTime === null) ? 0 : (now - historyObj.lastPointTime);
+                        const gapSinceLastSeenMs = now - historyObj.lastUpdate;
                         const history = historyObj.path;
-                        if (history.length === 0 || history[history.length - 1].lat !== latF || history[history.length - 1].lon !== lonF) {
-                            history.push({ lat: latF, lon: lonF, time: now, alt: p.alt });
+                        const lastHistoryEntry = history.length > 0 ? history[history.length - 1] : null;
+                        if (historyObj.path.length > 0 && !lastHistoryEntry?.gapBreak && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
+                            historyObj.path.push({ time: now, gapBreak: true });
                         }
-                        if (history.length > 10000) history.shift();
+                        historyObj.lastUpdate = now;
+
+                        let lastTrailPoint = null;
+                        for (let i = history.length - 1; i >= 0; i--) {
+                            if (!history[i].gapBreak) {
+                                lastTrailPoint = history[i];
+                                break;
+                            }
+                        }
+                        if (!lastTrailPoint || lastTrailPoint.lat !== latF || lastTrailPoint.lon !== lonF) {
+                            history.push({ lat: latF, lon: lonF, time: now, alt: p.alt });
+                            historyObj.lastPointTime = now;
+                        }
+                        if (history.length > 10000) {
+                            history.splice(0, history.length - 10000);
+                            if (history[0]?.gapBreak) {
+                                const firstTrailIdx = history.findIndex(pt => !pt.gapBreak);
+                                if (firstTrailIdx === -1) history.length = 0;
+                                else if (firstTrailIdx > 0) history.splice(0, firstTrailIdx);
+                            }
+                            let latestPointTime = null;
+                            for (let i = history.length - 1; i >= 0; i--) {
+                                if (!history[i].gapBreak) {
+                                    latestPointTime = history[i].time;
+                                    break;
+                                }
+                            }
+                            historyObj.lastPointTime = latestPointTime;
+                        }
                     }
                 });
 
