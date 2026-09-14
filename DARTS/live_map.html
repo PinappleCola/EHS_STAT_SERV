@@ -2010,6 +2010,7 @@
                         const history = historyObj.path;
                         if (historyObj.path.length > 0 && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
                             historyObj.path.push({ time: now, gapBreak: true });
+                            historyObj.lastPointTime = now;
                         }
                         historyObj.lastUpdate = now;
 
@@ -2019,6 +2020,14 @@
                         }
                         if (history.length > 10000) {
                             history.splice(0, history.length - 10000);
+                            let latestPointTime = null;
+                            for (let i = history.length - 1; i >= 0; i--) {
+                                if (!history[i].gapBreak) {
+                                    latestPointTime = history[i].time;
+                                    break;
+                                }
+                            }
+                            historyObj.lastPointTime = latestPointTime;
                         }
                     }
                 });
