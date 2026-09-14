@@ -446,7 +446,7 @@
             const altitude = Number.parseInt(altitudeValue, 10);
             if (!Number.isFinite(altitude)) return altitudeColours[0] || DEFAULT_ALTITUDE_COLOUR_LEVELS[0].colour;
 
-            let low = 0, high = altitudeThresholds.length - 1, bestIdx = 0;
+            let low = 0, high = altitudeThresholds.length - 1, bestIdx = -1;
             while (low <= high) {
                 const mid = (low + high) >> 1;
                 if (altitudeThresholds[mid] <= altitude) {
@@ -456,6 +456,7 @@
                     high = mid - 1;
                 }
             }
+            if (bestIdx < 0) return DEFAULT_ALTITUDE_COLOUR_LEVELS[0].colour;
             return altitudeColours[bestIdx] || DEFAULT_ALTITUDE_COLOUR_LEVELS[0].colour;
         }
 
