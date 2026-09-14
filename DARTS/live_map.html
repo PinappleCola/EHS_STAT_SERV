@@ -2008,7 +2008,8 @@
                         const gapSinceLastPointMs = (historyObj.lastPointTime === null) ? 0 : (now - historyObj.lastPointTime);
                         const gapSinceLastSeenMs = now - historyObj.lastUpdate;
                         const history = historyObj.path;
-                        if (historyObj.path.length > 0 && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
+                        const lastHistoryEntry = history.length > 0 ? history[history.length - 1] : null;
+                        if (historyObj.path.length > 0 && !lastHistoryEntry?.gapBreak && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
                             historyObj.path.push({ time: now, gapBreak: true });
                         }
                         historyObj.lastUpdate = now;
