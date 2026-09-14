@@ -1606,12 +1606,12 @@ def load_altitude_colours():
     iso_time = get_iso_time()
     try:
         if os.path.exists(ALTITUDE_COLOURS_PATH):
-            with open(ALTITUDE_COLOURS_PATH, "r") as f:
+            with open(ALTITUDE_COLOURS_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
             levels = _normalize_altitude_colour_levels(loaded)
         else:
             levels = [dict(entry) for entry in DEFAULT_ALTITUDE_COLOUR_LEVELS]
-            with open(ALTITUDE_COLOURS_PATH, "w") as f:
+            with open(ALTITUDE_COLOURS_PATH, "w", encoding="utf-8") as f:
                 json.dump(levels, f, indent=4)
         with altitude_colours_lock:
             ALTITUDE_COLOUR_LEVELS = levels
