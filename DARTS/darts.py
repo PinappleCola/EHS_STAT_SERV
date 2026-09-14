@@ -1577,8 +1577,6 @@ def _normalize_altitude_colour_levels(raw_levels):
             continue
         altitude = entry.get("altitude")
         colour = entry.get("colour")
-        if not isinstance(altitude, (int, float)):
-            continue
         if not isinstance(colour, list) or len(colour) != 3:
             continue
         try:
@@ -1611,8 +1609,7 @@ def load_altitude_colours():
             levels = _normalize_altitude_colour_levels(loaded)
         else:
             levels = [dict(entry) for entry in DEFAULT_ALTITUDE_COLOUR_LEVELS]
-            with open(ALTITUDE_COLOURS_PATH, "w", encoding="utf-8") as f:
-                json.dump(levels, f, indent=4)
+            print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.YELLOW}WARNING: 'altitude_colours.json' not found. Using in-memory defaults.{ANSI.RESET}")
         with altitude_colours_lock:
             ALTITUDE_COLOUR_LEVELS = levels
         print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.GREEN}Altitude colour lookup loaded: {len(levels)} levels cached in RAM.{ANSI.RESET}")
