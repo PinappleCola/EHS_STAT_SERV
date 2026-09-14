@@ -1,0 +1,7 @@
+[
+    { "altitude": 0, "colour": [56, 189, 248] },
+    { "altitude": 10000, "colour": [52, 211, 153] },
+    { "altitude": 20000, "colour": [168, 85, 247] },
+    { "altitude": 30000, "colour": [251, 191, 36] },
+    { "altitude": 40000, "colour": [244, 114, 182] }
+]
