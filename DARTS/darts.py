@@ -1950,17 +1950,25 @@ def queue_db_write(item, allow_drop=False):
     return True
 
 
+def normalize_telemetry_timestamp(ts):
+    if isinstance(ts, (int, float)):
+        return get_iso_time(ts, timespec='microseconds')
+    if isinstance(ts, datetime.datetime):
+        return format_rfc3339(ts, timespec='microseconds')
+    ts_text = str(ts)
+    if not ts_text:
+        return get_iso_time(timespec='microseconds')
+    try:
+        parsed = datetime.datetime.fromisoformat(ts_text.replace("Z", "+00:00"))
+        return format_rfc3339(parsed, timespec='microseconds')
+    except Exception:
+        return get_iso_time(timespec='microseconds')
+
+
 def queue_telemetry_delta(ts, icao, field, value):
     if field.startswith("_") or field not in TELEMETRY_FIELDS:
         return False
-    if isinstance(ts, (int, float)):
-        ts = get_iso_time(ts, timespec='microseconds')
-    else:
-        try:
-            parsed = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-            ts = format_rfc3339(parsed, timespec='microseconds')
-        except Exception:
-            ts = get_iso_time(timespec='microseconds')
+    ts = normalize_telemetry_timestamp(ts)
     return queue_db_write(("TELEMETRY", ts, icao, field, serialize_telemetry_value(value)), allow_drop=True)
 
 # --- DB Engine & Live Metrics ---
@@ -1985,6 +1993,7 @@ with db_lock:
     db_cursor.execute("PRAGMA table_info(telemetry)")
     telemetry_cols = {row[1]: (row[2] or "").upper() for row in db_cursor.fetchall()}
     if telemetry_cols.get("ts") != "TEXT":
+        db_cursor.execute("DROP TABLE IF EXISTS telemetry_rfc3339")
         db_cursor.execute('''CREATE TABLE telemetry_rfc3339
                              (ts TEXT, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
         db_cursor.execute('''INSERT OR IGNORE INTO telemetry_rfc3339 (ts, icao, field, value)
@@ -1999,22 +2008,22 @@ with db_lock:
         db_cursor.execute("DROP TABLE telemetry")
         db_cursor.execute("ALTER TABLE telemetry_rfc3339 RENAME TO telemetry")
 
-    db_cursor.execute('''UPDATE telemetry
-                         SET ts = strftime('%Y-%m-%dT%H:%M:%fZ', ts, 'unixepoch')
-                         WHERE typeof(ts) IN ('integer', 'real')''')
-    db_cursor.execute("SELECT rowid, ts FROM telemetry WHERE typeof(ts)='text'")
-    telemetry_text_rows = db_cursor.fetchall()
-    telemetry_text_updates = []
-    for rowid, ts_val in telemetry_text_rows:
-        try:
-            parsed_ts = datetime.datetime.fromisoformat(str(ts_val).replace("Z", "+00:00"))
-            normalized_ts = format_rfc3339(parsed_ts, timespec='microseconds')
-            if normalized_ts != ts_val:
-                telemetry_text_updates.append((normalized_ts, rowid))
-        except Exception:
-            continue
-    if telemetry_text_updates:
-        db_cursor.executemany("UPDATE telemetry SET ts=? WHERE rowid=?", telemetry_text_updates)
+    db_cursor.execute("DROP TABLE IF EXISTS telemetry_normalized")
+    db_cursor.execute('''CREATE TABLE telemetry_normalized
+                         (ts TEXT, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
+    db_cursor.execute("SELECT ts, icao, field, value FROM telemetry WHERE ts IS NOT NULL")
+    telemetry_rows = db_cursor.fetchall()
+    normalized_rows = [
+        (normalize_telemetry_timestamp(ts_val), icao, field, value)
+        for ts_val, icao, field, value in telemetry_rows
+    ]
+    if normalized_rows:
+        db_cursor.executemany(
+            "INSERT OR IGNORE INTO telemetry_normalized (ts, icao, field, value) VALUES (?, ?, ?, ?)",
+            normalized_rows
+        )
+    db_cursor.execute("DROP TABLE telemetry")
+    db_cursor.execute("ALTER TABLE telemetry_normalized RENAME TO telemetry")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_field_val ON telemetry(field, value)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_ts ON telemetry(ts)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_icao ON telemetry(icao)")
