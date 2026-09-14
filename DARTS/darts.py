@@ -1520,8 +1520,20 @@ def decode_baudot_string(mb_bin):
     except Exception:
         return None
 
-def get_iso_time():
-    return datetime.datetime.now().isoformat(timespec='milliseconds')
+def format_rfc3339(dt_obj, timespec='milliseconds'):
+    if dt_obj.tzinfo is None:
+        dt_obj = dt_obj.replace(tzinfo=datetime.timezone.utc)
+    else:
+        dt_obj = dt_obj.astimezone(datetime.timezone.utc)
+    return dt_obj.isoformat(timespec=timespec).replace("+00:00", "Z")
+
+
+def get_iso_time(ts=None, timespec='milliseconds'):
+    if ts is None:
+        dt_obj = datetime.datetime.now(datetime.timezone.utc)
+    else:
+        dt_obj = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+    return format_rfc3339(dt_obj, timespec=timespec)
 
 def get_ui_time():
     return datetime.datetime.now().strftime('%H:%M:%S')
@@ -1941,6 +1953,14 @@ def queue_db_write(item, allow_drop=False):
 def queue_telemetry_delta(ts, icao, field, value):
     if field.startswith("_") or field not in TELEMETRY_FIELDS:
         return False
+    if isinstance(ts, (int, float)):
+        ts = get_iso_time(ts, timespec='microseconds')
+    else:
+        try:
+            parsed = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            ts = format_rfc3339(parsed, timespec='microseconds')
+        except Exception:
+            ts = get_iso_time(timespec='microseconds')
     return queue_db_write(("TELEMETRY", ts, icao, field, serialize_telemetry_value(value)), allow_drop=True)
 
 # --- DB Engine & Live Metrics ---
@@ -1960,7 +1980,10 @@ with db_lock:
                          (timestamp TEXT, event TEXT, icao TEXT, callsign TEXT, airline_or_data TEXT, lat TEXT, lon TEXT)''')
 
     db_cursor.execute('''CREATE TABLE IF NOT EXISTS telemetry
-                         (ts REAL, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
+                         (ts TEXT, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
+    db_cursor.execute('''UPDATE telemetry
+                         SET ts = strftime('%Y-%m-%dT%H:%M:%fZ', ts, 'unixepoch')
+                         WHERE typeof(ts) IN ('integer', 'real')''')
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_field_val ON telemetry(field, value)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_ts ON telemetry(ts)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_icao ON telemetry(icao)")
@@ -2320,7 +2343,7 @@ def run_reaper_loop():
                         ui_time = get_ui_time()
                         iso_time = get_iso_time() 
                         
-                        true_exit_iso = datetime.datetime.fromtimestamp(data["last_seen"]).isoformat(timespec='milliseconds')
+                        true_exit_iso = get_iso_time(data["last_seen"])
                         
                         event_pad = "[FAREWELL]".ljust(13)
                         count_pad = "      " 
