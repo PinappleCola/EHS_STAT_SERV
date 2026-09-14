@@ -2010,7 +2010,6 @@
                         const history = historyObj.path;
                         if (historyObj.path.length > 0 && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
                             historyObj.path.push({ time: now, gapBreak: true });
-                            historyObj.lastPointTime = now;
                         }
                         historyObj.lastUpdate = now;
 
