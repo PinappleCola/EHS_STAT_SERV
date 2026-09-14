@@ -1981,6 +1981,24 @@ with db_lock:
 
     db_cursor.execute('''CREATE TABLE IF NOT EXISTS telemetry
                          (ts TEXT, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
+
+    db_cursor.execute("PRAGMA table_info(telemetry)")
+    telemetry_cols = {row[1]: (row[2] or "").upper() for row in db_cursor.fetchall()}
+    if telemetry_cols.get("ts") != "TEXT":
+        db_cursor.execute('''CREATE TABLE telemetry_rfc3339
+                             (ts TEXT, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
+        db_cursor.execute('''INSERT OR IGNORE INTO telemetry_rfc3339 (ts, icao, field, value)
+                             SELECT CASE
+                                      WHEN typeof(ts) IN ('integer', 'real')
+                                      THEN strftime('%Y-%m-%dT%H:%M:%fZ', ts, 'unixepoch')
+                                      ELSE CAST(ts AS TEXT)
+                                    END,
+                                    icao, field, value
+                             FROM telemetry
+                             WHERE ts IS NOT NULL''')
+        db_cursor.execute("DROP TABLE telemetry")
+        db_cursor.execute("ALTER TABLE telemetry_rfc3339 RENAME TO telemetry")
+
     db_cursor.execute('''UPDATE telemetry
                          SET ts = strftime('%Y-%m-%dT%H:%M:%fZ', ts, 'unixepoch')
                          WHERE typeof(ts) IN ('integer', 'real')''')
