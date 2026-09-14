@@ -1950,19 +1950,42 @@ def queue_db_write(item, allow_drop=False):
     return True
 
 
-def normalize_telemetry_timestamp(ts, fallback_to_now=True):
+def normalize_telemetry_timestamp(ts):
     if isinstance(ts, (int, float)):
         return get_iso_time(ts, timespec='microseconds')
     if isinstance(ts, datetime.datetime):
         return format_rfc3339(ts, timespec='microseconds')
-    ts_text = str(ts)
+    ts_text = str(ts).strip()
     if not ts_text:
-        return get_iso_time(timespec='microseconds') if fallback_to_now else ts_text
+        return get_iso_time(timespec='microseconds')
     try:
         parsed = datetime.datetime.fromisoformat(ts_text.replace("Z", "+00:00"))
         return format_rfc3339(parsed, timespec='microseconds')
     except Exception:
-        return get_iso_time(timespec='microseconds') if fallback_to_now else ts_text
+        return get_iso_time(timespec='microseconds')
+
+
+def normalize_legacy_telemetry_timestamp(ts, fallback_index):
+    if isinstance(ts, (int, float)):
+        return get_iso_time(ts, timespec='microseconds')
+    if isinstance(ts, datetime.datetime):
+        return format_rfc3339(ts, timespec='microseconds')
+
+    ts_text = str(ts).strip()
+    if ts_text:
+        if re.fullmatch(r"[-+]?\d+(\.\d+)?", ts_text):
+            try:
+                return get_iso_time(float(ts_text), timespec='microseconds')
+            except Exception:
+                pass
+        try:
+            parsed = datetime.datetime.fromisoformat(ts_text.replace("Z", "+00:00"))
+            return format_rfc3339(parsed, timespec='microseconds')
+        except Exception:
+            pass
+
+    fallback_dt = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc) + datetime.timedelta(microseconds=fallback_index)
+    return format_rfc3339(fallback_dt, timespec='microseconds')
 
 
 def queue_telemetry_delta(ts, icao, field, value):
@@ -1992,54 +2015,33 @@ with db_lock:
 
     db_cursor.execute("PRAGMA table_info(telemetry)")
     telemetry_cols = {row[1]: (row[2] or "").upper() for row in db_cursor.fetchall()}
-    if telemetry_cols.get("ts") != "TEXT":
-        db_cursor.execute("DROP TABLE IF EXISTS telemetry_rfc3339")
-        db_cursor.execute('''CREATE TABLE telemetry_rfc3339
-                             (ts TEXT, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
-        db_cursor.execute('''INSERT OR IGNORE INTO telemetry_rfc3339 (ts, icao, field, value)
-                             SELECT CASE
-                                      WHEN typeof(ts) IN ('integer', 'real')
-                                      THEN strftime('%Y-%m-%dT%H:%M:%fZ', ts, 'unixepoch')
-                                      ELSE CAST(ts AS TEXT)
-                                    END,
-                                    icao, field, value
-                             FROM telemetry
-                             WHERE ts IS NOT NULL''')
-        db_cursor.execute("DROP TABLE telemetry")
-        db_cursor.execute("ALTER TABLE telemetry_rfc3339 RENAME TO telemetry")
+    needs_schema_migration = telemetry_cols.get("ts") != "TEXT"
+    needs_data_normalization = False
+    if not needs_schema_migration:
+        db_cursor.execute("SELECT 1 FROM telemetry WHERE ts IS NULL OR typeof(ts) != 'text' OR ts NOT LIKE '____-__-__T__:__:__%.%Z' LIMIT 1")
+        needs_data_normalization = db_cursor.fetchone() is not None
 
-    db_cursor.execute("DROP TABLE IF EXISTS telemetry_normalized")
-    db_cursor.execute('''CREATE TABLE telemetry_normalized
-                         (ts TEXT, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
-    db_cursor.execute("SELECT ts, icao, field, value FROM telemetry WHERE ts IS NOT NULL")
-    telemetry_rows = db_cursor.fetchall()
-    normalized_rows = []
-    seen_telemetry_keys = set()
-    for ts_val, icao, field, value in telemetry_rows:
-        normalized_ts = normalize_telemetry_timestamp(ts_val, fallback_to_now=False)
-        key = (icao, field, normalized_ts)
-        if key in seen_telemetry_keys:
-            try:
-                dt_obj = datetime.datetime.fromisoformat(normalized_ts.replace("Z", "+00:00"))
-            except Exception:
-                dt_obj = None
-            if dt_obj is not None:
-                while key in seen_telemetry_keys:
-                    dt_obj = dt_obj + datetime.timedelta(microseconds=1)
-                    normalized_ts = format_rfc3339(dt_obj, timespec='microseconds')
-                    key = (icao, field, normalized_ts)
-            else:
-                duplicate_suffix = 1
-                while key in seen_telemetry_keys:
-                    normalized_ts = f"{normalized_ts}|dup{duplicate_suffix}"
-                    key = (icao, field, normalized_ts)
-                    duplicate_suffix += 1
-        seen_telemetry_keys.add(key)
-        normalized_rows.append((normalized_ts, icao, field, value))
-    if normalized_rows:
-        db_cursor.executemany("INSERT INTO telemetry_normalized (ts, icao, field, value) VALUES (?, ?, ?, ?)", normalized_rows)
-    db_cursor.execute("DROP TABLE telemetry")
-    db_cursor.execute("ALTER TABLE telemetry_normalized RENAME TO telemetry")
+    if needs_schema_migration or needs_data_normalization:
+        db_cursor.execute("DROP TABLE IF EXISTS telemetry_normalized")
+        db_cursor.execute('''CREATE TABLE telemetry_normalized
+                             (ts TEXT, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
+        db_cursor.execute("SELECT rowid, ts, icao, field, value FROM telemetry WHERE ts IS NOT NULL ORDER BY rowid")
+        telemetry_rows = db_cursor.fetchall()
+        normalized_rows = []
+        seen_telemetry_keys = set()
+        for fallback_index, (_, ts_val, icao, field, value) in enumerate(telemetry_rows):
+            normalized_ts = normalize_legacy_telemetry_timestamp(ts_val, fallback_index)
+            key = (icao, field, normalized_ts)
+            while key in seen_telemetry_keys:
+                dt_obj = datetime.datetime.fromisoformat(normalized_ts.replace("Z", "+00:00")) + datetime.timedelta(microseconds=1)
+                normalized_ts = format_rfc3339(dt_obj, timespec='microseconds')
+                key = (icao, field, normalized_ts)
+            seen_telemetry_keys.add(key)
+            normalized_rows.append((normalized_ts, icao, field, value))
+        if normalized_rows:
+            db_cursor.executemany("INSERT INTO telemetry_normalized (ts, icao, field, value) VALUES (?, ?, ?, ?)", normalized_rows)
+        db_cursor.execute("DROP TABLE telemetry")
+        db_cursor.execute("ALTER TABLE telemetry_normalized RENAME TO telemetry")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_field_val ON telemetry(field, value)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_ts ON telemetry(ts)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_icao ON telemetry(icao)")
