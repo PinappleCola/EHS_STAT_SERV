@@ -2014,7 +2014,14 @@
                         }
                         historyObj.lastUpdate = now;
 
-                        if (history.length === 0 || history[history.length - 1].lat !== latF || history[history.length - 1].lon !== lonF) {
+                        let lastTrailPoint = null;
+                        for (let i = history.length - 1; i >= 0; i--) {
+                            if (!history[i].gapBreak) {
+                                lastTrailPoint = history[i];
+                                break;
+                            }
+                        }
+                        if (!lastTrailPoint || lastTrailPoint.lat !== latF || lastTrailPoint.lon !== lonF) {
                             history.push({ lat: latF, lon: lonF, time: now, alt: p.alt });
                         }
                         if (history.length > 10000) {
