@@ -2002,6 +2002,19 @@ with db_lock:
     db_cursor.execute('''UPDATE telemetry
                          SET ts = strftime('%Y-%m-%dT%H:%M:%fZ', ts, 'unixepoch')
                          WHERE typeof(ts) IN ('integer', 'real')''')
+    db_cursor.execute("SELECT rowid, ts FROM telemetry WHERE typeof(ts)='text'")
+    telemetry_text_rows = db_cursor.fetchall()
+    telemetry_text_updates = []
+    for rowid, ts_val in telemetry_text_rows:
+        try:
+            parsed_ts = datetime.datetime.fromisoformat(str(ts_val).replace("Z", "+00:00"))
+            normalized_ts = format_rfc3339(parsed_ts, timespec='microseconds')
+            if normalized_ts != ts_val:
+                telemetry_text_updates.append((normalized_ts, rowid))
+        except Exception:
+            continue
+    if telemetry_text_updates:
+        db_cursor.executemany("UPDATE telemetry SET ts=? WHERE rowid=?", telemetry_text_updates)
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_field_val ON telemetry(field, value)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_ts ON telemetry(ts)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_icao ON telemetry(icao)")
