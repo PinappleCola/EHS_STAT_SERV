@@ -2026,20 +2026,24 @@ with db_lock:
         db_cursor.execute('''CREATE TABLE telemetry_normalized
                              (ts TEXT, icao TEXT, field TEXT, value TEXT, PRIMARY KEY (icao, field, ts))''')
         db_cursor.execute("SELECT rowid, ts, icao, field, value FROM telemetry WHERE ts IS NOT NULL ORDER BY rowid")
-        telemetry_rows = db_cursor.fetchall()
-        normalized_rows = []
-        seen_telemetry_keys = set()
-        for fallback_index, (_, ts_val, icao, field, value) in enumerate(telemetry_rows):
-            normalized_ts = normalize_legacy_telemetry_timestamp(ts_val, fallback_index)
-            key = (icao, field, normalized_ts)
-            while key in seen_telemetry_keys:
-                dt_obj = datetime.datetime.fromisoformat(normalized_ts.replace("Z", "+00:00")) + datetime.timedelta(microseconds=1)
-                normalized_ts = format_rfc3339(dt_obj, timespec='microseconds')
-                key = (icao, field, normalized_ts)
-            seen_telemetry_keys.add(key)
-            normalized_rows.append((normalized_ts, icao, field, value))
-        if normalized_rows:
-            db_cursor.executemany("INSERT INTO telemetry_normalized (ts, icao, field, value) VALUES (?, ?, ?, ?)", normalized_rows)
+        fallback_index = 0
+        while True:
+            telemetry_batch = db_cursor.fetchmany(1000)
+            if not telemetry_batch:
+                break
+            for _, ts_val, icao, field, value in telemetry_batch:
+                normalized_ts = normalize_legacy_telemetry_timestamp(ts_val, fallback_index)
+                fallback_index += 1
+                while True:
+                    try:
+                        db_cursor.execute(
+                            "INSERT INTO telemetry_normalized (ts, icao, field, value) VALUES (?, ?, ?, ?)",
+                            (normalized_ts, icao, field, value)
+                        )
+                        break
+                    except sqlite3.IntegrityError:
+                        dt_obj = datetime.datetime.fromisoformat(normalized_ts.replace("Z", "+00:00")) + datetime.timedelta(microseconds=1)
+                        normalized_ts = format_rfc3339(dt_obj, timespec='microseconds')
         db_cursor.execute("DROP TABLE telemetry")
         db_cursor.execute("ALTER TABLE telemetry_normalized RENAME TO telemetry")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_field_val ON telemetry(field, value)")
