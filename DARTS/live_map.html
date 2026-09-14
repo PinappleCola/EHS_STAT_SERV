@@ -2017,7 +2017,9 @@
                             history.push({ lat: latF, lon: lonF, time: now, alt: p.alt });
                             historyObj.lastPointTime = now;
                         }
-                        while (history.length > 10000) history.shift();
+                        if (history.length > 10000) {
+                            history.splice(0, history.length - 10000);
+                        }
                     }
                 });
 
