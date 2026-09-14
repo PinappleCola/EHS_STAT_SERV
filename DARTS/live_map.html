@@ -396,6 +396,82 @@
         // =============================================
         const HTTP_API = 'http://localhost:8766';
         let currentRxMode = 'A';
+        const GROUND_TRAIL_COLOUR = [249, 115, 22];
+        const DEFAULT_ALTITUDE_COLOUR_LEVELS = [
+            { altitude: 0, colour: [56, 189, 248] },
+            { altitude: 10000, colour: [52, 211, 153] },
+            { altitude: 20000, colour: [168, 85, 247] },
+            { altitude: 30000, colour: [251, 191, 36] },
+            { altitude: 40000, colour: [244, 114, 182] },
+        ];
+        let altitudeThresholds = [];
+        let altitudeColours = [];
+
+        function normalizeAltitudeColourLevels(levels) {
+            if (!Array.isArray(levels)) return [];
+            const valid = [];
+            levels.forEach((entry) => {
+                if (!entry || typeof entry !== 'object') return;
+                const altitude = Number.parseInt(entry.altitude, 10);
+                const colour = entry.colour;
+                if (!Number.isFinite(altitude) || !Array.isArray(colour) || colour.length !== 3) return;
+                const rgb = colour.map((c) => {
+                    const value = Number.parseInt(c, 10);
+                    return Number.isFinite(value) ? Math.max(0, Math.min(255, value)) : NaN;
+                });
+                if (rgb.some((v) => Number.isNaN(v))) return;
+                valid.push({ altitude, colour: rgb });
+            });
+            valid.sort((a, b) => a.altitude - b.altitude);
+            const deduped = [];
+            valid.forEach((entry) => {
+                if (deduped.length && deduped[deduped.length - 1].altitude === entry.altitude) {
+                    deduped[deduped.length - 1] = entry;
+                } else {
+                    deduped.push(entry);
+                }
+            });
+            return deduped.slice(0, 255);
+        }
+
+        function applyAltitudeColourLevels(levels) {
+            const normalized = normalizeAltitudeColourLevels(levels);
+            const resolved = normalized.length > 0 ? normalized : DEFAULT_ALTITUDE_COLOUR_LEVELS;
+            altitudeThresholds = resolved.map((entry) => entry.altitude);
+            altitudeColours = resolved.map((entry) => entry.colour);
+        }
+
+        function resolveAltitudeTrailColour(altitudeValue) {
+            if (altitudeValue === 'GROUND') return GROUND_TRAIL_COLOUR;
+            const altitude = Number.parseInt(altitudeValue, 10);
+            if (!Number.isFinite(altitude)) return altitudeColours[0] || DEFAULT_ALTITUDE_COLOUR_LEVELS[0].colour;
+
+            let low = 0, high = altitudeThresholds.length - 1, bestIdx = -1;
+            while (low <= high) {
+                const mid = (low + high) >> 1;
+                if (altitudeThresholds[mid] <= altitude) {
+                    bestIdx = mid;
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
+            }
+            if (bestIdx < 0) return DEFAULT_ALTITUDE_COLOUR_LEVELS[0].colour;
+            return altitudeColours[bestIdx] || DEFAULT_ALTITUDE_COLOUR_LEVELS[0].colour;
+        }
+
+        async function loadAltitudeColourLookup() {
+            try {
+                const response = await fetch(`${HTTP_API}/api/altitude-colours`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const payload = await response.json();
+                applyAltitudeColourLevels(payload && payload.levels);
+            } catch (err) {
+                console.warn('Altitude colour lookup unavailable, using defaults:', err);
+                applyAltitudeColourLevels(DEFAULT_ALTITUDE_COLOUR_LEVELS);
+            }
+        }
+        applyAltitudeColourLevels(DEFAULT_ALTITUDE_COLOUR_LEVELS);
 
         function applyRxModeUI(mode) {
             currentRxMode = mode;
@@ -548,6 +624,7 @@
 
         // Init on load, then poll status every 500ms
         initRxConfig();
+        loadAltitudeColourLookup();
         setInterval(pollRxStatus, 500);
 
         // =============================================
@@ -671,16 +748,6 @@
         function saveMapTagConfig() {
             localStorage.setItem(MAP_TAG_STORAGE_KEY, JSON.stringify({ fields: mapTagFields, showBox: mapTagShowBox }));
         }
-
-        // --- Altitude color legend (Phase 5) ---
-        const ALT_COLOR_LEGEND = [
-            { label: 'GROUND', color: 'rgb(249,115,22)' },
-            { label: '< FL100', color: 'rgb(56,189,248)' },
-            { label: 'FL100-200', color: 'rgb(52,211,153)' },
-            { label: 'FL200-300', color: 'rgb(168,85,247)' },
-            { label: 'FL300-400', color: 'rgb(251,191,36)' },
-            { label: '≥ FL400', color: 'rgb(244,114,182)' },
-        ];
 
         // --- Performance / latency counters (Phase 4) ---
         let perfCounters = { frames: 0, lastWsTime: 0, wsLatency: 0, renderMs: 0, aircraftCount: 0 };
@@ -1158,19 +1225,7 @@
                     const p2 = getPoint(validPoints[i].lat, validPoints[i].lon);
                     const age = renderTime - validPoints[i].time;
                     const alpha = Math.max(0.04, 1.0 - ((age - minAgeMs) / timeSpan));
-                    let a = validPoints[i].alt;
-                    let rC = 0, gC = 255, bC = 0;
-                    if (a === 'GROUND') { rC = 249; gC = 115; bC = 22; }
-                    else {
-                        a = parseInt(a);
-                        if (!isNaN(a)) {
-                            if (a < 10000) { rC = 56; gC = 189; bC = 248; }
-                            else if (a < 20000) { rC = 52; gC = 211; bC = 153; }
-                            else if (a < 30000) { rC = 168; gC = 85; bC = 247; }
-                            else if (a < 40000) { rC = 251; gC = 191; bC = 36; }
-                            else { rC = 244; gC = 114; bC = 182; }
-                        }
-                    }
+                    const [rC, gC, bC] = resolveAltitudeTrailColour(validPoints[i].alt);
                     sctx.beginPath();
                     sctx.strokeStyle = `rgba(${rC}, ${gC}, ${bC}, ${alpha})`;
                     sctx.lineWidth = 1.8;
@@ -1450,19 +1505,7 @@
                         const age = renderTime - validPoints[i].time;
                         const alpha = Math.max(0.02, 1.0 - ((age - minAgeMs) / timeSpan));
 
-                        let a = validPoints[i].alt;
-                        let rC=0, gC=255, bC=0; 
-                        if (a === 'GROUND') { rC=249; gC=115; bC=22; }
-                        else {
-                            a = parseInt(a);
-                            if (!isNaN(a)) {
-                                if (a < 10000) { rC=56; gC=189; bC=248; }       // Sky blue - low altitude
-                                else if (a < 20000) { rC=52; gC=211; bC=153; }  // Teal/mint
-                                else if (a < 30000) { rC=168; gC=85; bC=247; }  // Purple
-                                else if (a < 40000) { rC=251; gC=191; bC=36; }  // Amber/gold
-                                else { rC=244; gC=114; bC=182; }                 // Pink - FL400+
-                            }
-                        }
+                        const [rC, gC, bC] = resolveAltitudeTrailColour(validPoints[i].alt);
 
                         rCtx.beginPath();
                         if (isHovered) {
@@ -2060,16 +2103,6 @@
             renderTacticalScope(lastAircraftList);
             perfCounters.renderMs = (performance.now() - t0).toFixed(1);
             perfCounters.aircraftCount = lastAircraftList.length;
-            
-            // Draw altitude color legend (bottom-left)
-            const lX = 20, lY = rCanvas.height - 20 - (ALT_COLOR_LEGEND.length * 18);
-            rCtx.font = "10px 'B612 Mono', monospace";
-            ALT_COLOR_LEGEND.forEach((entry, i) => {
-                rCtx.fillStyle = entry.color;
-                rCtx.fillRect(lX, lY + i * 18, 12, 12);
-                rCtx.fillStyle = '#94a3b8';
-                rCtx.fillText(entry.label, lX + 18, lY + i * 18 + 10);
-            });
             
             // Draw perf overlay (bottom-right, toggleable)
             if (showPerfOverlay) {

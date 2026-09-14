@@ -24,6 +24,7 @@ import http.server
 APP_VERSION = "v55"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "runtime_config.json")
+ALTITUDE_COLOURS_PATH = os.path.join(BASE_DIR, "altitude_colours.json")
 
 try:
     import pyModeS as pms
@@ -98,6 +99,14 @@ class ANSI:
     RED = '\033[91m'
     CYAN = '\033[96m'
     MAGENTA = '\033[95m'
+
+DEFAULT_ALTITUDE_COLOUR_LEVELS = [
+    {"altitude": 0, "colour": [56, 189, 248]},
+    {"altitude": 10000, "colour": [52, 211, 153]},
+    {"altitude": 20000, "colour": [168, 85, 247]},
+    {"altitude": 30000, "colour": [251, 191, 36]},
+    {"altitude": 40000, "colour": [244, 114, 182]},
+]
 
 # --- Optional pyModeS Support ---
 MODE_S_POLY = 0xFFF409
@@ -1349,6 +1358,13 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                     "module_id": s.get("module_id", ""),
                 }
             self._send_json(status_out)
+        elif self.path == "/api/altitude-colours":
+            with altitude_colours_lock:
+                levels = [
+                    {"altitude": int(entry["altitude"]), "colour": [int(c) for c in entry["colour"]]}
+                    for entry in ALTITUDE_COLOUR_LEVELS
+                ]
+            self._send_json({"levels": levels})
         else:
             self._send_json({"error": "Not found"}, status=404)
 
@@ -1548,6 +1564,59 @@ def bare_metal_cpr_local(mb_bin, is_odd, lat_ref, lon_ref):
 # --- MASSIVE TACTICAL AIRLINE REGISTRY  ---
 # ==========================================
 TACTICAL_AIRLINE_DB = {}
+ALTITUDE_COLOUR_LEVELS = [dict(entry) for entry in DEFAULT_ALTITUDE_COLOUR_LEVELS]
+altitude_colours_lock = threading.Lock()
+
+def _normalize_altitude_colour_levels(raw_levels):
+    if not isinstance(raw_levels, list):
+        raise ValueError("Expected a JSON array of altitude/colour entries.")
+
+    sanitized = []
+    for entry in raw_levels:
+        if not isinstance(entry, dict):
+            continue
+        altitude = entry.get("altitude")
+        colour = entry.get("colour")
+        if not isinstance(colour, list) or len(colour) != 3:
+            continue
+        try:
+            rgb = [max(0, min(255, int(channel))) for channel in colour]
+            altitude_int = int(altitude)
+        except Exception:
+            continue
+        sanitized.append({"altitude": altitude_int, "colour": rgb})
+
+    if not sanitized:
+        raise ValueError("No valid entries found.")
+
+    sanitized.sort(key=lambda item: item["altitude"])
+    deduped = {}
+    for item in sanitized:
+        deduped[item["altitude"]] = item["colour"]
+    ordered = [{"altitude": alt, "colour": rgb} for alt, rgb in sorted(deduped.items(), key=lambda kv: kv[0])]
+
+    if len(ordered) > 255:
+        ordered = ordered[:255]
+    return ordered
+
+def load_altitude_colours():
+    global ALTITUDE_COLOUR_LEVELS
+    iso_time = get_iso_time()
+    try:
+        if os.path.exists(ALTITUDE_COLOURS_PATH):
+            with open(ALTITUDE_COLOURS_PATH, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            levels = _normalize_altitude_colour_levels(loaded)
+        else:
+            levels = [dict(entry) for entry in DEFAULT_ALTITUDE_COLOUR_LEVELS]
+            print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.YELLOW}WARNING: 'altitude_colours.json' not found. Using in-memory defaults.{ANSI.RESET}")
+        with altitude_colours_lock:
+            ALTITUDE_COLOUR_LEVELS = levels
+        print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.GREEN}Altitude colour lookup loaded: {len(levels)} levels cached in RAM.{ANSI.RESET}")
+    except Exception as e:
+        with altitude_colours_lock:
+            ALTITUDE_COLOUR_LEVELS = [dict(entry) for entry in DEFAULT_ALTITUDE_COLOUR_LEVELS]
+        print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.RED}Error loading 'altitude_colours.json': {e}. Using defaults.{ANSI.RESET}")
 
 def load_airline_db():
     global TACTICAL_AIRLINE_DB
@@ -3123,6 +3192,7 @@ if __name__ == "__main__":
     # compatibility with the websockets library.
     if os.name == "nt":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    load_altitude_colours()
     load_airline_db()
     load_historical_state()
     load_airspace()
