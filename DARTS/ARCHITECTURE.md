@@ -153,3 +153,5 @@ Displayed alongside separation measurements with exact Δt value.
 2. **Heading arbitration edge case**: During rapid heading source switching (e.g., aircraft transitioning from radar-only to ADS-B), there may be a single 1s frame where hysteresis holds an incorrect value. This is by design (stability over immediate accuracy).
 
 3. **No position extrapolation**: Aircraft positions are displayed only at last-received coordinates. During data gaps, aircraft appear stationary rather than continuing on predicted path. This is intentional for a surveillance display but may confuse operators unfamiliar with the system.
+
+4. **Trail-line regression coverage gap**: Trail continuity now depends on `gapBreak` markers in the frontend render path, but there is no dedicated automated frontend test harness for `live_map.html` logic. Future work should add repeatable replay/scenario tests (including disappear/reappear at large time windows) to reduce reliance on manual validation and to better separate real defects from automated-review false positives.
