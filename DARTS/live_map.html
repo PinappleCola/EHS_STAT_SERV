@@ -2026,6 +2026,11 @@
                         }
                         if (history.length > 10000) {
                             history.splice(0, history.length - 10000);
+                            if (history[0]?.gapBreak) {
+                                const firstTrailIdx = history.findIndex(pt => !pt.gapBreak);
+                                if (firstTrailIdx === -1) history.length = 0;
+                                else if (firstTrailIdx > 0) history.splice(0, firstTrailIdx);
+                            }
                         }
                     }
                 });
