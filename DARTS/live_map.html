@@ -390,6 +390,8 @@
         const entityCache = {};
         
         let airspaceGeoJSON = { type: "FeatureCollection", features: [] };
+        let waypointScoringByName = {};
+        let waypointScoringVersion = 0;
 
         // =============================================
         // --- DUAL RECEIVER MANAGEMENT ---
@@ -1412,6 +1414,15 @@
                             
                             // Per-category colour overrides any inline props.color
                             let color = isSelected ? '#38bdf8' : catColour;
+                            if (!isSelected && iconType === 'WAYPOINT') {
+                                const pointName = props.name || props.id || 'UNNAMED';
+                                const scoreState = waypointScoringByName[pointName];
+                                if (scoreState && typeof scoreState.colour_state === 'string') {
+                                    color = scoreState.colour_state;
+                                } else if (scoreState && Array.isArray(scoreState.colour_rgb) && scoreState.colour_rgb.length === 3) {
+                                    color = `rgb(${scoreState.colour_rgb[0]},${scoreState.colour_rgb[1]},${scoreState.colour_rgb[2]})`;
+                                }
+                            }
                             
                             rCtx.globalAlpha = isDimmed ? 0.3 : 1.0;
                             rCtx.strokeStyle = color; rCtx.fillStyle = color; rCtx.lineWidth = 1.5;
@@ -2021,6 +2032,15 @@
                 const parsedData = JSON.parse(event.data);
                 if (parsedData.airspace) airspaceGeoJSON = parsedData.airspace;
                 if (parsedData.audit_config) auditConfig = parsedData.audit_config;
+                if (Array.isArray(parsedData.waypoint_scoring_updates)) {
+                    parsedData.waypoint_scoring_updates.forEach((entry) => {
+                        if (!entry || !entry.name) return;
+                        waypointScoringByName[entry.name] = entry;
+                    });
+                }
+                if (typeof parsedData.waypoint_scoring_version === 'number') {
+                    waypointScoringVersion = parsedData.waypoint_scoring_version;
+                }
                 if (parsedData.audit_alerts) {
                     auditAlerts = parsedData.audit_alerts;
                     // Detect new outer circle crossings and play alert sound

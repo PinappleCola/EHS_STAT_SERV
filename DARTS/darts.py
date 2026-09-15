@@ -21,10 +21,11 @@ import re
 import os
 import http.server
 
-APP_VERSION = "v55"
+APP_VERSION = "v56"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "runtime_config.json")
 ALTITUDE_COLOURS_PATH = os.path.join(BASE_DIR, "altitude_colours.json")
+WAYPOINT_SCORING_LUT_PATH = os.path.join(BASE_DIR, "waypoint_scoring_lut.json")
 
 try:
     import pyModeS as pms
@@ -107,6 +108,21 @@ DEFAULT_ALTITUDE_COLOUR_LEVELS = [
     {"altitude": 30000, "colour": [251, 191, 36]},
     {"altitude": 40000, "colour": [244, 114, 182]},
 ]
+
+DEFAULT_WAYPOINT_SCORING_LUT = [
+    {"SCORE": 0, "COLOUR_STATE": [226, 232, 240]},
+    {"SCORE": 5, "COLOUR_STATE": [74, 222, 128]},
+    {"SCORE": 15, "COLOUR_STATE": [251, 191, 36]},
+    {"SCORE": 30, "COLOUR_STATE": [248, 113, 113]},
+]
+DEFAULT_WAYPOINT_SCORING_CONFIG = {
+    "SCORING_RAD_INNER": 0.5,
+    "SCORING_RAD_OUTER": 1.0,
+    "POINTS_DECAY_PER_HOUR": 6.0,
+    "RAD_OUT_CROSS_AWARD": 1.0,
+    "RAD_IN_CROSS_AWARD": 3.0,
+    "SCORE_TABLE": [dict(entry) for entry in DEFAULT_WAYPOINT_SCORING_LUT],
+}
 
 # --- Optional pyModeS Support ---
 MODE_S_POLY = 0xFFF409
@@ -1566,6 +1582,9 @@ def bare_metal_cpr_local(mb_bin, is_odd, lat_ref, lon_ref):
 TACTICAL_AIRLINE_DB = {}
 ALTITUDE_COLOUR_LEVELS = [dict(entry) for entry in DEFAULT_ALTITUDE_COLOUR_LEVELS]
 altitude_colours_lock = threading.Lock()
+WAYPOINT_SCORING_CONFIG = dict(DEFAULT_WAYPOINT_SCORING_CONFIG)
+WAYPOINT_SCORING_TABLE = [dict(entry) for entry in DEFAULT_WAYPOINT_SCORING_LUT]
+waypoint_scoring_config_lock = threading.Lock()
 
 def _normalize_altitude_colour_levels(raw_levels):
     if not isinstance(raw_levels, list):
@@ -1617,6 +1636,103 @@ def load_altitude_colours():
         with altitude_colours_lock:
             ALTITUDE_COLOUR_LEVELS = [dict(entry) for entry in DEFAULT_ALTITUDE_COLOUR_LEVELS]
         print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.RED}Error loading 'altitude_colours.json': {e}. Using defaults.{ANSI.RESET}")
+
+def _parse_colour_state(value):
+    if isinstance(value, list) and len(value) == 3:
+        try:
+            rgb = [max(0, min(255, int(channel))) for channel in value]
+            return rgb
+        except Exception:
+            return None
+    if isinstance(value, str):
+        match = re.match(r'^\s*rgb\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)\s*$', value, re.IGNORECASE)
+        if match:
+            return [max(0, min(255, int(match.group(i)))) for i in (1, 2, 3)]
+    return None
+
+def _normalize_waypoint_scoring_lut(raw_payload):
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    raw_table = (
+        payload.get("SCORE_TABLE")
+        or payload.get("WAYPOINT_SCORING_TABLE")
+        or payload.get("LUT")
+        or payload.get("table")
+    )
+    if raw_table is None and isinstance(raw_payload, list):
+        raw_table = raw_payload
+
+    normalized_table = []
+    if isinstance(raw_table, list):
+        for entry in raw_table:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                score = int(entry.get("SCORE"))
+            except Exception:
+                continue
+            colour_rgb = _parse_colour_state(entry.get("COLOUR_STATE"))
+            if colour_rgb is None:
+                continue
+            normalized_table.append({"SCORE": score, "COLOUR_STATE": colour_rgb})
+
+    if not normalized_table:
+        normalized_table = [dict(entry) for entry in DEFAULT_WAYPOINT_SCORING_LUT]
+
+    deduped = {}
+    for entry in normalized_table:
+        deduped[int(entry["SCORE"])] = [int(c) for c in entry["COLOUR_STATE"]]
+    normalized_table = [{"SCORE": score, "COLOUR_STATE": colour} for score, colour in sorted(deduped.items(), key=lambda kv: kv[0])]
+    if normalized_table[0]["SCORE"] > 0:
+        normalized_table.insert(0, {"SCORE": 0, "COLOUR_STATE": [226, 232, 240]})
+
+    def _num(key, default, minimum=None, maximum=None):
+        try:
+            value = float(payload.get(key, default))
+        except Exception:
+            value = float(default)
+        if minimum is not None:
+            value = max(minimum, value)
+        if maximum is not None:
+            value = min(maximum, value)
+        return value
+
+    cfg = {
+        "SCORING_RAD_INNER": _num("SCORING_RAD_INNER", DEFAULT_WAYPOINT_SCORING_CONFIG["SCORING_RAD_INNER"], minimum=0.05, maximum=100.0),
+        "SCORING_RAD_OUTER": _num("SCORING_RAD_OUTER", DEFAULT_WAYPOINT_SCORING_CONFIG["SCORING_RAD_OUTER"], minimum=0.1, maximum=100.0),
+        "POINTS_DECAY_PER_HOUR": _num("POINTS_DECAY_PER_HOUR", DEFAULT_WAYPOINT_SCORING_CONFIG["POINTS_DECAY_PER_HOUR"], minimum=0.0, maximum=500.0),
+        "RAD_OUT_CROSS_AWARD": _num("RAD_OUT_CROSS_AWARD", DEFAULT_WAYPOINT_SCORING_CONFIG["RAD_OUT_CROSS_AWARD"], minimum=0.0, maximum=100.0),
+        "RAD_IN_CROSS_AWARD": _num("RAD_IN_CROSS_AWARD", DEFAULT_WAYPOINT_SCORING_CONFIG["RAD_IN_CROSS_AWARD"], minimum=0.0, maximum=100.0),
+        "SCORE_TABLE": normalized_table,
+    }
+    cfg["SCORING_RAD_INNER"] = min(cfg["SCORING_RAD_INNER"], cfg["SCORING_RAD_OUTER"])
+    return cfg
+
+def load_waypoint_scoring_lut():
+    global WAYPOINT_SCORING_CONFIG, WAYPOINT_SCORING_TABLE
+    iso_time = get_iso_time()
+    try:
+        if os.path.exists(WAYPOINT_SCORING_LUT_PATH):
+            with open(WAYPOINT_SCORING_LUT_PATH, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            cfg = _normalize_waypoint_scoring_lut(raw)
+        else:
+            cfg = dict(DEFAULT_WAYPOINT_SCORING_CONFIG)
+            cfg["SCORE_TABLE"] = [dict(entry) for entry in DEFAULT_WAYPOINT_SCORING_LUT]
+            print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.YELLOW}WARNING: 'waypoint_scoring_lut.json' not found. Using defaults.{ANSI.RESET}")
+    except Exception as exc:
+        cfg = dict(DEFAULT_WAYPOINT_SCORING_CONFIG)
+        cfg["SCORE_TABLE"] = [dict(entry) for entry in DEFAULT_WAYPOINT_SCORING_LUT]
+        print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.RED}Error loading 'waypoint_scoring_lut.json': {exc}. Using defaults.{ANSI.RESET}")
+
+    with waypoint_scoring_config_lock:
+        WAYPOINT_SCORING_CONFIG = dict(cfg)
+        WAYPOINT_SCORING_TABLE = [dict(entry) for entry in cfg["SCORE_TABLE"]]
+    print(
+        f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.GREEN}"
+        f"Waypoint scoring LUT loaded: {len(WAYPOINT_SCORING_TABLE)} bands "
+        f"(outer={cfg['SCORING_RAD_OUTER']}NM inner={cfg['SCORING_RAD_INNER']}NM decay={cfg['POINTS_DECAY_PER_HOUR']}/hr)."
+        f"{ANSI.RESET}"
+    )
 
 def load_airline_db():
     global TACTICAL_AIRLINE_DB
@@ -1703,6 +1819,26 @@ telemetry_last_logged = {}
 log_queue_warn_state = {"depth": 0, "telemetry_drop": 0}
 telemetry_drop_count = 0
 log_queue_warn_lock = threading.Lock()
+WAYPOINT_SCORING_JITTER_EPSILON_NM = 0.03
+WAYPOINT_SCORING_EVENT_DEDUPE_S = 3.0
+WAYPOINT_SCORING_DECAY_SYNC_S = 300.0
+waypoint_scoring_state = {}
+waypoint_scoring_dirty = set()
+waypoint_scoring_zone_occupants = {}
+waypoint_scoring_recent_awards = {}
+waypoint_scoring_version = 0
+waypoint_scoring_last_decay_sync = 0.0
+waypoint_scoring_lock = threading.Lock()
+waypoint_scoring_metrics_lock = threading.Lock()
+waypoint_scoring_metrics = {
+    "loop_duration_ms": 0.0,
+    "crossings_last_cycle": 0,
+    "crossings_total": 0,
+    "queued_events_total": 0,
+    "rate_limited_events_total": 0,
+    "ws_payload_bytes_last": 0,
+    "ws_payload_bytes_peak": 0,
+}
 
 # --- Dual Receiver State ---
 rx_status_lock = threading.Lock()
@@ -1943,6 +2079,13 @@ def queue_telemetry_delta(ts, icao, field, value):
         return False
     return queue_db_write(("TELEMETRY", ts, icao, field, serialize_telemetry_value(value)), allow_drop=True)
 
+def queue_waypoint_scoring_event(event_row):
+    queued = queue_db_write(("WAYPOINT_SCORING", *event_row), allow_drop=False)
+    if queued:
+        with waypoint_scoring_metrics_lock:
+            waypoint_scoring_metrics["queued_events_total"] = waypoint_scoring_metrics.get("queued_events_total", 0) + 1
+    return queued
+
 # --- DB Engine & Live Metrics ---
 DB_PATH = os.path.join(BASE_DIR, "TELEMETRY.db")
 db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -1964,6 +2107,20 @@ with db_lock:
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_field_val ON telemetry(field, value)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_ts ON telemetry(ts)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_tel_icao ON telemetry(icao)")
+    db_cursor.execute('''CREATE TABLE IF NOT EXISTS WAYPOINT_SCORING
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          TIME TEXT,
+                          WAYPOINT_NAME TEXT,
+                          OUTER_OR_INNER TEXT,
+                          WAYPOINT_TOTAL_POINTS REAL,
+                          SCORING_ICAO TEXT,
+                          SCORING_CALLSIGN TEXT,
+                          ALT TEXT,
+                          HEADING TEXT,
+                          TAS TEXT)''')
+    db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_waypoint_scoring_time ON WAYPOINT_SCORING(TIME)")
+    db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_waypoint_scoring_waypoint ON WAYPOINT_SCORING(WAYPOINT_NAME)")
+    db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_waypoint_scoring_icao ON WAYPOINT_SCORING(SCORING_ICAO)")
     
     try:
         db_cursor.execute("SELECT COUNT(*) FROM flight_ledger")
@@ -2130,6 +2287,254 @@ def get_audit_points():
         points.append({"name": name, "lat": lat, "lon": lon, **cfg})
     return points
 
+def get_scored_waypoints():
+    points = []
+    for feature in AIRSPACE_GEOJSON.get("features", []):
+        props = feature.get("properties", {})
+        geom = feature.get("geometry", {})
+        if geom.get("type") != "Point":
+            continue
+        if props.get("masked"):
+            continue
+        category = (props.get("icon") or props.get("type") or "").upper()
+        if category not in {"WAYPOINT", "WPT"}:
+            continue
+        coords = geom.get("coordinates") or []
+        if len(coords) < 2:
+            continue
+        name = props.get("name") or props.get("id") or "UNNAMED"
+        points.append({"name": str(name), "lon": coords[0], "lat": coords[1]})
+    return points
+
+def _waypoint_colour_state(rgb):
+    return f"rgb({int(rgb[0])},{int(rgb[1])},{int(rgb[2])})"
+
+def _resolve_waypoint_band(points):
+    chosen = WAYPOINT_SCORING_TABLE[0] if WAYPOINT_SCORING_TABLE else {"SCORE": 0, "COLOUR_STATE": [226, 232, 240]}
+    for entry in WAYPOINT_SCORING_TABLE:
+        if points >= float(entry["SCORE"]):
+            chosen = entry
+        else:
+            break
+    rgb = [int(chosen["COLOUR_STATE"][0]), int(chosen["COLOUR_STATE"][1]), int(chosen["COLOUR_STATE"][2])]
+    return int(chosen["SCORE"]), rgb, _waypoint_colour_state(rgb)
+
+def _touch_waypoint_state_locked(name, now_ts):
+    global waypoint_scoring_version
+    state = waypoint_scoring_state.get(name)
+    if state is None:
+        _, colour_rgb, colour_state = _resolve_waypoint_band(0.0)
+        state = {
+            "points": 0.0,
+            "last_decay_ts": now_ts,
+            "colour_rgb": colour_rgb,
+            "colour_state": colour_state,
+            "band_score": 0,
+            "version": 0,
+            "updated_at": get_iso_time(),
+        }
+        waypoint_scoring_state[name] = state
+        waypoint_scoring_dirty.add(name)
+    else:
+        elapsed = max(0.0, now_ts - float(state.get("last_decay_ts", now_ts)))
+        decay_rate = float(WAYPOINT_SCORING_CONFIG.get("POINTS_DECAY_PER_HOUR", DEFAULT_WAYPOINT_SCORING_CONFIG["POINTS_DECAY_PER_HOUR"]))
+        if elapsed > 0 and decay_rate > 0:
+            old_points = float(state.get("points", 0.0))
+            decayed = max(0.0, old_points - ((elapsed / 3600.0) * decay_rate))
+            state["last_decay_ts"] = now_ts
+            if abs(decayed - old_points) >= 1e-6:
+                state["points"] = decayed
+                band_score, colour_rgb, colour_state = _resolve_waypoint_band(decayed)
+                if (
+                    state.get("colour_state") != colour_state
+                    or state.get("band_score") != band_score
+                ):
+                    state["band_score"] = band_score
+                    state["colour_rgb"] = colour_rgb
+                    state["colour_state"] = colour_state
+                    waypoint_scoring_version += 1
+                    state["version"] = waypoint_scoring_version
+                    state["updated_at"] = get_iso_time()
+                    waypoint_scoring_dirty.add(name)
+            else:
+                state["last_decay_ts"] = now_ts
+        else:
+            state["last_decay_ts"] = now_ts
+    return state
+
+def sync_waypoint_decay(now_ts=None):
+    global waypoint_scoring_last_decay_sync
+    if now_ts is None:
+        now_ts = time.time()
+    with waypoint_scoring_lock:
+        if now_ts - waypoint_scoring_last_decay_sync < WAYPOINT_SCORING_DECAY_SYNC_S:
+            return
+        waypoint_scoring_last_decay_sync = now_ts
+        names = list(waypoint_scoring_state.keys())
+        for name in names:
+            _touch_waypoint_state_locked(name, now_ts)
+
+def get_waypoint_scoring_updates_since(last_version):
+    with waypoint_scoring_lock:
+        max_version = waypoint_scoring_version
+        updates = []
+        for name, state in waypoint_scoring_state.items():
+            if int(state.get("version", 0)) > int(last_version):
+                updates.append({
+                    "name": name,
+                    "points": round(float(state.get("points", 0.0)), 3),
+                    "colour_state": state.get("colour_state", "rgb(226,232,240)"),
+                    "colour_rgb": [int(c) for c in state.get("colour_rgb", [226, 232, 240])],
+                    "version": int(state.get("version", 0)),
+                    "updated_at": state.get("updated_at"),
+                })
+        updates.sort(key=lambda item: item["version"])
+    return updates, max_version
+
+def snapshot_waypoint_scoring_metrics():
+    with waypoint_scoring_metrics_lock:
+        return dict(waypoint_scoring_metrics)
+
+def _record_waypoint_scoring_award(waypoint_name, perimeter, aircraft_data, now_ts):
+    global waypoint_scoring_version
+    with waypoint_scoring_lock:
+        _touch_waypoint_state_locked(waypoint_name, now_ts)
+        dedupe_key = (str(waypoint_name), str(perimeter), str(aircraft_data.get("icao", "----")))
+        recent_at = float(waypoint_scoring_recent_awards.get(dedupe_key, 0.0))
+        if now_ts - recent_at < WAYPOINT_SCORING_EVENT_DEDUPE_S:
+            with waypoint_scoring_metrics_lock:
+                waypoint_scoring_metrics["rate_limited_events_total"] = waypoint_scoring_metrics.get("rate_limited_events_total", 0) + 1
+            return False
+        waypoint_scoring_recent_awards[dedupe_key] = now_ts
+        cutoff = now_ts - max(30.0, WAYPOINT_SCORING_EVENT_DEDUPE_S * 10.0)
+        for key in list(waypoint_scoring_recent_awards.keys()):
+            if waypoint_scoring_recent_awards[key] < cutoff:
+                del waypoint_scoring_recent_awards[key]
+
+        state = waypoint_scoring_state[waypoint_name]
+        award = float(WAYPOINT_SCORING_CONFIG.get(
+            "RAD_IN_CROSS_AWARD" if perimeter == "INNER" else "RAD_OUT_CROSS_AWARD",
+            DEFAULT_WAYPOINT_SCORING_CONFIG["RAD_IN_CROSS_AWARD" if perimeter == "INNER" else "RAD_OUT_CROSS_AWARD"]
+        ))
+        pre_points = float(state.get("points", 0.0))
+        post_points = max(0.0, pre_points + award)
+        state["points"] = post_points
+        band_score, colour_rgb, colour_state = _resolve_waypoint_band(post_points)
+        waypoint_scoring_version += 1
+        state["version"] = waypoint_scoring_version
+        state["updated_at"] = get_iso_time()
+        state["band_score"] = band_score
+        state["colour_rgb"] = colour_rgb
+        state["colour_state"] = colour_state
+        waypoint_scoring_dirty.add(waypoint_name)
+
+    callsign = aircraft_data.get("callsign")
+    if callsign in (None, "", "----"):
+        callsign = None
+    queue_waypoint_scoring_event((
+        get_iso_time(),
+        waypoint_name,
+        perimeter,
+        round(post_points, 3),
+        str(aircraft_data.get("icao", "----")),
+        callsign,
+        str(aircraft_data.get("alt", "----")),
+        str(aircraft_data.get("heading", "----")),
+        str(aircraft_data.get("tas", "----")),
+    ))
+    return True
+
+def run_waypoint_scoring_monitor():
+    global waypoint_scoring_last_decay_sync
+    while True:
+        time.sleep(1)
+        cycle_start = time.perf_counter()
+        crossings_this_cycle = 0
+        try:
+            with waypoint_scoring_config_lock:
+                outer_radius = float(WAYPOINT_SCORING_CONFIG.get("SCORING_RAD_OUTER", DEFAULT_WAYPOINT_SCORING_CONFIG["SCORING_RAD_OUTER"]))
+                inner_radius = float(WAYPOINT_SCORING_CONFIG.get("SCORING_RAD_INNER", DEFAULT_WAYPOINT_SCORING_CONFIG["SCORING_RAD_INNER"]))
+            inner_radius = min(inner_radius, outer_radius)
+            entry_outer = max(0.0, outer_radius - WAYPOINT_SCORING_JITTER_EPSILON_NM)
+            exit_outer = outer_radius + WAYPOINT_SCORING_JITTER_EPSILON_NM
+            entry_inner = max(0.0, inner_radius - WAYPOINT_SCORING_JITTER_EPSILON_NM)
+            exit_inner = inner_radius + WAYPOINT_SCORING_JITTER_EPSILON_NM
+
+            waypoints = get_scored_waypoints()
+            if not waypoints:
+                continue
+
+            with state_lock:
+                ac_snapshot = {
+                    icao: {
+                        "icao": icao,
+                        "lat": data.get("lat"),
+                        "lon": data.get("lon"),
+                        "callsign": data.get("callsign", "----"),
+                        "alt": data.get("alt", "----"),
+                        "heading": data.get("heading", "----"),
+                        "tas": data.get("tas", "----"),
+                    }
+                    for icao, data in aircraft_state.items()
+                }
+
+            now_ts = time.time()
+            with waypoint_scoring_lock:
+                for waypoint in waypoints:
+                    _touch_waypoint_state_locked(waypoint["name"], now_ts)
+            sync_waypoint_decay(now_ts)
+
+            for waypoint in waypoints:
+                wp_name = waypoint["name"]
+                with waypoint_scoring_lock:
+                    prev_outer = set(waypoint_scoring_zone_occupants.get((wp_name, "OUTER"), set()))
+                    prev_inner = set(waypoint_scoring_zone_occupants.get((wp_name, "INNER"), set()))
+
+                current_outer = set()
+                current_inner = set()
+                wp_lat = float(waypoint["lat"])
+                wp_lon = float(waypoint["lon"])
+                for icao, data in ac_snapshot.items():
+                    ac_lat = data.get("lat")
+                    ac_lon = data.get("lon")
+                    if ac_lat in (None, "----") or ac_lon in (None, "----"):
+                        continue
+                    try:
+                        dist = haversine_nm(wp_lat, wp_lon, float(ac_lat), float(ac_lon))
+                    except (TypeError, ValueError):
+                        continue
+
+                    was_outer = icao in prev_outer
+                    was_inner = icao in prev_inner
+                    in_outer = (dist <= exit_outer) if was_outer else (dist <= entry_outer)
+                    in_inner = (dist <= exit_inner) if was_inner else (dist <= entry_inner)
+                    if in_outer:
+                        current_outer.add(icao)
+                    if in_inner:
+                        current_inner.add(icao)
+
+                new_outer_entries = current_outer - prev_outer
+                new_inner_entries = current_inner - prev_inner
+
+                with waypoint_scoring_lock:
+                    waypoint_scoring_zone_occupants[(wp_name, "OUTER")] = current_outer
+                    waypoint_scoring_zone_occupants[(wp_name, "INNER")] = current_inner
+
+                for icao in new_outer_entries:
+                    if _record_waypoint_scoring_award(wp_name, "OUTER", ac_snapshot.get(icao, {}), now_ts):
+                        crossings_this_cycle += 1
+                for icao in new_inner_entries:
+                    if _record_waypoint_scoring_award(wp_name, "INNER", ac_snapshot.get(icao, {}), now_ts):
+                        crossings_this_cycle += 1
+        except Exception as exc:
+            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[WPT SCORE] Monitor error: {exc}{ANSI.RESET}")
+        finally:
+            duration_ms = round((time.perf_counter() - cycle_start) * 1000.0, 2)
+            with waypoint_scoring_metrics_lock:
+                waypoint_scoring_metrics["loop_duration_ms"] = duration_ms
+                waypoint_scoring_metrics["crossings_last_cycle"] = crossings_this_cycle
+                waypoint_scoring_metrics["crossings_total"] = waypoint_scoring_metrics.get("crossings_total", 0) + crossings_this_cycle
+
 def run_audit_monitor():
     """Background thread that checks aircraft positions against audit circles."""
     while True:
@@ -2218,7 +2623,7 @@ def archivist_loop():
     global ledger_count
     while True:
         time.sleep(5)
-        ledger_batch, reg_updates, reg_inserts, telemetry_pending = [], [], [], []
+        ledger_batch, reg_updates, reg_inserts, telemetry_pending, waypoint_scoring_pending = [], [], [], [], []
         
         while not log_queue.empty():
             try:
@@ -2234,9 +2639,11 @@ def archivist_loop():
                     reg_inserts.append((item[1], item[2], item[3], item[4], item[5], item[6])) 
                 elif item[0] == "TELEMETRY":
                     telemetry_pending.append(item[1:])
+                elif item[0] == "WAYPOINT_SCORING":
+                    waypoint_scoring_pending.append(item[1:])
             except queue.Empty: break
                 
-        if ledger_batch or reg_updates or reg_inserts or telemetry_pending:
+        if ledger_batch or reg_updates or reg_inserts or telemetry_pending or waypoint_scoring_pending:
             try:
                 telemetry_batch = []
                 telemetry_updates = {}
@@ -2254,6 +2661,12 @@ def archivist_loop():
                     if reg_inserts: db_cursor.executemany("INSERT INTO aircraft_registry (icao, latest_callsign, airline, last_lat, last_lon, total_spots) VALUES (?, ?, ?, ?, ?, ?)", reg_inserts)
                     if reg_updates: db_cursor.executemany("UPDATE aircraft_registry SET latest_callsign=?, airline=?, last_lat=?, last_lon=?, total_spots=? WHERE icao=?", reg_updates)
                     if telemetry_batch: db_cursor.executemany("INSERT INTO telemetry (ts, icao, field, value) VALUES (?, ?, ?, ?)", telemetry_batch)
+                    if waypoint_scoring_pending:
+                        db_cursor.executemany(
+                            "INSERT INTO WAYPOINT_SCORING (TIME, WAYPOINT_NAME, OUTER_OR_INNER, WAYPOINT_TOTAL_POINTS, SCORING_ICAO, SCORING_CALLSIGN, ALT, HEADING, TAS) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            waypoint_scoring_pending
+                        )
                     db_conn.commit()
                     telemetry_last_logged.update(telemetry_updates)
             except Exception as e:
@@ -3087,9 +3500,11 @@ async def broadcast_state(websocket):
     global ledger_count
     
     async def send_updates():
+        last_waypoint_scoring_version = 0
         try:
             while True:
                 emit_time = time.time()
+                sync_waypoint_decay(emit_time)
                 with state_lock:
                     now = time.time()
                     payload = []
@@ -3127,14 +3542,27 @@ async def broadcast_state(websocket):
                     _audit_cfg_snap = dict(audit_config_cache)
                 with audit_alerts_lock:
                     _audit_alerts_snap = list(audit_active_alerts)
+                _wpt_updates, _wpt_version = get_waypoint_scoring_updates_since(last_waypoint_scoring_version)
+                last_waypoint_scoring_version = _wpt_version
+                _wpt_metrics = snapshot_waypoint_scoring_metrics()
                 out_data = {
                     "airframes": payload,
                     "airspace": AIRSPACE_GEOJSON,
-                    "meta": { "ledger_count": ledger_count },
+                    "meta": { "ledger_count": ledger_count, "waypoint_scoring_metrics": _wpt_metrics },
                     "audit_config": _audit_cfg_snap,
                     "audit_alerts": _audit_alerts_snap,
+                    "waypoint_scoring_updates": _wpt_updates,
+                    "waypoint_scoring_version": _wpt_version,
                 }
-                await websocket.send(json.dumps(out_data))
+                out_json = json.dumps(out_data)
+                payload_bytes = len(out_json.encode("utf-8"))
+                with waypoint_scoring_metrics_lock:
+                    waypoint_scoring_metrics["ws_payload_bytes_last"] = payload_bytes
+                    waypoint_scoring_metrics["ws_payload_bytes_peak"] = max(
+                        waypoint_scoring_metrics.get("ws_payload_bytes_peak", 0),
+                        payload_bytes
+                    )
+                await websocket.send(out_json)
                 await asyncio.sleep(1)
         except websockets.exceptions.ConnectionClosed: pass
 
@@ -3193,6 +3621,7 @@ if __name__ == "__main__":
     if os.name == "nt":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     load_altitude_colours()
+    load_waypoint_scoring_lut()
     load_airline_db()
     load_historical_state()
     load_airspace()
@@ -3206,5 +3635,6 @@ if __name__ == "__main__":
     threading.Thread(target=archivist_loop, daemon=True).start()
     threading.Thread(target=run_http_server, daemon=True).start()
     threading.Thread(target=run_audit_monitor, daemon=True).start()
+    threading.Thread(target=run_waypoint_scoring_monitor, daemon=True).start()
     try: asyncio.run(main())
     except KeyboardInterrupt: print(f"\n{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}Shutting down Tactical Matrix...{ANSI.RESET}")
