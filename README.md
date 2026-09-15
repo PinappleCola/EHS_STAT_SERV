@@ -111,6 +111,22 @@ All keys can also be overridden with environment variables:
 
 ---
 
+## Waypoint Scoring LUT
+
+Waypoint scoring defaults and score-to-colour bands are configured in:
+
+- `DARTS/waypoint_scoring_lut.json`
+
+Supported keys:
+- `SCORING_RAD_INNER` (NM)
+- `SCORING_RAD_OUTER` (NM)
+- `POINTS_DECAY_PER_HOUR`
+- `RAD_OUT_CROSS_AWARD`
+- `RAD_IN_CROSS_AWARD`
+- `SCORE_TABLE` entries with `SCORE` and `COLOUR_STATE` (`[R,G,B]`)
+
+---
+
 ## Dual-Receiver Mode (SIGINT triangulation)
 
 Set `"rx_mode": "DUAL"` and configure both `receiver_a` and `receiver_b` ports.

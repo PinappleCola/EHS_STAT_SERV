@@ -1,0 +1,13 @@
+{
+    "SCORING_RAD_INNER": 0.5,
+    "SCORING_RAD_OUTER": 1.0,
+    "POINTS_DECAY_PER_HOUR": 6,
+    "RAD_OUT_CROSS_AWARD": 1,
+    "RAD_IN_CROSS_AWARD": 3,
+    "SCORE_TABLE": [
+        { "SCORE": 0, "COLOUR_STATE": [226, 232, 240] },
+        { "SCORE": 5, "COLOUR_STATE": [74, 222, 128] },
+        { "SCORE": 15, "COLOUR_STATE": [251, 191, 36] },
+        { "SCORE": 30, "COLOUR_STATE": [248, 113, 113] }
+    ]
+}
