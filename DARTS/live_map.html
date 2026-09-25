@@ -1133,7 +1133,11 @@
             });
             const mapStyleDropdown = document.getElementById('map-style-dropdown');
             const initialStyle = mapStyleDropdown ? mapStyleDropdown.value : 'carto-dark';
-            currentTileLayers = tileLayers[initialStyle] || tileLayers['carto-dark'] || [];
+            const activeInitialStyle = tileLayers[initialStyle] ? initialStyle : 'carto-dark';
+            currentTileLayers = tileLayers[activeInitialStyle] || [];
+            if (mapStyleDropdown && mapStyleDropdown.value !== activeInitialStyle) {
+                mapStyleDropdown.value = activeInitialStyle;
+            }
             currentTileLayers.forEach((layer) => layer.addTo(leafMap));
             if (mapStyleDropdown) {
                 mapStyleDropdown.addEventListener('change', (e) => {
