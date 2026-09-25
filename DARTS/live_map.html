@@ -1144,9 +1144,6 @@
                     const nextLayers = tileLayers[e.target.value];
                     if (!nextLayers || nextLayers.length === 0) return;
                     const previousLayers = currentTileLayers.slice();
-                    currentTileLayers.forEach((layer) => {
-                        if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
-                    });
                     const addedLayers = [];
                     try {
                         nextLayers.forEach((layer) => {
@@ -1160,6 +1157,12 @@
                         previousLayers.forEach((layer) => layer.addTo(leafMap));
                         return;
                     }
+                    previousLayers.forEach((layer) => {
+                        if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
+                    });
+                    addedLayers.forEach((layer) => {
+                        if (leafMap.hasLayer(layer) && typeof layer.bringToFront === 'function') layer.bringToFront();
+                    });
                     currentTileLayers = nextLayers;
                 });
             }
