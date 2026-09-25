@@ -1119,11 +1119,11 @@
                 'esri-topo': {
                     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
                     // Conservative cap avoids repeated missing-tile requests on higher ArcGIS zoom levels.
-                    options: { maxZoom: 17, attribution: esriTopoAttribution }
+                    options: { maxNativeZoom: 17, maxZoom: 20, attribution: esriTopoAttribution }
                 },
                 'esri-imagery': {
                     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-                    options: { maxZoom: 17, attribution: esriImageryAttribution }
+                    options: { maxNativeZoom: 17, maxZoom: 20, attribution: esriImageryAttribution }
                 }
             };
             Object.entries(layerConfigs).forEach(([name, config]) => {
