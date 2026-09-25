@@ -1154,7 +1154,7 @@
                             layer.addTo(leafMap);
                         });
                     } catch (err) {
-                        addedLayers.forEach((layer) => {
+                        nextLayers.forEach((layer) => {
                             if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
                         });
                         previousLayers.forEach((layer) => layer.addTo(leafMap));
