@@ -1134,15 +1134,17 @@
             const initialStyle = mapStyleDropdown ? mapStyleDropdown.value : 'carto-dark';
             currentTileLayers = tileLayers[initialStyle] || tileLayers['carto-dark'] || [];
             currentTileLayers.forEach((layer) => layer.addTo(leafMap));
-            mapStyleDropdown.addEventListener('change', (e) => {
-                const nextLayers = tileLayers[e.target.value];
-                if (!nextLayers || nextLayers.length === 0) return;
-                currentTileLayers.forEach((layer) => {
-                    if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
+            if (mapStyleDropdown) {
+                mapStyleDropdown.addEventListener('change', (e) => {
+                    const nextLayers = tileLayers[e.target.value];
+                    if (!nextLayers || nextLayers.length === 0) return;
+                    currentTileLayers.forEach((layer) => {
+                        if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
+                    });
+                    nextLayers.forEach((layer) => layer.addTo(leafMap));
+                    currentTileLayers = nextLayers;
                 });
-                nextLayers.forEach((layer) => layer.addTo(leafMap));
-                currentTileLayers = nextLayers;
-            });
+            }
         }
 
         rCanvas.addEventListener('mousedown', e => {
