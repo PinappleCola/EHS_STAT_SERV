@@ -1147,8 +1147,8 @@
                     const addedLayers = [];
                     try {
                         nextLayers.forEach((layer) => {
-                            layer.addTo(leafMap);
                             addedLayers.push(layer);
+                            layer.addTo(leafMap);
                         });
                     } catch (err) {
                         addedLayers.forEach((layer) => {
