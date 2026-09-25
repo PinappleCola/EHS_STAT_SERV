@@ -1109,7 +1109,9 @@
             document.getElementById('map-style-dropdown').addEventListener('change', (e) => {
                 const nextLayer = tileLayers[e.target.value];
                 if (!nextLayer) return;
-                leafMap.removeLayer(currentTileLayer);
+                if (currentTileLayer && leafMap.hasLayer(currentTileLayer)) {
+                    leafMap.removeLayer(currentTileLayer);
+                }
                 currentTileLayer = nextLayer.addTo(leafMap);
             });
         }
