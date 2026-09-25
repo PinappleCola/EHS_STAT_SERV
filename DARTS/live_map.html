@@ -210,7 +210,10 @@
             <select id="map-style-dropdown" class="map-select" style="display: none;">
                 <option value="carto-dark">CARTO DARK</option>
                 <option value="carto-light">CARTO LIGHT</option>
-                <option value="osm">OSM TOPO</option>
+                <option value="carto-voyager">CARTO VOYAGER</option>
+                <option value="osm">OSM STANDARD</option>
+                <option value="esri-topo">ESRI TOPO</option>
+                <option value="esri-imagery">ESRI SATELLITE</option>
             </select>
             
             <button id="btn-network" class="btn-action btn-toggle">MAP TOGGLE</button>
@@ -1024,8 +1027,7 @@
         let isDragging = false; let lastMouse = { x: 0, y: 0 };
 
         if (typeof L !== 'undefined') {
-            leafMap = L.map('map-container', { zoomControl: false, attributionControl: false, zoomSnap: 0, zoomAnimation: false }).setView([REF_LAT, REF_LON], 10);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(leafMap);
+            leafMap = L.map('map-container', { zoomControl: false, attributionControl: true, zoomSnap: 0, zoomAnimation: false }).setView([REF_LAT, REF_LON], 10);
         }
 
         document.getElementById('btn-network').addEventListener('click', () => {
@@ -1068,10 +1070,32 @@
 
         const tileLayers = {}; let currentTileLayer = null;
         if (typeof L !== 'undefined') {
-            tileLayers['carto-dark'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
-            tileLayers['carto-light'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png');
-            tileLayers['osm'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
-            currentTileLayer = tileLayers['carto-dark'];
+            const osmAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+            tileLayers['carto-dark'] = L.tileLayer(
+                'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' }
+            );
+            tileLayers['carto-light'] = L.tileLayer(
+                'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+                { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' }
+            );
+            tileLayers['carto-voyager'] = L.tileLayer(
+                'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+                { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' }
+            );
+            tileLayers['osm'] = L.tileLayer(
+                'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                { maxZoom: 19, attribution: osmAttribution }
+            );
+            tileLayers['esri-topo'] = L.tileLayer(
+                'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+                { attribution: 'Tiles &copy; Esri' }
+            );
+            tileLayers['esri-imagery'] = L.tileLayer(
+                'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                { attribution: 'Tiles &copy; Esri' }
+            );
+            currentTileLayer = tileLayers['carto-dark'].addTo(leafMap);
             document.getElementById('map-style-dropdown').addEventListener('change', (e) => {
                 leafMap.removeLayer(currentTileLayer);
                 currentTileLayer = tileLayers[e.target.value].addTo(leafMap);
