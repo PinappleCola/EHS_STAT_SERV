@@ -1071,12 +1071,17 @@
         if (typeof L !== 'undefined' && leafMap) {
             const buildTileLayerWithReferrerPolicy = (url, options, referrerPolicy) => {
                 const layer = L.tileLayer(url, options);
-                const baseCreateTile = layer.createTile;
                 layer.createTile = function(coords, done) {
-                    const tile = baseCreateTile.call(this, coords, done);
-                    if (typeof HTMLImageElement !== 'undefined' && tile instanceof HTMLImageElement) {
-                        tile.referrerPolicy = referrerPolicy;
+                    const tile = document.createElement('img');
+                    L.DomEvent.on(tile, 'load', L.bind(this._tileOnLoad, this, done, tile));
+                    L.DomEvent.on(tile, 'error', L.bind(this._tileOnError, this, done, tile));
+                    if (this.options.crossOrigin || this.options.crossOrigin === '') {
+                        tile.crossOrigin = this.options.crossOrigin === true ? '' : this.options.crossOrigin;
                     }
+                    tile.referrerPolicy = referrerPolicy;
+                    tile.alt = '';
+                    tile.setAttribute('role', 'presentation');
+                    tile.src = this.getTileUrl(coords);
                     return tile;
                 };
                 return layer;
