@@ -1139,10 +1139,16 @@
                 mapStyleDropdown.addEventListener('change', (e) => {
                     const nextLayers = tileLayers[e.target.value];
                     if (!nextLayers || nextLayers.length === 0) return;
-                    nextLayers.forEach((layer) => layer.addTo(leafMap));
+                    const previousLayers = currentTileLayers.slice();
                     currentTileLayers.forEach((layer) => {
                         if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
                     });
+                    try {
+                        nextLayers.forEach((layer) => layer.addTo(leafMap));
+                    } catch (err) {
+                        previousLayers.forEach((layer) => layer.addTo(leafMap));
+                        return;
+                    }
                     currentTileLayers = nextLayers;
                 });
             }
