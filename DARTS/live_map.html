@@ -1143,9 +1143,16 @@
                     currentTileLayers.forEach((layer) => {
                         if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
                     });
+                    const addedLayers = [];
                     try {
-                        nextLayers.forEach((layer) => layer.addTo(leafMap));
+                        nextLayers.forEach((layer) => {
+                            layer.addTo(leafMap);
+                            addedLayers.push(layer);
+                        });
                     } catch (err) {
+                        addedLayers.forEach((layer) => {
+                            if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
+                        });
                         previousLayers.forEach((layer) => layer.addTo(leafMap));
                         return;
                     }
