@@ -1125,7 +1125,9 @@
             };
             Object.entries(layerConfigs).forEach(([name, config]) => {
                 if (Array.isArray(config.layers)) {
-                    tileLayers[name] = L.layerGroup(config.layers.map((layer) => L.tileLayer(layer.url, layer.options)));
+                    const groupedLayer = L.layerGroup(config.layers.map((layer) => L.tileLayer(layer.url, layer.options)));
+                    groupedLayer.getAttribution = () => [...new Set(config.layers.map((layer) => layer.options?.attribution).filter(Boolean))].join(' | ');
+                    tileLayers[name] = groupedLayer;
                     return;
                 }
                 tileLayers[name] = L.tileLayer(config.url, config.options);
