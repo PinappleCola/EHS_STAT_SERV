@@ -1161,6 +1161,9 @@
                             if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
                         });
                         previousLayers.forEach((layer) => layer.addTo(leafMap));
+                        previousLayers.forEach((layer) => {
+                            if (leafMap.hasLayer(layer) && typeof layer.bringToFront === 'function') layer.bringToFront();
+                        });
                         return;
                     }
                     previousLayers.forEach((layer) => {
