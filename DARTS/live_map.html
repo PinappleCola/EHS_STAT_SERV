@@ -184,6 +184,13 @@
 
         #map-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; display: none; background-color: #040811; pointer-events: none; }
         #radar-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; display: block; cursor: crosshair; }
+        .leaflet-control-attribution {
+            background: rgba(2, 6, 23, 0.82) !important;
+            color: #cbd5e1 !important;
+            font-size: 11px;
+            padding: 2px 6px !important;
+        }
+        .leaflet-control-attribution a { color: #7dd3fc !important; }
     </style>
 </head>
 <body>
@@ -210,7 +217,10 @@
             <select id="map-style-dropdown" class="map-select" style="display: none;">
                 <option value="carto-dark">CARTO DARK</option>
                 <option value="carto-light">CARTO LIGHT</option>
-                <option value="osm">OSM TOPO</option>
+                <option value="carto-voyager">CARTO VOYAGER</option>
+                <option value="osm">OSM STANDARD</option>
+                <option value="esri-topo">ESRI TOPO</option>
+                <option value="esri-imagery">ESRI SATELLITE</option>
             </select>
             
             <button id="btn-network" class="btn-action btn-toggle">MAP TOGGLE</button>
@@ -1024,10 +1034,8 @@
         let isDragging = false; let lastMouse = { x: 0, y: 0 };
 
         if (typeof L !== 'undefined') {
-            leafMap = L.map('map-container', { zoomControl: false, attributionControl: false, zoomSnap: 0, zoomAnimation: false }).setView([REF_LAT, REF_LON], 10);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(leafMap);
+            leafMap = L.map('map-container', { zoomControl: false, attributionControl: true, zoomSnap: 0, zoomAnimation: false }).setView([REF_LAT, REF_LON], 10);
         }
-
         document.getElementById('btn-network').addEventListener('click', () => {
             if (networkMode === 'OFF-GRID') {
                 networkMode = 'ONLINE';
@@ -1067,14 +1075,48 @@
         });
 
         const tileLayers = {}; let currentTileLayer = null;
-        if (typeof L !== 'undefined') {
-            tileLayers['carto-dark'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
-            tileLayers['carto-light'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png');
-            tileLayers['osm'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
-            currentTileLayer = tileLayers['carto-dark'];
+        if (typeof L !== 'undefined' && leafMap) {
+            const osmAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+            const cartoAttribution = `${osmAttribution} &copy; <a href="https://carto.com/attributions">CARTO</a>`;
+            // ESRI layers require provider-specific attribution text to remain compliant with their terms.
+            const layerConfigs = {
+                'carto-dark': {
+                    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                    options: { attribution: cartoAttribution }
+                },
+                'carto-light': {
+                    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+                    options: { attribution: cartoAttribution }
+                },
+                'carto-voyager': {
+                    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+                    options: { attribution: cartoAttribution }
+                },
+                'osm': {
+                    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    options: { maxZoom: 19, attribution: osmAttribution, referrerPolicy: 'origin' }
+                },
+                'esri-topo': {
+                    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+                    // Conservative cap avoids repeated missing-tile requests on higher ArcGIS zoom levels.
+                    options: { maxZoom: 17, attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community' }
+                },
+                'esri-imagery': {
+                    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                    options: { maxZoom: 17, attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community' }
+                }
+            };
+            Object.entries(layerConfigs).forEach(([name, config]) => {
+                tileLayers[name] = L.tileLayer(config.url, config.options);
+            });
+            currentTileLayer = tileLayers['carto-dark'].addTo(leafMap);
             document.getElementById('map-style-dropdown').addEventListener('change', (e) => {
-                leafMap.removeLayer(currentTileLayer);
-                currentTileLayer = tileLayers[e.target.value].addTo(leafMap);
+                const nextLayer = tileLayers[e.target.value];
+                if (!nextLayer) return;
+                if (currentTileLayer && leafMap.hasLayer(currentTileLayer)) {
+                    leafMap.removeLayer(currentTileLayer);
+                }
+                currentTileLayer = nextLayer.addTo(leafMap);
             });
         }
 
