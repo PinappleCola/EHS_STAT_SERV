@@ -1074,7 +1074,7 @@
             }
         });
 
-        const tileLayers = {}; let currentTileLayer = null;
+        const tileLayers = {}; let currentTileLayers = [];
         if (typeof L !== 'undefined' && leafMap) {
             const osmAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, tiles courtesy of <a href="https://www.openstreetmap.fr/">OpenStreetMap France</a>';
             // ESRI layers require provider-specific attribution text to remain compliant with their terms.
@@ -1125,21 +1125,21 @@
             };
             Object.entries(layerConfigs).forEach(([name, config]) => {
                 if (Array.isArray(config.layers)) {
-                    const groupedLayer = L.layerGroup(config.layers.map((layer) => L.tileLayer(layer.url, layer.options)));
-                    groupedLayer.getAttribution = () => [...new Set(config.layers.map((layer) => layer.options?.attribution).filter(Boolean))].join(' | ');
-                    tileLayers[name] = groupedLayer;
+                    tileLayers[name] = config.layers.map((layer) => L.tileLayer(layer.url, layer.options));
                     return;
                 }
-                tileLayers[name] = L.tileLayer(config.url, config.options);
+                tileLayers[name] = [L.tileLayer(config.url, config.options)];
             });
-            currentTileLayer = tileLayers['carto-dark'].addTo(leafMap);
+            currentTileLayers = tileLayers['carto-dark'] || [];
+            currentTileLayers.forEach((layer) => layer.addTo(leafMap));
             document.getElementById('map-style-dropdown').addEventListener('change', (e) => {
-                const nextLayer = tileLayers[e.target.value];
-                if (!nextLayer) return;
-                if (currentTileLayer && leafMap.hasLayer(currentTileLayer)) {
-                    leafMap.removeLayer(currentTileLayer);
-                }
-                currentTileLayer = nextLayer.addTo(leafMap);
+                const nextLayers = tileLayers[e.target.value];
+                if (!nextLayers || nextLayers.length === 0) return;
+                currentTileLayers.forEach((layer) => {
+                    if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
+                });
+                nextLayers.forEach((layer) => layer.addTo(leafMap));
+                currentTileLayers = nextLayers;
             });
         }
 
