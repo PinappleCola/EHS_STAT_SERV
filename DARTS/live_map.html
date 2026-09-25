@@ -1085,11 +1085,11 @@
                     layers: [
                         {
                             url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-                            options: { maxZoom: 16, attribution: esriGrayAttribution }
+                            options: { maxNativeZoom: 16, maxZoom: 20, attribution: esriGrayAttribution }
                         },
                         {
                             url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
-                            options: { maxZoom: 16, attribution: esriGrayAttribution }
+                            options: { maxNativeZoom: 16, maxZoom: 20, attribution: esriGrayAttribution }
                         }
                     ]
                 },
@@ -1097,11 +1097,11 @@
                     layers: [
                         {
                             url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-                            options: { maxZoom: 16, attribution: esriGrayAttribution }
+                            options: { maxNativeZoom: 16, maxZoom: 20, attribution: esriGrayAttribution }
                         },
                         {
                             url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
-                            options: { maxZoom: 16, attribution: esriGrayAttribution }
+                            options: { maxNativeZoom: 16, maxZoom: 20, attribution: esriGrayAttribution }
                         }
                     ]
                 },
