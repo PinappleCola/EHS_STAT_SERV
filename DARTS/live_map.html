@@ -1107,7 +1107,7 @@
                 },
                 'carto-voyager': {
                     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-                    options: { maxZoom: 17, attribution: esriStreetAttribution }
+                    options: { maxNativeZoom: 17, maxZoom: 20, attribution: esriStreetAttribution }
                 },
                 'osm': {
                     url: 'https://tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
@@ -1130,9 +1130,11 @@
                 }
                 tileLayers[name] = [L.tileLayer(config.url, config.options)];
             });
-            currentTileLayers = tileLayers['carto-dark'] || [];
+            const mapStyleDropdown = document.getElementById('map-style-dropdown');
+            const initialStyle = mapStyleDropdown ? mapStyleDropdown.value : 'carto-dark';
+            currentTileLayers = tileLayers[initialStyle] || tileLayers['carto-dark'] || [];
             currentTileLayers.forEach((layer) => layer.addTo(leafMap));
-            document.getElementById('map-style-dropdown').addEventListener('change', (e) => {
+            mapStyleDropdown.addEventListener('change', (e) => {
                 const nextLayers = tileLayers[e.target.value];
                 if (!nextLayers || nextLayers.length === 0) return;
                 currentTileLayers.forEach((layer) => {
