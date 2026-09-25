@@ -1069,7 +1069,7 @@
         });
 
         const tileLayers = {}; let currentTileLayer = null;
-        if (typeof L !== 'undefined') {
+        if (typeof L !== 'undefined' && leafMap) {
             const osmAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
             tileLayers['carto-dark'] = L.tileLayer(
                 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
@@ -1085,7 +1085,7 @@
             );
             tileLayers['osm'] = L.tileLayer(
                 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                { maxZoom: 19, attribution: osmAttribution }
+                { maxZoom: 19, attribution: osmAttribution, referrerPolicy: 'strict-origin-when-cross-origin' }
             );
             tileLayers['esri-topo'] = L.tileLayer(
                 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
