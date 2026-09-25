@@ -1074,7 +1074,9 @@
                 const baseCreateTile = layer.createTile;
                 layer.createTile = function(coords, done) {
                     const tile = baseCreateTile.call(this, coords, done);
-                    tile.referrerPolicy = referrerPolicy;
+                    if (typeof HTMLImageElement !== 'undefined' && tile instanceof HTMLImageElement) {
+                        tile.referrerPolicy = referrerPolicy;
+                    }
                     return tile;
                 };
                 return layer;
