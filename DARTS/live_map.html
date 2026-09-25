@@ -1089,7 +1089,7 @@
             );
             tileLayers['osm'].createTile = function(coords, done) {
                 const tile = L.TileLayer.prototype.createTile.call(this, coords, done);
-                tile.referrerPolicy = 'strict-origin-when-cross-origin';
+                tile.referrerPolicy = 'no-referrer-when-downgrade';
                 return tile;
             };
             tileLayers['esri-topo'] = L.tileLayer(
