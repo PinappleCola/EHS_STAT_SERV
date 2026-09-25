@@ -1082,12 +1082,28 @@
             const esriStreetAttribution = 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, FAO, NOAA, USGS, Intermap, METI, NRCAN, EPA, NPS, and the GIS User Community';
             const layerConfigs = {
                 'carto-dark': {
-                    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-                    options: { maxZoom: 16, attribution: esriGrayAttribution }
+                    layers: [
+                        {
+                            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                            options: { maxZoom: 16, attribution: esriGrayAttribution }
+                        },
+                        {
+                            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+                            options: { maxZoom: 16, attribution: esriGrayAttribution }
+                        }
+                    ]
                 },
                 'carto-light': {
-                    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-                    options: { maxZoom: 16, attribution: esriGrayAttribution }
+                    layers: [
+                        {
+                            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                            options: { maxZoom: 16, attribution: esriGrayAttribution }
+                        },
+                        {
+                            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+                            options: { maxZoom: 16, attribution: esriGrayAttribution }
+                        }
+                    ]
                 },
                 'carto-voyager': {
                     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
@@ -1108,6 +1124,10 @@
                 }
             };
             Object.entries(layerConfigs).forEach(([name, config]) => {
+                if (Array.isArray(config.layers)) {
+                    tileLayers[name] = L.layerGroup(config.layers.map((layer) => L.tileLayer(layer.url, layer.options)));
+                    return;
+                }
                 tileLayers[name] = L.tileLayer(config.url, config.options);
             });
             currentTileLayer = tileLayers['carto-dark'].addTo(leafMap);
