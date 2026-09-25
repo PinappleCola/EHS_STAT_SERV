@@ -1102,7 +1102,7 @@
             tileLayers['osm'] = buildTileLayerWithReferrerPolicy(
                 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 { maxZoom: 19, attribution: osmAttribution },
-                'no-referrer-when-downgrade'
+                'origin'
             );
             tileLayers['esri-topo'] = L.tileLayer(
                 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
