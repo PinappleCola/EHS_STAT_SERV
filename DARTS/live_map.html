@@ -1074,7 +1074,7 @@
             }
         });
 
-        const tileLayers = {}; let currentTileLayers = [];
+        const tileLayerFactories = {}; let currentTileLayers = [];
         if (typeof L !== 'undefined' && leafMap) {
             const osmAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, tiles courtesy of <a href="https://www.openstreetmap.fr/">OpenStreetMap France</a>';
             // ESRI layers require provider-specific attribution text to remain compliant with their terms.
@@ -1126,23 +1126,26 @@
             };
             Object.entries(layerConfigs).forEach(([name, config]) => {
                 if (Array.isArray(config.layers)) {
-                    tileLayers[name] = config.layers.map((layer) => L.tileLayer(layer.url, layer.options));
+                    tileLayerFactories[name] = () => config.layers.map((layer) => L.tileLayer(layer.url, layer.options));
                     return;
                 }
-                tileLayers[name] = [L.tileLayer(config.url, config.options)];
+                tileLayerFactories[name] = () => [L.tileLayer(config.url, config.options)];
             });
             const mapStyleDropdown = document.getElementById('map-style-dropdown');
             const initialStyle = mapStyleDropdown ? mapStyleDropdown.value : 'carto-dark';
-            const activeInitialStyle = tileLayers[initialStyle] ? initialStyle : 'carto-dark';
-            currentTileLayers = tileLayers[activeInitialStyle] || [];
+            const activeInitialStyle = tileLayerFactories[initialStyle] ? initialStyle : 'carto-dark';
+            const initialFactory = tileLayerFactories[activeInitialStyle];
+            currentTileLayers = initialFactory ? initialFactory() : [];
             if (mapStyleDropdown && mapStyleDropdown.value !== activeInitialStyle) {
                 mapStyleDropdown.value = activeInitialStyle;
             }
             currentTileLayers.forEach((layer) => layer.addTo(leafMap));
             if (mapStyleDropdown) {
                 mapStyleDropdown.addEventListener('change', (e) => {
-                    const nextLayers = tileLayers[e.target.value];
-                    if (!nextLayers || nextLayers.length === 0) return;
+                    const nextFactory = tileLayerFactories[e.target.value];
+                    if (!nextFactory) return;
+                    const nextLayers = nextFactory();
+                    if (nextLayers.length === 0) return;
                     const previousLayers = currentTileLayers.slice();
                     const addedLayers = [];
                     try {
