@@ -1074,7 +1074,7 @@
             }
         });
 
-        const tileLayerFactories = {}; let currentTileLayers = [];
+        const tileLayerFactories = {}; let currentTileLayers = []; let basemapSwitchSeq = 0;
         if (typeof L !== 'undefined' && leafMap) {
             const osmAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, tiles courtesy of <a href="https://www.openstreetmap.fr/">OpenStreetMap France</a>';
             // ESRI layers require provider-specific attribution text to remain compliant with their terms.
@@ -1147,6 +1147,7 @@
             });
             if (mapStyleDropdown) {
                 mapStyleDropdown.addEventListener('change', (e) => {
+                    const switchSeq = ++basemapSwitchSeq;
                     const nextFactory = tileLayerFactories[e.target.value];
                     if (!nextFactory) return;
                     const nextLayers = nextFactory();
@@ -1162,12 +1163,11 @@
                         addedLayers.forEach((layer) => {
                             if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
                         });
+                        return;
+                    }
+                    if (switchSeq !== basemapSwitchSeq) {
                         nextLayers.forEach((layer) => {
                             if (leafMap.hasLayer(layer)) leafMap.removeLayer(layer);
-                        });
-                        previousLayers.forEach((layer) => layer.addTo(leafMap));
-                        previousLayers.forEach((layer) => {
-                            if (leafMap.hasLayer(layer) && typeof layer.bringToFront === 'function') layer.bringToFront();
                         });
                         return;
                     }
