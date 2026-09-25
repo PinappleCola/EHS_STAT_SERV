@@ -1086,6 +1086,7 @@
                 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 { maxZoom: 19, attribution: osmAttribution, referrerPolicy: 'origin' }
             );
+            // ESRI layers require provider-specific attribution text to remain compliant with their terms.
             tileLayers['esri-topo'] = L.tileLayer(
                 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
                 { attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community' }
