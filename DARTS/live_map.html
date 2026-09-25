@@ -1085,8 +1085,13 @@
             );
             tileLayers['osm'] = L.tileLayer(
                 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                { maxZoom: 19, attribution: osmAttribution, referrerPolicy: 'strict-origin-when-cross-origin' }
+                { maxZoom: 19, attribution: osmAttribution }
             );
+            tileLayers['osm'].createTile = function(coords, done) {
+                const tile = L.TileLayer.prototype.createTile.call(this, coords, done);
+                tile.referrerPolicy = 'strict-origin-when-cross-origin';
+                return tile;
+            };
             tileLayers['esri-topo'] = L.tileLayer(
                 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
                 { attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community' }
