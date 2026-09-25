@@ -1097,8 +1097,10 @@
             );
             currentTileLayer = tileLayers['carto-dark'].addTo(leafMap);
             document.getElementById('map-style-dropdown').addEventListener('change', (e) => {
+                const nextLayer = tileLayers[e.target.value];
+                if (!nextLayer) return;
                 leafMap.removeLayer(currentTileLayer);
-                currentTileLayer = tileLayers[e.target.value].addTo(leafMap);
+                currentTileLayer = nextLayer.addTo(leafMap);
             });
         }
 
