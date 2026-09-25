@@ -1029,17 +1029,6 @@
         if (typeof L !== 'undefined') {
             leafMap = L.map('map-container', { zoomControl: false, attributionControl: true, zoomSnap: 0, zoomAnimation: false }).setView([REF_LAT, REF_LON], 10);
         }
-        const buildTileLayerWithReferrerPolicy = (url, options, referrerPolicy) => {
-            const layer = L.tileLayer(url, options);
-            const baseCreateTile = layer.createTile;
-            layer.createTile = function(coords, done) {
-                const tile = baseCreateTile.call(this, coords, done);
-                tile.referrerPolicy = referrerPolicy;
-                return tile;
-            };
-            return layer;
-        };
-
         document.getElementById('btn-network').addEventListener('click', () => {
             if (networkMode === 'OFF-GRID') {
                 networkMode = 'ONLINE';
@@ -1080,6 +1069,16 @@
 
         const tileLayers = {}; let currentTileLayer = null;
         if (typeof L !== 'undefined' && leafMap) {
+            const buildTileLayerWithReferrerPolicy = (url, options, referrerPolicy) => {
+                const layer = L.tileLayer(url, options);
+                const baseCreateTile = layer.createTile;
+                layer.createTile = function(coords, done) {
+                    const tile = baseCreateTile.call(this, coords, done);
+                    tile.referrerPolicy = referrerPolicy;
+                    return tile;
+                };
+                return layer;
+            };
             const osmAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
             tileLayers['carto-dark'] = L.tileLayer(
                 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
