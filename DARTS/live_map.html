@@ -1142,6 +1142,9 @@
                 mapStyleDropdown.value = activeInitialStyle;
             }
             currentTileLayers.forEach((layer) => layer.addTo(leafMap));
+            currentTileLayers.forEach((layer) => {
+                if (leafMap.hasLayer(layer) && typeof layer.bringToFront === 'function') layer.bringToFront();
+            });
             if (mapStyleDropdown) {
                 mapStyleDropdown.addEventListener('change', (e) => {
                     const nextFactory = tileLayerFactories[e.target.value];
