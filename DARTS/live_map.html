@@ -400,6 +400,7 @@
         const trailHistory = {};
         let isTrailHydrating = true;
         let trailHydrationLoaded = false;
+        let trailHydrationRetryTimer = null;
         const pendingLiveTrailUpdates = [];
         let pendingLiveTrailSeq = 0;
         const entityCache = {};
@@ -1589,6 +1590,15 @@
                 updateSliderLabels(true);
             } catch (err) {
                 console.warn('Trail hydration unavailable:', err);
+                if (!trailHydrationLoaded && !trailHydrationRetryTimer) {
+                    trailHydrationRetryTimer = setTimeout(() => {
+                        trailHydrationRetryTimer = null;
+                        if (!trailHydrationLoaded) {
+                            isTrailHydrating = true;
+                            hydrateTrailHistory();
+                        }
+                    }, 10000);
+                }
             } finally {
                 isTrailHydrating = false;
                 if (pendingLiveTrailUpdates.length > 0) {
