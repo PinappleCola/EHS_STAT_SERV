@@ -1497,8 +1497,8 @@
                 const historyObj = getOrCreateTrailHistory(icao, eventTime);
                 const history = historyObj.path;
                 if (markerType) {
-                    const last = history[history.length - 1];
-                    if (!last || !last.gapBreak || last.time !== eventTime || last.markerType !== markerType) {
+                    const hasMarkerAlready = history.some((entry) => entry.gapBreak && entry.time === eventTime && entry.markerType === markerType);
+                    if (!hasMarkerAlready) {
                         history.push({ time: eventTime, gapBreak: true, markerType });
                     }
                     historyObj.lastUpdate = Math.max(historyObj.lastUpdate || 0, eventTime);
@@ -1507,8 +1507,10 @@
                 const lat = Number.parseFloat(latRaw);
                 const lon = Number.parseFloat(lonRaw);
                 if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-                const lastTrailPoint = getLastTrailPoint(history);
-                if (!lastTrailPoint || lastTrailPoint.time !== eventTime || lastTrailPoint.lat !== lat || lastTrailPoint.lon !== lon) {
+                const existingPoint = history.find((entry) => !entry.gapBreak && entry.time === eventTime && entry.lat === lat && entry.lon === lon);
+                if (existingPoint) {
+                    existingPoint.alt = altitude;
+                } else {
                     history.push({ lat, lon, time: eventTime, alt: altitude });
                 }
                 historyObj.lastPointTime = Math.max(historyObj.lastPointTime || 0, eventTime);
