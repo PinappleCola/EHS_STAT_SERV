@@ -1593,6 +1593,10 @@
                 const payload = await response.json();
                 ingestTrailRows(payload && payload.rows);
                 trailHydrationLoaded = true;
+                if (trailHydrationRetryTimer) {
+                    clearTimeout(trailHydrationRetryTimer);
+                    trailHydrationRetryTimer = null;
+                }
                 updateSliderLabels(true);
             } catch (err) {
                 console.warn('Trail hydration unavailable:', err);
