@@ -1455,7 +1455,8 @@
                 const raw = String(name || '');
                 const leafName = raw.split('/').pop().split('\\').pop();
                 const safe = leafName.replace(/[\u0000-\u001f\u007f]/g, '').replace(/[<>:"/\\|?*]/g, '_').trim();
-                return safe || fallback;
+                if (!safe || safe === '.' || safe === '..') return fallback;
+                return safe;
             };
             const downloadName = sanitizeDownloadFilename(extractDispositionFilename(), fallbackName);
             const url = URL.createObjectURL(blob);
@@ -1548,8 +1549,13 @@
             if (!Array.isArray(rows)) return;
             const touchedIcaos = new Set();
             rows.forEach((row) => {
-                if (!Array.isArray(row) || row.length < 10) return;
-                const [icaoRaw, timeRaw, latRaw, lonRaw, altitude, _onGround, _callsign, _sourceLabel, _receiverId, markerType] = row;
+                if (!Array.isArray(row) || row.length < 2) return;
+                const icaoRaw = row[0];
+                const timeRaw = row[1];
+                const latRaw = row[2];
+                const lonRaw = row[3];
+                const altitude = row[4];
+                const markerType = row[9];
                 const icao = (typeof icaoRaw === 'string' ? icaoRaw.trim().toUpperCase() : '');
                 if (!icao) return;
                 touchedIcaos.add(icao);
@@ -1600,12 +1606,12 @@
                     }, 10000);
                 }
             } finally {
-                isTrailHydrating = false;
                 if (pendingLiveTrailUpdates.length > 0) {
                     const queuedUpdates = pendingLiveTrailUpdates.splice(0, pendingLiveTrailUpdates.length);
                     queuedUpdates.sort((a, b) => (a.time - b.time) || (a.seq - b.seq));
                     queuedUpdates.forEach((sample) => appendLiveTrailSample(sample));
                 }
+                isTrailHydrating = false;
             }
         }
 
