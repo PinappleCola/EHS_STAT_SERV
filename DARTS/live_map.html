@@ -399,6 +399,7 @@
         let renderHitboxes = []; 
         const trailHistory = {};
         let isTrailHydrating = true;
+        let trailHydrationLoaded = false;
         const pendingLiveTrailUpdates = [];
         let pendingLiveTrailSeq = 0;
         const entityCache = {};
@@ -1576,6 +1577,7 @@
         }
 
         async function hydrateTrailHistory() {
+            if (trailHydrationLoaded) return;
             const nowMs = Date.now();
             const fromMs = nowMs - (TRAIL_WINDOW_MAX_MINUTES * 60000);
             try {
@@ -1583,6 +1585,7 @@
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const payload = await response.json();
                 ingestTrailRows(payload && payload.rows);
+                trailHydrationLoaded = true;
                 updateSliderLabels(true);
             } catch (err) {
                 console.warn('Trail hydration unavailable:', err);
