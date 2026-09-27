@@ -794,6 +794,7 @@
         const trailVal = document.getElementById('trail-val');
         const trailStartCode = document.getElementById('trail-start-code');
         const trailEndCode = document.getElementById('trail-end-code');
+        const MINUTES_PER_DAY = 1440;
         const TRAIL_WINDOW_MAX_MINUTES = 1440;
         const MIN_TRAIL_SPAN_MINUTES = 0.1;
         const SLIDER_ZINDEX_SWITCH_BUFFER = 0.05;
@@ -849,7 +850,7 @@
             const now = new Date(nowMs);
             const nowMinutes = (now.getHours() * 60) + now.getMinutes() + (now.getSeconds() / 60);
             let ageMinutes = nowMinutes - targetMinutes;
-            if (ageMinutes < 0) ageMinutes += TRAIL_WINDOW_MAX_MINUTES;
+            if (ageMinutes < 0) ageMinutes += MINUTES_PER_DAY;
             return Math.max(0, Math.min(TRAIL_WINDOW_MAX_MINUTES, ageMinutes));
         }
 
@@ -918,7 +919,22 @@
         trailEndCode.addEventListener('change', () => applyTimecodeInput(trailEndCode, false));
         trailStartCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyTimecodeInput(trailStartCode, true); });
         trailEndCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyTimecodeInput(trailEndCode, false); });
-        setInterval(updateSliderLabels, 1000); updateSliderLabels();
+        let sliderLabelTimer = null;
+        function scheduleSliderLabelRefresh() {
+            if (sliderLabelTimer) clearTimeout(sliderLabelTimer);
+            if (document.hidden) return;
+            const nextTickMs = 1000 - (Date.now() % 1000);
+            sliderLabelTimer = setTimeout(() => {
+                updateSliderLabels(false);
+                scheduleSliderLabelRefresh();
+            }, Math.max(50, nextTickMs));
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) updateSliderLabels(true);
+            scheduleSliderLabelRefresh();
+        });
+        updateSliderLabels(true);
+        scheduleSliderLabelRefresh();
 
         // Measure Tool
         function nmToDisplay(nm) {
@@ -1408,7 +1424,7 @@
                 a.download = downloadName;
                 a.click();
             } finally {
-                URL.revokeObjectURL(url);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
             }
         }
 
@@ -1443,7 +1459,13 @@
             let firstKeepIdx = 0;
             while (firstKeepIdx < historyObj.path.length && historyObj.path[firstKeepIdx].time < cutoffMs) firstKeepIdx++;
             if (firstKeepIdx > 0) historyObj.path.splice(0, firstKeepIdx);
-            while (historyObj.path.length > 0 && historyObj.path[0].gapBreak) historyObj.path.shift();
+            const firstTrailPointIdx = historyObj.path.findIndex(pt => !pt.gapBreak);
+            if (firstTrailPointIdx === -1) {
+                historyObj.path.length = 0;
+                historyObj.lastPointTime = null;
+                return;
+            }
+            if (firstTrailPointIdx > 0) historyObj.path.splice(0, firstTrailPointIdx);
             const latest = getLastTrailPoint(historyObj.path);
             historyObj.lastPointTime = latest ? latest.time : null;
         }
