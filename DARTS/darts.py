@@ -11,6 +11,7 @@ import time
 import datetime
 import json
 import math
+import copy
 import threading
 import asyncio
 import websockets
@@ -20,12 +21,14 @@ import queue
 import re
 import os
 import http.server
+from urllib.parse import urlparse, parse_qs
 
 APP_VERSION = "v56"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "runtime_config.json")
 ALTITUDE_COLOURS_PATH = os.path.join(BASE_DIR, "altitude_colours.json")
 WAYPOINT_SCORING_LUT_PATH = os.path.join(BASE_DIR, "waypoint_scoring_lut.json")
+TRAIL_CONFIG_PATH = os.path.join(BASE_DIR, "trail_config.json")
 
 try:
     import pyModeS as pms
@@ -122,6 +125,42 @@ DEFAULT_WAYPOINT_SCORING_CONFIG = {
     "RAD_OUT_CROSS_AWARD": 1.0,
     "RAD_IN_CROSS_AWARD": 3.0,
     "SCORE_TABLE": [dict(entry) for entry in DEFAULT_WAYPOINT_SCORING_LUT],
+}
+DEFAULT_TRAIL_CONFIG = {
+    "note": "Temporary standalone trail JSON config. JSON files will be consolidated later.",
+    "maximum_window_minutes": 1440,
+    "stale_position_threshold_seconds": 65.0,
+    "adaptive_gap": {
+        "enabled": True,
+        "history_size": 20,
+        "multiplier": 4.0,
+        "min_seconds": 10.0,
+        "max_seconds": 65.0,
+    },
+    "plausibility": {
+        "max_airborne_speed_kt": 750.0,
+        "max_ground_speed_kt": 80.0,
+        "max_jump_nm": 10.0,
+    },
+    "persistence": {
+        "db_path": "data/trails.db",
+        "retention_hours": 24.0,
+        "sample_interval_seconds": 1.0,
+        "flush_interval_seconds": 5.0,
+        "prune_interval_seconds": 3600.0,
+        "batch_size": 500,
+    },
+    "export": {
+        "filename_prefix": "darts_trails",
+        "content_disposition": "attachment",
+    },
+    "render": {
+        "default_mode": "lines",
+        "alternate_mode": "dots",
+    },
+    "display": {
+        "local_time": True,
+    },
 }
 
 # --- Optional pyModeS Support ---
@@ -1328,6 +1367,83 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_bytes(self, body, status=200, content_type="application/octet-stream", extra_headers=None):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        if extra_headers:
+            for key, value in extra_headers.items():
+                self.send_header(str(key), str(value))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _parse_request_target(self):
+        parsed = urlparse(self.path)
+        return parsed.path, parse_qs(parsed.query)
+
+    def _parse_trail_range(self, query):
+        trail_cfg = get_trail_config_snapshot()
+        max_window_ms = int(trail_cfg["maximum_window_minutes"] * 60000)
+        now_ms = int(time.time() * 1000)
+
+        def _parse_ms(name, default):
+            raw = query.get(name, [default])[0]
+            try:
+                return int(raw)
+            except Exception:
+                raise ValueError(f"Invalid '{name}' parameter")
+
+        from_ms = _parse_ms("from", now_ms - max_window_ms)
+        to_ms = _parse_ms("to", now_ms)
+        if to_ms < from_ms:
+            raise ValueError("'to' must be greater than or equal to 'from'")
+        if (to_ms - from_ms) > max_window_ms:
+            raise ValueError("Requested trail window exceeds configured maximum")
+        icao = query.get("icao", [None])[0]
+        if icao:
+            icao = str(icao).strip().upper() or None
+        return from_ms, to_ms, icao
+
+    def _handle_get_trails(self, query):
+        try:
+            from_ms, to_ms, icao = self._parse_trail_range(query)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+
+        rows = query_trail_rows(from_ms, to_ms, icao=icao)
+        compact_rows = [
+            [icao_row, int(ts_ms), lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type]
+            for _row_id, icao_row, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type in rows
+        ]
+        self._send_json({
+            "from": from_ms,
+            "to": to_ms,
+            "fields": ["icao", "time", "lat", "lon", "altitude", "on_ground", "callsign", "source_label", "receiver_id", "marker_type"],
+            "rows": compact_rows,
+        })
+
+    def _handle_export_trails_geojson(self, query):
+        try:
+            from_ms, to_ms, icao = self._parse_trail_range(query)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+
+        payload = build_geojson_from_trail_rows(query_trail_rows(from_ms, to_ms, icao=icao))
+        trail_cfg = get_trail_config_snapshot()
+        filename = f'{trail_cfg["export"]["filename_prefix"]}_{from_ms}_{to_ms}.geojson'
+        self._send_bytes(
+            json.dumps(payload).encode("utf-8"),
+            content_type="application/geo+json",
+            extra_headers={
+                "Content-Disposition": f'{trail_cfg["export"]["content_disposition"]}; filename="{filename}"'
+            },
+        )
+
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -1336,28 +1452,29 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/api/fields":
+        path, query = self._parse_request_target()
+        if path == "/api/fields":
             # Return the complete field registry so frontends can build column pickers
             self._send_json(FIELD_REGISTRY)
-        elif self.path == "/api/grid-config":
+        elif path == "/api/grid-config":
             # Returns the default config structure; user preferences are stored client-side
             default_cols = [f["key"] for f in FIELD_REGISTRY if f["defaultVisible"]]
             self._send_json({"columns": default_cols, "sortKey": None, "sortDir": "asc"})
-        elif self.path == "/api/audit-config":
+        elif path == "/api/audit-config":
             with audit_config_lock:
                 cfg = dict(audit_config_cache)
             self._send_json(cfg)
-        elif self.path == "/api/audit-alerts":
+        elif path == "/api/audit-alerts":
             with audit_alerts_lock:
                 alerts = list(audit_active_alerts)
             self._send_json(alerts)
-        elif self.path == "/api/rx-config":
+        elif path == "/api/rx-config":
             self._send_json({
                 "rx_mode": RX_MODE,
                 "receiver_a": RECEIVER_A_CONFIG,
                 "receiver_b": RECEIVER_B_CONFIG,
             })
-        elif self.path == "/api/rx-status":
+        elif path == "/api/rx-status":
             now = time.time()
             status_out = {}
             with rx_status_lock:
@@ -1374,18 +1491,27 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                     "module_id": s.get("module_id", ""),
                 }
             self._send_json(status_out)
-        elif self.path == "/api/altitude-colours":
+        elif path == "/api/altitude-colours":
             with altitude_colours_lock:
                 levels = [
                     {"altitude": int(entry["altitude"]), "colour": [int(c) for c in entry["colour"]]}
                     for entry in ALTITUDE_COLOUR_LEVELS
                 ]
             self._send_json({"levels": levels})
+        elif path == "/api/trails":
+            self._handle_get_trails(query)
+        elif path == "/api/trails/export.geojson":
+            self._handle_export_trails_geojson(query)
+        elif path == "/api/trail-rules":
+            cfg = get_trail_config_snapshot()
+            cfg["persistence"]["db_path"] = get_trail_db_path()
+            self._send_json(cfg)
         else:
             self._send_json({"error": "Not found"}, status=404)
 
     def do_POST(self):
-        if self.path == "/api/audit-config":
+        path, _query = self._parse_request_target()
+        if path == "/api/audit-config":
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
@@ -1410,7 +1536,7 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             colour_b = max(0, min(255, colour_b))
             save_audit_point_config(point_name, outer_nm, inner_nm, colour_r, colour_g, colour_b)
             self._send_json({"ok": True, "point_name": point_name})
-        elif self.path == "/api/rx-config":
+        elif path == "/api/rx-config":
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
@@ -1474,7 +1600,7 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                         receiver_status["B"]["connected"] = False
 
             self._send_json({"ok": True, "rx_mode": RX_MODE})
-        elif self.path == "/api/rx-console":
+        elif path == "/api/rx-console":
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
@@ -1541,6 +1667,138 @@ def get_iso_time():
 
 def get_ui_time():
     return datetime.datetime.now().strftime('%H:%M:%S')
+
+
+def _deep_merge_dict(base, override):
+    merged = copy.deepcopy(base)
+    if not isinstance(override, dict):
+        return merged
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dict(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _safe_float(value, default, minimum=None, maximum=None):
+    try:
+        value = float(value)
+    except Exception:
+        value = float(default)
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def _safe_int(value, default, minimum=None, maximum=None):
+    try:
+        value = int(value)
+    except Exception:
+        value = int(default)
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def _safe_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return bool(default)
+
+
+def _normalize_trail_config(raw_payload):
+    cfg = _deep_merge_dict(DEFAULT_TRAIL_CONFIG, raw_payload if isinstance(raw_payload, dict) else {})
+    cfg["note"] = str(cfg.get("note") or DEFAULT_TRAIL_CONFIG["note"])
+    cfg["maximum_window_minutes"] = _safe_int(cfg.get("maximum_window_minutes"), DEFAULT_TRAIL_CONFIG["maximum_window_minutes"], minimum=1, maximum=1440)
+    cfg["stale_position_threshold_seconds"] = _safe_float(
+        cfg.get("stale_position_threshold_seconds"),
+        DEFAULT_TRAIL_CONFIG["stale_position_threshold_seconds"],
+        minimum=1.0,
+        maximum=600.0,
+    )
+
+    adaptive = cfg.get("adaptive_gap", {})
+    adaptive["enabled"] = _safe_bool(adaptive.get("enabled", True), default=True)
+    adaptive["history_size"] = _safe_int(adaptive.get("history_size"), DEFAULT_TRAIL_CONFIG["adaptive_gap"]["history_size"], minimum=3, maximum=120)
+    adaptive["multiplier"] = _safe_float(adaptive.get("multiplier"), DEFAULT_TRAIL_CONFIG["adaptive_gap"]["multiplier"], minimum=1.0, maximum=20.0)
+    adaptive["min_seconds"] = _safe_float(adaptive.get("min_seconds"), DEFAULT_TRAIL_CONFIG["adaptive_gap"]["min_seconds"], minimum=1.0, maximum=600.0)
+    adaptive["max_seconds"] = _safe_float(adaptive.get("max_seconds"), DEFAULT_TRAIL_CONFIG["adaptive_gap"]["max_seconds"], minimum=adaptive["min_seconds"], maximum=3600.0)
+    adaptive["max_seconds"] = max(adaptive["max_seconds"], adaptive["min_seconds"])
+    cfg["adaptive_gap"] = adaptive
+
+    plausibility = cfg.get("plausibility", {})
+    plausibility["max_airborne_speed_kt"] = _safe_float(plausibility.get("max_airborne_speed_kt"), DEFAULT_TRAIL_CONFIG["plausibility"]["max_airborne_speed_kt"], minimum=50.0, maximum=2000.0)
+    plausibility["max_ground_speed_kt"] = _safe_float(plausibility.get("max_ground_speed_kt"), DEFAULT_TRAIL_CONFIG["plausibility"]["max_ground_speed_kt"], minimum=5.0, maximum=250.0)
+    plausibility["max_jump_nm"] = _safe_float(plausibility.get("max_jump_nm"), DEFAULT_TRAIL_CONFIG["plausibility"]["max_jump_nm"], minimum=0.1, maximum=500.0)
+    cfg["plausibility"] = plausibility
+
+    persistence = cfg.get("persistence", {})
+    db_path = str(persistence.get("db_path") or DEFAULT_TRAIL_CONFIG["persistence"]["db_path"]).strip() or DEFAULT_TRAIL_CONFIG["persistence"]["db_path"]
+    persistence["db_path"] = db_path
+    persistence["retention_hours"] = _safe_float(persistence.get("retention_hours"), DEFAULT_TRAIL_CONFIG["persistence"]["retention_hours"], minimum=1.0, maximum=168.0)
+    persistence["sample_interval_seconds"] = _safe_float(persistence.get("sample_interval_seconds"), DEFAULT_TRAIL_CONFIG["persistence"]["sample_interval_seconds"], minimum=0.25, maximum=60.0)
+    persistence["flush_interval_seconds"] = _safe_float(persistence.get("flush_interval_seconds"), DEFAULT_TRAIL_CONFIG["persistence"]["flush_interval_seconds"], minimum=0.25, maximum=300.0)
+    persistence["prune_interval_seconds"] = _safe_float(persistence.get("prune_interval_seconds"), DEFAULT_TRAIL_CONFIG["persistence"]["prune_interval_seconds"], minimum=60.0, maximum=86400.0)
+    persistence["batch_size"] = _safe_int(persistence.get("batch_size"), DEFAULT_TRAIL_CONFIG["persistence"]["batch_size"], minimum=1, maximum=50000)
+    cfg["persistence"] = persistence
+
+    export = cfg.get("export", {})
+    export["filename_prefix"] = str(export.get("filename_prefix") or DEFAULT_TRAIL_CONFIG["export"]["filename_prefix"]).strip() or DEFAULT_TRAIL_CONFIG["export"]["filename_prefix"]
+    disposition = str(export.get("content_disposition") or DEFAULT_TRAIL_CONFIG["export"]["content_disposition"]).strip().lower()
+    export["content_disposition"] = disposition if disposition in {"attachment", "inline"} else DEFAULT_TRAIL_CONFIG["export"]["content_disposition"]
+    cfg["export"] = export
+
+    render = cfg.get("render", {})
+    default_mode = str(render.get("default_mode") or DEFAULT_TRAIL_CONFIG["render"]["default_mode"]).strip().lower()
+    alternate_mode = str(render.get("alternate_mode") or DEFAULT_TRAIL_CONFIG["render"]["alternate_mode"]).strip().lower()
+    render["default_mode"] = default_mode if default_mode in {"lines", "dots"} else DEFAULT_TRAIL_CONFIG["render"]["default_mode"]
+    render["alternate_mode"] = alternate_mode if alternate_mode in {"lines", "dots"} else DEFAULT_TRAIL_CONFIG["render"]["alternate_mode"]
+    cfg["render"] = render
+
+    display = cfg.get("display", {})
+    display["local_time"] = _safe_bool(display.get("local_time", True), default=True)
+    cfg["display"] = display
+    return cfg
+
+
+TRAIL_CONFIG = copy.deepcopy(DEFAULT_TRAIL_CONFIG)
+trail_config_lock = threading.Lock()
+
+
+def load_trail_config():
+    global TRAIL_CONFIG
+    iso_time = get_iso_time()
+    cfg = copy.deepcopy(DEFAULT_TRAIL_CONFIG)
+    try:
+        if os.path.exists(TRAIL_CONFIG_PATH):
+            with open(TRAIL_CONFIG_PATH, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            cfg = _normalize_trail_config(loaded)
+        else:
+            print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.YELLOW}WARNING: 'trail_config.json' not found. Using defaults.{ANSI.RESET}")
+    except Exception as exc:
+        cfg = copy.deepcopy(DEFAULT_TRAIL_CONFIG)
+        print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.RED}Error loading 'trail_config.json': {exc}. Using defaults.{ANSI.RESET}")
+    with trail_config_lock:
+        TRAIL_CONFIG = cfg
+
+
+def get_trail_config_snapshot():
+    with trail_config_lock:
+        return copy.deepcopy(TRAIL_CONFIG)
 
 # ==========================================
 # --- BARE-METAL CPR MATH ENGINE (NO DEPS) ---
@@ -2176,6 +2434,373 @@ with audit_db_lock:
     _c.execute("CREATE INDEX IF NOT EXISTS idx_audit_icao ON audit_crossings(icao)")
     _c.execute("CREATE INDEX IF NOT EXISTS idx_audit_point ON audit_crossings(point_name)")
     audit_db_conn.commit()
+
+# ==========================================
+# --- TRAIL DATABASE (separate trails.db) ---
+# ==========================================
+load_trail_config()
+trail_db_conn = None
+trail_db_lock = threading.Lock()
+trail_runtime_state = {}
+trail_runtime_state_lock = threading.Lock()
+
+
+def get_trail_db_path():
+    cfg = get_trail_config_snapshot()
+    db_path = cfg["persistence"]["db_path"]
+    return db_path if os.path.isabs(db_path) else os.path.join(BASE_DIR, db_path)
+
+
+def init_trail_store():
+    global trail_db_conn
+    trail_db_path = get_trail_db_path()
+    trail_db_dir = os.path.dirname(trail_db_path)
+    if trail_db_dir:
+        os.makedirs(trail_db_dir, exist_ok=True)
+    trail_db_conn = sqlite3.connect(trail_db_path, check_same_thread=False)
+    with trail_db_lock:
+        c = trail_db_conn.cursor()
+        c.execute("PRAGMA journal_mode=WAL;")
+        c.execute("PRAGMA synchronous=NORMAL;")
+        c.execute('''CREATE TABLE IF NOT EXISTS trail_points
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      icao TEXT NOT NULL,
+                      ts_ms INTEGER NOT NULL,
+                      lat REAL,
+                      lon REAL,
+                      altitude TEXT,
+                      on_ground INTEGER,
+                      callsign TEXT,
+                      source_label TEXT,
+                      receiver_id TEXT,
+                      marker_type TEXT,
+                      event_key TEXT UNIQUE)''')
+        existing_columns = [row[1] for row in c.execute("PRAGMA table_info(trail_points)").fetchall()]
+        if "event_key" not in existing_columns:
+            c.execute("ALTER TABLE trail_points ADD COLUMN event_key TEXT")
+            existing_columns.append("event_key")
+        if "event_key" in existing_columns:
+            c.execute(
+                "UPDATE trail_points SET event_key = "
+                "(icao || ':' || ts_ms || ':' || COALESCE(marker_type, 'point') || ':' || "
+                "CASE WHEN lat IS NULL THEN '' ELSE printf('%.6f', lat) END || ':' || "
+                "CASE WHEN lon IS NULL THEN '' ELSE printf('%.6f', lon) END) "
+                "WHERE event_key IS NULL"
+            )
+        c.execute("CREATE INDEX IF NOT EXISTS idx_trail_points_ts ON trail_points(ts_ms)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_trail_points_icao_ts ON trail_points(icao, ts_ms)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_trail_points_marker ON trail_points(marker_type)")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_trail_points_event_key ON trail_points(event_key)")
+        trail_db_conn.commit()
+
+
+def persist_trail_records(records):
+    if not records:
+        return
+    with trail_db_lock:
+        try:
+            trail_db_conn.executemany(
+                "INSERT OR IGNORE INTO trail_points (icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type, event_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                records,
+            )
+            trail_db_conn.commit()
+        except Exception:
+            trail_db_conn.rollback()
+            raise
+
+
+def prune_trail_records(now_ms=None):
+    cfg = get_trail_config_snapshot()
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
+    retention_ms = int(cfg["persistence"]["retention_hours"] * 3600 * 1000)
+    cutoff_ms = now_ms - retention_ms
+    with trail_db_lock:
+        trail_db_conn.execute("DELETE FROM trail_points WHERE ts_ms < ?", (cutoff_ms,))
+        trail_db_conn.commit()
+    with trail_runtime_state_lock:
+        for icao, state in list(trail_runtime_state.items()):
+            last_point_ts_ms = state.get("last_point_ts_ms")
+            if last_point_ts_ms is not None and last_point_ts_ms < cutoff_ms:
+                del trail_runtime_state[icao]
+
+
+def resolve_trail_source_metadata():
+    if RX_MODE == "B":
+        return "B", str(RECEIVER_B_CONFIG.get("receiver_id") or RECEIVER_B_CONFIG.get("port") or "B")
+    if RX_MODE == "DUAL":
+        receiver_ids = [
+            str(RECEIVER_A_CONFIG.get("receiver_id") or RECEIVER_A_CONFIG.get("port") or "A"),
+            str(RECEIVER_B_CONFIG.get("receiver_id") or RECEIVER_B_CONFIG.get("port") or "B"),
+        ]
+        return "DUAL", ",".join(receiver_ids)
+    return "A", str(RECEIVER_A_CONFIG.get("receiver_id") or RECEIVER_A_CONFIG.get("port") or "A")
+
+
+def compute_trail_gap_threshold_ms(recorder_state, trail_cfg):
+    adaptive = trail_cfg["adaptive_gap"]
+    fallback_ms = int(trail_cfg["stale_position_threshold_seconds"] * 1000)
+    if not adaptive.get("enabled"):
+        return fallback_ms
+    intervals = recorder_state.get("intervals", [])
+    if not intervals:
+        return fallback_ms
+    ordered = sorted(intervals)
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 0:
+        median_seconds = (ordered[mid - 1] + ordered[mid]) / 2.0
+    else:
+        median_seconds = ordered[mid]
+    threshold_seconds = max(adaptive["min_seconds"], min(adaptive["max_seconds"], median_seconds * adaptive["multiplier"]))
+    return int(threshold_seconds * 1000)
+
+
+def classify_trail_jump(previous_point, lat, lon, delta_ms, on_ground, trail_cfg):
+    if not previous_point or delta_ms <= 0:
+        return None
+    try:
+        distance_nm = haversine_nm(previous_point["lat"], previous_point["lon"], lat, lon)
+    except Exception:
+        return "jump_break"
+    plausibility = trail_cfg["plausibility"]
+    if distance_nm > plausibility["max_jump_nm"]:
+        return "jump_break"
+    elapsed_hours = delta_ms / 3600000.0
+    if elapsed_hours <= 0:
+        return "jump_break"
+    implied_speed_kt = distance_nm / elapsed_hours
+    max_speed = plausibility["max_ground_speed_kt"] if on_ground else plausibility["max_airborne_speed_kt"]
+    if implied_speed_kt > max_speed:
+        return "jump_break"
+    return None
+
+
+def _trail_callsign_or_none(value):
+    if value in (None, "", "----"):
+        return None
+    return str(value)
+
+
+def make_trail_event_key(icao, ts_ms, lat, lon, marker_type):
+    lat_key = "" if lat is None else f"{float(lat):.6f}"
+    lon_key = "" if lon is None else f"{float(lon):.6f}"
+    return f"{str(icao).upper()}:{int(ts_ms)}:{marker_type or 'point'}:{lat_key}:{lon_key}"
+
+
+def _trail_on_ground_flag(data):
+    air_ground = str(data.get("air_ground", "----")).upper()
+    altitude = data.get("alt")
+    if air_ground == "GROUND" or altitude == "GROUND":
+        return 1
+    if air_ground == "AIR":
+        return 0
+    return None
+
+
+def snapshot_trail_aircraft_state():
+    snapshot = {}
+    with state_lock:
+        for icao, data in aircraft_state.items():
+            snapshot[icao] = {
+                "icao": icao,
+                "lat": data.get("lat"),
+                "lon": data.get("lon"),
+                "alt": data.get("alt"),
+                "air_ground": data.get("air_ground"),
+                "callsign": data.get("callsign"),
+                "last_seen": data.get("last_seen", 0),
+                "_lat_update_time": data.get("_lat_update_time", 0),
+            }
+    return snapshot
+
+
+def build_trail_records(snapshot, now_ms, trail_cfg):
+    records = []
+    stale_threshold_ms = int(trail_cfg["stale_position_threshold_seconds"] * 1000)
+    source_label, receiver_id = resolve_trail_source_metadata()
+    max_interval_count = trail_cfg["adaptive_gap"]["history_size"]
+
+    for icao, data in snapshot.items():
+        try:
+            lat = float(data.get("lat"))
+            lon = float(data.get("lon"))
+        except Exception:
+            continue
+        if not (math.isfinite(lat) and math.isfinite(lon)):
+            continue
+
+        lat_update_time = int(float(data.get("_lat_update_time", 0) or 0) * 1000)
+        if lat_update_time <= 0 or (now_ms - lat_update_time) > stale_threshold_ms:
+            continue
+
+        altitude = data.get("alt")
+        on_ground = _trail_on_ground_flag(data)
+        callsign = _trail_callsign_or_none(data.get("callsign"))
+        with trail_runtime_state_lock:
+            recorder_state = trail_runtime_state.setdefault(icao, {
+                "last_point": None,
+                "last_point_ts_ms": None,
+                "last_observation_ts_ms": None,
+                "intervals": [],
+                "last_activity_ms": now_ms,
+            })
+            previous_point = recorder_state.get("last_point")
+            if previous_point and previous_point["lat"] == lat and previous_point["lon"] == lon:
+                recorder_state["last_observation_ts_ms"] = now_ms
+                recorder_state["last_activity_ms"] = now_ms
+                continue
+
+            delta_ms = 0
+            marker_type = None
+            if recorder_state.get("last_point_ts_ms") is not None:
+                base_observation_ms = recorder_state.get("last_observation_ts_ms") or recorder_state["last_point_ts_ms"]
+                delta_ms = now_ms - base_observation_ms
+                gap_threshold_ms = compute_trail_gap_threshold_ms(recorder_state, trail_cfg)
+                if delta_ms > gap_threshold_ms:
+                    marker_type = "gap_break"
+                else:
+                    marker_type = classify_trail_jump(previous_point, lat, lon, delta_ms, on_ground == 1, trail_cfg)
+                recorder_state["intervals"].append(max(delta_ms / 1000.0, 0.0))
+                if len(recorder_state["intervals"]) > max_interval_count:
+                    recorder_state["intervals"] = recorder_state["intervals"][-max_interval_count:]
+
+            if marker_type:
+                records.append((icao, now_ms, None, None, None, None, callsign, source_label, receiver_id, marker_type, make_trail_event_key(icao, now_ms, None, None, marker_type)))
+            records.append((icao, now_ms, lat, lon, None if altitude in (None, "") else str(altitude), on_ground, callsign, source_label, receiver_id, None, make_trail_event_key(icao, now_ms, lat, lon, None)))
+
+            recorder_state["last_point"] = {"lat": lat, "lon": lon}
+            recorder_state["last_point_ts_ms"] = now_ms
+            recorder_state["last_observation_ts_ms"] = now_ms
+            recorder_state["last_activity_ms"] = now_ms
+
+    return records
+
+
+def query_trail_rows(from_ms, to_ms, icao=None):
+    sql = (
+        "SELECT id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type "
+        "FROM trail_points WHERE ts_ms >= ? AND ts_ms <= ?"
+    )
+    params = [int(from_ms), int(to_ms)]
+    if icao:
+        sql += " AND icao = ?"
+        params.append(str(icao).upper())
+    sql += " ORDER BY icao ASC, ts_ms ASC, id ASC"
+    with trail_db_lock:
+        return trail_db_conn.execute(sql, params).fetchall()
+
+
+def _ms_to_rfc3339(ms):
+    return datetime.datetime.fromtimestamp(ms / 1000.0, tz=datetime.timezone.utc).isoformat(timespec='milliseconds').replace("+00:00", "Z")
+
+
+def build_geojson_from_trail_rows(rows):
+    features = []
+    current_icao = None
+    segment_points = []
+    segment_meta = {}
+    pending_break_reason = None
+
+    def flush_segment(end_break_reason=None):
+        nonlocal segment_points, segment_meta
+        if len(segment_points) >= 2:
+            start_time = segment_points[0]["ts_ms"]
+            end_time = segment_points[-1]["ts_ms"]
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[pt["lon"], pt["lat"]] for pt in segment_points],
+                },
+                "properties": {
+                    "icao": segment_meta.get("icao"),
+                    "callsign": segment_meta.get("callsign"),
+                    "source_label": segment_meta.get("source_label"),
+                    "receiver_id": segment_meta.get("receiver_id"),
+                    "start_time_ms": start_time,
+                    "end_time_ms": end_time,
+                    "start_time": _ms_to_rfc3339(start_time),
+                    "end_time": _ms_to_rfc3339(end_time),
+                    "point_count": len(segment_points),
+                    "point_times_ms": [pt["ts_ms"] for pt in segment_points],
+                    "point_altitudes": [pt["altitude"] for pt in segment_points],
+                    "point_on_ground": [pt["on_ground"] for pt in segment_points],
+                    "break_reason": segment_meta.get("break_reason"),
+                    "end_break_reason": end_break_reason,
+                },
+            })
+        segment_points = []
+        segment_meta = {}
+
+    for _row_id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type in rows:
+        if current_icao is not None and icao != current_icao:
+            flush_segment()
+            pending_break_reason = None
+        current_icao = icao
+        if marker_type:
+            flush_segment(marker_type)
+            pending_break_reason = marker_type
+            continue
+        if lat is None or lon is None:
+            continue
+        if not segment_points:
+            segment_meta = {
+                "icao": icao,
+                "callsign": callsign,
+                "source_label": source_label,
+                "receiver_id": receiver_id,
+                "break_reason": pending_break_reason,
+            }
+            pending_break_reason = None
+        segment_points.append({
+            "ts_ms": int(ts_ms),
+            "lat": float(lat),
+            "lon": float(lon),
+            "altitude": altitude,
+            "on_ground": on_ground,
+        })
+
+    flush_segment()
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+
+def run_trail_recorder_loop():
+    pending_records = []
+    last_flush_at = time.time()
+    last_prune_at = 0.0
+    while True:
+        cycle_started = time.time()
+        trail_cfg = get_trail_config_snapshot()
+        now_ms = int(cycle_started * 1000)
+        try:
+            pending_records.extend(build_trail_records(snapshot_trail_aircraft_state(), now_ms, trail_cfg))
+            if pending_records and (
+                (cycle_started - last_flush_at) >= trail_cfg["persistence"]["flush_interval_seconds"]
+                or len(pending_records) >= trail_cfg["persistence"]["batch_size"]
+            ):
+                persist_trail_records(pending_records)
+                pending_records = []
+                last_flush_at = cycle_started
+
+            if (cycle_started - last_prune_at) >= trail_cfg["persistence"]["prune_interval_seconds"]:
+                if pending_records:
+                    persist_trail_records(pending_records)
+                    pending_records = []
+                    last_flush_at = cycle_started
+                prune_trail_records(now_ms)
+                last_prune_at = cycle_started
+        except Exception as exc:
+            max_buffer = max(1, int(trail_cfg["persistence"]["batch_size"])) * 4
+            if len(pending_records) > max_buffer:
+                pending_records = pending_records[-max_buffer:]
+            print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[TRAIL] Recorder error: {exc}{ANSI.RESET}")
+
+        sleep_for = max(0.05, trail_cfg["persistence"]["sample_interval_seconds"] - (time.time() - cycle_started))
+        time.sleep(sleep_for)
 
 # In-memory audit config cache — loaded from AUDIT.db, updated via API
 audit_config_cache = {}
@@ -3622,10 +4247,13 @@ if __name__ == "__main__":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     load_altitude_colours()
     load_waypoint_scoring_lut()
+    load_trail_config()
     load_airline_db()
     load_historical_state()
     load_airspace()
     load_audit_config()
+    init_trail_store()
+    prune_trail_records()
     # Start receiver threads according to configured mode
     if RX_MODE in ("A", "DUAL"):
         threading.Thread(target=beast_reader_thread, args=("A",), daemon=True).start()
@@ -3633,6 +4261,7 @@ if __name__ == "__main__":
         threading.Thread(target=beast_reader_thread, args=("B",), daemon=True).start()
     threading.Thread(target=run_reaper_loop, daemon=True).start()
     threading.Thread(target=archivist_loop, daemon=True).start()
+    threading.Thread(target=run_trail_recorder_loop, daemon=True).start()
     threading.Thread(target=run_http_server, daemon=True).start()
     threading.Thread(target=run_audit_monitor, daemon=True).start()
     threading.Thread(target=run_waypoint_scoring_monitor, daemon=True).start()

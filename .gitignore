@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 *.pyo
+DARTS/*.db-wal
+DARTS/*.db-shm
+DARTS/data/
