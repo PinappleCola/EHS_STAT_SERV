@@ -1414,7 +1414,7 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=400)
             return
 
-        rows = iter_trail_rows(from_ms, to_ms, icao=icao)
+        rows = query_trail_rows(from_ms, to_ms, icao=icao)
         compact_rows = [
             [icao_row, int(ts_ms), lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type]
             for _row_id, icao_row, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type in rows
@@ -1433,7 +1433,7 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=400)
             return
 
-        payload = build_geojson_from_trail_rows(iter_trail_rows(from_ms, to_ms, icao=icao))
+        payload = build_geojson_from_trail_rows(query_trail_rows(from_ms, to_ms, icao=icao))
         trail_cfg = get_trail_config_snapshot()
         filename = f'{trail_cfg["export"]["filename_prefix"]}_{from_ms}_{to_ms}.geojson'
         self._send_bytes(
@@ -1705,6 +1705,20 @@ def _safe_int(value, default, minimum=None, maximum=None):
     return value
 
 
+def _safe_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return bool(default)
+
+
 def _normalize_trail_config(raw_payload):
     cfg = _deep_merge_dict(DEFAULT_TRAIL_CONFIG, raw_payload if isinstance(raw_payload, dict) else {})
     cfg["note"] = str(cfg.get("note") or DEFAULT_TRAIL_CONFIG["note"])
@@ -1717,7 +1731,7 @@ def _normalize_trail_config(raw_payload):
     )
 
     adaptive = cfg.get("adaptive_gap", {})
-    adaptive["enabled"] = bool(adaptive.get("enabled", True))
+    adaptive["enabled"] = _safe_bool(adaptive.get("enabled", True), default=True)
     adaptive["history_size"] = _safe_int(adaptive.get("history_size"), DEFAULT_TRAIL_CONFIG["adaptive_gap"]["history_size"], minimum=3, maximum=120)
     adaptive["multiplier"] = _safe_float(adaptive.get("multiplier"), DEFAULT_TRAIL_CONFIG["adaptive_gap"]["multiplier"], minimum=1.0, maximum=20.0)
     adaptive["min_seconds"] = _safe_float(adaptive.get("min_seconds"), DEFAULT_TRAIL_CONFIG["adaptive_gap"]["min_seconds"], minimum=1.0, maximum=600.0)
@@ -1755,7 +1769,7 @@ def _normalize_trail_config(raw_payload):
     cfg["render"] = render
 
     display = cfg.get("display", {})
-    display["local_time"] = bool(display.get("local_time", True))
+    display["local_time"] = _safe_bool(display.get("local_time", True), default=True)
     cfg["display"] = display
     return cfg
 
@@ -2654,7 +2668,7 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
     return records
 
 
-def iter_trail_rows(from_ms, to_ms, icao=None, fetch_size=1000):
+def query_trail_rows(from_ms, to_ms, icao=None):
     sql = (
         "SELECT id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type "
         "FROM trail_points WHERE ts_ms >= ? AND ts_ms <= ?"
@@ -2665,13 +2679,7 @@ def iter_trail_rows(from_ms, to_ms, icao=None, fetch_size=1000):
         params.append(str(icao).upper())
     sql += " ORDER BY icao ASC, ts_ms ASC, id ASC"
     with trail_db_lock:
-        cursor = trail_db_conn.execute(sql, params)
-        while True:
-            batch = cursor.fetchmany(fetch_size)
-            if not batch:
-                break
-            for row in batch:
-                yield row
+        return trail_db_conn.execute(sql, params).fetchall()
 
 
 def _ms_to_rfc3339(ms):
@@ -2773,6 +2781,9 @@ def run_trail_recorder_loop():
                 prune_trail_records(now_ms)
                 last_prune_at = cycle_started
         except Exception as exc:
+            max_buffer = max(1, int(trail_cfg["persistence"]["batch_size"])) * 4
+            if len(pending_records) > max_buffer:
+                pending_records = pending_records[-max_buffer:]
             print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[TRAIL] Recorder error: {exc}{ANSI.RESET}")
 
         sleep_for = max(0.05, trail_cfg["persistence"]["sample_interval_seconds"] - (time.time() - cycle_started))
