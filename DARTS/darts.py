@@ -2482,7 +2482,9 @@ def init_trail_store():
         if "event_key" in existing_columns:
             c.execute(
                 "UPDATE trail_points SET event_key = "
-                "(icao || ':' || ts_ms || ':' || COALESCE(marker_type, 'point') || ':' || COALESCE(CAST(lat AS TEXT), '') || ':' || COALESCE(CAST(lon AS TEXT), '')) "
+                "(icao || ':' || ts_ms || ':' || COALESCE(marker_type, 'point') || ':' || "
+                "CASE WHEN lat IS NULL THEN '' ELSE printf('%.6f', lat) END || ':' || "
+                "CASE WHEN lon IS NULL THEN '' ELSE printf('%.6f', lon) END) "
                 "WHERE event_key IS NULL"
             )
         c.execute("CREATE INDEX IF NOT EXISTS idx_trail_points_ts ON trail_points(ts_ms)")
@@ -2721,6 +2723,9 @@ def build_geojson_from_trail_rows(rows):
                     "start_time": _ms_to_rfc3339(start_time),
                     "end_time": _ms_to_rfc3339(end_time),
                     "point_count": len(segment_points),
+                    "point_times_ms": [pt["ts_ms"] for pt in segment_points],
+                    "point_altitudes": [pt["altitude"] for pt in segment_points],
+                    "point_on_ground": [pt["on_ground"] for pt in segment_points],
                     "break_reason": segment_meta.get("break_reason"),
                     "end_break_reason": end_break_reason,
                 },
