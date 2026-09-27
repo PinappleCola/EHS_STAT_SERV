@@ -1522,6 +1522,26 @@
             });
         }
 
+        function normalizeTrailPath(historyObj) {
+            if (!historyObj || !Array.isArray(historyObj.path) || historyObj.path.length < 2) return;
+            sortTrailPathChronologically(historyObj);
+            const compacted = [];
+            historyObj.path.forEach((entry) => {
+                const last = compacted[compacted.length - 1];
+                if (entry.gapBreak) {
+                    if (last && last.gapBreak && last.time === entry.time && last.markerType === entry.markerType) return;
+                    compacted.push(entry);
+                    return;
+                }
+                if (last && !last.gapBreak && last.time === entry.time && last.lat === entry.lat && last.lon === entry.lon) {
+                    last.alt = entry.alt;
+                    return;
+                }
+                compacted.push(entry);
+            });
+            historyObj.path = compacted;
+        }
+
         function ingestTrailRows(rows) {
             if (!Array.isArray(rows)) return;
             const touchedIcaos = new Set();
@@ -1536,29 +1556,21 @@
                 const historyObj = getOrCreateTrailHistory(icao, eventTime);
                 const history = historyObj.path;
                 if (markerType) {
-                    const hasMarkerAlready = history.some((entry) => entry.gapBreak && entry.time === eventTime && entry.markerType === markerType);
-                    if (!hasMarkerAlready) {
-                        history.push({ time: eventTime, gapBreak: true, markerType });
-                    }
+                    history.push({ time: eventTime, gapBreak: true, markerType });
                     historyObj.lastUpdate = Math.max(historyObj.lastUpdate || 0, eventTime);
                     return;
                 }
                 const lat = Number.parseFloat(latRaw);
                 const lon = Number.parseFloat(lonRaw);
                 if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-                const existingPoint = history.find((entry) => !entry.gapBreak && entry.time === eventTime && entry.lat === lat && entry.lon === lon);
-                if (existingPoint) {
-                    existingPoint.alt = altitude;
-                } else {
-                    history.push({ lat, lon, time: eventTime, alt: altitude });
-                }
+                history.push({ lat, lon, time: eventTime, alt: altitude });
                 historyObj.lastPointTime = Math.max(historyObj.lastPointTime || 0, eventTime);
                 historyObj.lastUpdate = Math.max(historyObj.lastUpdate || 0, eventTime);
             });
             const nowMs = Date.now();
             touchedIcaos.forEach((icao) => {
                 const historyObj = trailHistory[icao];
-                sortTrailPathChronologically(historyObj);
+                normalizeTrailPath(historyObj);
                 pruneTrailPathByAge(historyObj, nowMs);
             });
         }
@@ -1587,20 +1599,22 @@
         function appendLiveTrailSample(sample) {
             if (!sample || !sample.icao || !Number.isFinite(sample.lat) || !Number.isFinite(sample.lon) || !Number.isFinite(sample.time)) return;
             const historyObj = getOrCreateTrailHistory(sample.icao, sample.time);
-            if (historyObj.lastPointTime !== null && sample.time < historyObj.lastPointTime) return;
+            const isChronological = historyObj.lastPointTime === null || sample.time >= historyObj.lastPointTime;
             const gapSinceLastPointMs = (historyObj.lastPointTime === null) ? 0 : (sample.time - historyObj.lastPointTime);
             const gapSinceLastSeenMs = sample.time - historyObj.lastUpdate;
             const history = historyObj.path;
             const lastHistoryEntry = history.length > 0 ? history[history.length - 1] : null;
-            if (historyObj.path.length > 0 && !lastHistoryEntry?.gapBreak && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
+            if (isChronological && historyObj.path.length > 0 && !lastHistoryEntry?.gapBreak && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
                 historyObj.path.push({ time: sample.time, gapBreak: true });
             }
-            historyObj.lastUpdate = sample.time;
-            const lastTrailPoint = getLastTrailPoint(history);
-            if (!lastTrailPoint || lastTrailPoint.lat !== sample.lat || lastTrailPoint.lon !== sample.lon) {
+            historyObj.lastUpdate = Math.max(historyObj.lastUpdate || 0, sample.time);
+            const hasExactPoint = history.some((entry) => !entry.gapBreak && entry.time === sample.time && entry.lat === sample.lat && entry.lon === sample.lon);
+            if (!hasExactPoint) {
                 history.push({ lat: sample.lat, lon: sample.lon, time: sample.time, alt: sample.alt });
-                historyObj.lastPointTime = sample.time;
             }
+            if (!isChronological) normalizeTrailPath(historyObj);
+            const latestPoint = getLastTrailPoint(historyObj.path);
+            historyObj.lastPointTime = latestPoint ? latestPoint.time : null;
             pruneTrailPathByAge(historyObj, sample.time);
         }
 
