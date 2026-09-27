@@ -1606,7 +1606,7 @@
                     }, 10000);
                 }
             } finally {
-                if (pendingLiveTrailUpdates.length > 0) {
+                while (pendingLiveTrailUpdates.length > 0) {
                     const queuedUpdates = pendingLiveTrailUpdates.splice(0, pendingLiveTrailUpdates.length);
                     queuedUpdates.sort((a, b) => (a.time - b.time) || (a.seq - b.seq));
                     queuedUpdates.forEach((sample) => appendLiveTrailSample(sample));
@@ -1621,11 +1621,13 @@
             normalizeTrailPath(historyObj);
             const history = historyObj.path;
             let previousPointIdx = -1;
-            for (let i = 0; i < history.length; i++) {
+            for (let i = history.length - 1; i >= 0; i--) {
                 const entry = history[i];
                 if (entry.gapBreak) continue;
-                if (entry.time <= sample.time) previousPointIdx = i;
-                else break;
+                if (entry.time <= sample.time) {
+                    previousPointIdx = i;
+                    break;
+                }
             }
             if (previousPointIdx >= 0) {
                 const previousPointTime = history[previousPointIdx].time;
