@@ -2478,6 +2478,8 @@ def init_trail_store():
         existing_columns = [row[1] for row in c.execute("PRAGMA table_info(trail_points)").fetchall()]
         if "event_key" not in existing_columns:
             c.execute("ALTER TABLE trail_points ADD COLUMN event_key TEXT")
+            existing_columns.append("event_key")
+        if "event_key" in existing_columns:
             c.execute(
                 "UPDATE trail_points SET event_key = "
                 "(icao || ':' || ts_ms || ':' || COALESCE(marker_type, 'point') || ':' || COALESCE(CAST(lat AS TEXT), '') || ':' || COALESCE(CAST(lon AS TEXT), '')) "
@@ -2637,17 +2639,21 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
             recorder_state = trail_runtime_state.setdefault(icao, {
                 "last_point": None,
                 "last_point_ts_ms": None,
+                "last_observation_ts_ms": None,
                 "intervals": [],
                 "last_activity_ms": now_ms,
             })
             previous_point = recorder_state.get("last_point")
             if previous_point and previous_point["lat"] == lat and previous_point["lon"] == lon:
+                recorder_state["last_observation_ts_ms"] = now_ms
+                recorder_state["last_activity_ms"] = now_ms
                 continue
 
             delta_ms = 0
             marker_type = None
             if recorder_state.get("last_point_ts_ms") is not None:
-                delta_ms = now_ms - recorder_state["last_point_ts_ms"]
+                base_observation_ms = recorder_state.get("last_observation_ts_ms") or recorder_state["last_point_ts_ms"]
+                delta_ms = now_ms - base_observation_ms
                 gap_threshold_ms = compute_trail_gap_threshold_ms(recorder_state, trail_cfg)
                 if delta_ms > gap_threshold_ms:
                     marker_type = "gap_break"
@@ -2663,6 +2669,7 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
 
             recorder_state["last_point"] = {"lat": lat, "lon": lon}
             recorder_state["last_point_ts_ms"] = now_ms
+            recorder_state["last_observation_ts_ms"] = now_ms
             recorder_state["last_activity_ms"] = now_ms
 
     return records
@@ -2675,7 +2682,7 @@ def query_trail_rows(from_ms, to_ms, icao=None):
     )
     params = [int(from_ms), int(to_ms)]
     if icao:
-        sql += " AND UPPER(icao) = ?"
+        sql += " AND icao = ?"
         params.append(str(icao).upper())
     sql += " ORDER BY icao ASC, ts_ms ASC, id ASC"
     with trail_db_lock:
