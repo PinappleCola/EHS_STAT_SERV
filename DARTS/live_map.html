@@ -1615,13 +1615,11 @@
                 }
             } finally {
                 trailHydrationInFlight = false;
-                if (trailHydrationLoaded) {
-                    isTrailHydrating = false;
-                    while (pendingLiveTrailUpdates.length > 0) {
-                        const queuedUpdates = pendingLiveTrailUpdates.splice(0, pendingLiveTrailUpdates.length);
-                        queuedUpdates.sort((a, b) => (a.time - b.time) || (a.seq - b.seq));
-                        queuedUpdates.forEach((sample) => appendLiveTrailSample(sample));
-                    }
+                isTrailHydrating = false;
+                while (pendingLiveTrailUpdates.length > 0) {
+                    const queuedUpdates = pendingLiveTrailUpdates.splice(0, pendingLiveTrailUpdates.length);
+                    queuedUpdates.sort((a, b) => (a.time - b.time) || (a.seq - b.seq));
+                    queuedUpdates.forEach((sample) => appendLiveTrailSample(sample));
                 }
             }
         }
