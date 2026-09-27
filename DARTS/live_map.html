@@ -229,6 +229,7 @@
             <button id="btn-elem-refresh" class="btn-action btn-action-alt" title="Force re-import of airspace.geojson">ELEMENT REFRESH</button>
             <button id="btn-lock" class="btn-action">SNAP CURRENT LOC</button>
             <button id="btn-clean-snap" class="btn-action">CLEAN SCREENSHOT</button>
+            <button id="btn-export-geojson" class="btn-action btn-action-alt">EXPORT GEOJSON</button>
             <button onclick="openTagConfig()" class="btn-action" title="Open data tag field configuration">DATA TAGS</button>
             <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Toggle performance overlay">PERF</button>
             <button id="btn-intent-coord" class="btn-action btn-toggle" onclick="toggleIntentCoord()" title="Show FMS intent waypoint overlay (BDS 4,2)">INTENT COORD</button>
@@ -397,6 +398,13 @@
         let lastAircraftList = []; 
         let renderHitboxes = []; 
         const trailHistory = {};
+        let isTrailHydrating = true;
+        let trailHydrationLoaded = false;
+        let trailHydrationInFlight = false;
+        let trailHydrationRetryTimer = null;
+        const pendingLiveTrailUpdates = [];
+        const MAX_PENDING_TRAIL_UPDATES = 20000;
+        let pendingLiveTrailSeq = 0;
         const entityCache = {};
         
         let airspaceGeoJSON = { type: "FeatureCollection", features: [] };
@@ -793,6 +801,7 @@
         const trailVal = document.getElementById('trail-val');
         const trailStartCode = document.getElementById('trail-start-code');
         const trailEndCode = document.getElementById('trail-end-code');
+        const MINUTES_PER_DAY = 1440;
         const TRAIL_WINDOW_MAX_MINUTES = 1440;
         const MIN_TRAIL_SPAN_MINUTES = 0.1;
         const SLIDER_ZINDEX_SWITCH_BUFFER = 0.05;
@@ -809,12 +818,28 @@
             return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
         }
 
-        function formatHmsFromMinutes(v) {
-            const seconds = Math.max(0, Math.min(86399, Math.round(Number(v) * 60)));
-            const h = Math.floor(seconds / 3600);
-            const m = Math.floor((seconds % 3600) / 60);
-            const s = seconds % 60;
-            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        function formatHmsFromDate(dateObj) {
+            return `${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}:${String(dateObj.getSeconds()).padStart(2, '0')}`;
+        }
+
+        function getTrailRangeWindow(nowMs = Date.now()) {
+            const minSlider = parseFloat(trailMin.value);
+            const maxSlider = parseFloat(trailMax.value);
+            const minAgeMs = (TRAIL_WINDOW_MAX_MINUTES - maxSlider) * 60000;
+            const maxAgeMs = (TRAIL_WINDOW_MAX_MINUTES - minSlider) * 60000;
+            return {
+                minSlider,
+                maxSlider,
+                minAgeMs,
+                maxAgeMs,
+                fromMs: Math.max(0, Math.round(nowMs - maxAgeMs)),
+                toMs: Math.max(0, Math.round(nowMs - minAgeMs)),
+            };
+        }
+
+        function formatLocalTrailClockFromAgeMs(ageMs, nowMs = Date.now()) {
+            const target = new Date(nowMs - ageMs);
+            return formatHmsFromDate(target);
         }
 
         function parseHmsToMinutes(input) {
@@ -824,6 +849,32 @@
             if (!m) return null;
             const h = Number(m[1]), mm = Number(m[2]), s = Number(m[3]);
             return (h * 3600 + mm * 60 + s) / 60;
+        }
+
+        function parseLocalClockToAgeMinutes(input, referenceTimeMs, nowMs = Date.now()) {
+            const targetMinutes = parseHmsToMinutes(input);
+            if (targetMinutes === null) return null;
+            const targetSeconds = Math.round(targetMinutes * 60);
+            const now = new Date(nowMs);
+            const localCandidate = new Date(now);
+            localCandidate.setHours(Math.floor(targetSeconds / 3600), Math.floor((targetSeconds % 3600) / 60), targetSeconds % 60, 0);
+            const candidateMs = [
+                localCandidate.getTime() - (MINUTES_PER_DAY * 60000),
+                localCandidate.getTime(),
+                localCandidate.getTime() + (MINUTES_PER_DAY * 60000),
+            ];
+            let chosenMs = candidateMs[0];
+            let minDistance = Math.abs(chosenMs - referenceTimeMs);
+            candidateMs.slice(1).forEach((candidate) => {
+                const distance = Math.abs(candidate - referenceTimeMs);
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    chosenMs = candidate;
+                }
+            });
+            let ageMinutes = (nowMs - chosenMs) / 60000;
+            if (!Number.isFinite(ageMinutes)) return null;
+            return Math.max(0, Math.min(TRAIL_WINDOW_MAX_MINUTES, ageMinutes));
         }
 
         function clampTrailRange(source = null) {
@@ -858,24 +909,34 @@
         function updateSliderLabels(syncInputs = true, source = null) {
             const { minSlider, maxSlider } = clampTrailRange(source);
             const spanMinutes = (maxSlider - minSlider);
-            trailVal.innerText = `Δ ${formatSpanHmsFromMinutes(spanMinutes)} | ${formatHmsFromMinutes(minSlider)} - ${formatHmsFromMinutes(maxSlider)}`;
+            const nowMs = Date.now();
+            const { minAgeMs, maxAgeMs } = getTrailRangeWindow(nowMs);
+            const startClock = formatLocalTrailClockFromAgeMs(maxAgeMs, nowMs);
+            const endClock = formatLocalTrailClockFromAgeMs(minAgeMs, nowMs);
+            trailVal.innerText = `Δ ${formatSpanHmsFromMinutes(spanMinutes)} | ${startClock} - ${endClock}`;
             if (syncInputs && !suppressTimecodeSync) {
-                trailStartCode.value = formatHmsFromMinutes(minSlider);
-                trailEndCode.value = formatHmsFromMinutes(maxSlider);
+                trailStartCode.value = startClock;
+                trailEndCode.value = endClock;
             }
         }
         trailMin.addEventListener('input', () => updateSliderLabels(true, 'min'));
         trailMax.addEventListener('input', () => updateSliderLabels(true, 'max'));
         function applyTimecodeInput(inputEl, isStart) {
-            const parsed = parseHmsToMinutes(inputEl.value);
-            if (parsed === null) {
+            const nowMs = Date.now();
+            const { fromMs, toMs } = getTrailRangeWindow(nowMs);
+            const referenceTimeMs = isStart ? fromMs : toMs;
+            const parsedAgeMinutes = parseLocalClockToAgeMinutes(inputEl.value, referenceTimeMs, nowMs);
+            if (parsedAgeMinutes === null) {
                 inputEl.style.borderColor = '#ef4444';
                 return;
             }
             inputEl.style.borderColor = '#334155';
             suppressTimecodeSync = true;
-            if (isStart) trailMin.value = parsed.toFixed(1);
-            else trailMax.value = parsed.toFixed(1);
+            if (isStart) {
+                trailMin.value = (TRAIL_WINDOW_MAX_MINUTES - parsedAgeMinutes).toFixed(1);
+            } else {
+                trailMax.value = (TRAIL_WINDOW_MAX_MINUTES - parsedAgeMinutes).toFixed(1);
+            }
             updateSliderLabels(false, isStart ? 'min' : 'max');
             suppressTimecodeSync = false;
             updateSliderLabels(true);
@@ -884,7 +945,22 @@
         trailEndCode.addEventListener('change', () => applyTimecodeInput(trailEndCode, false));
         trailStartCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyTimecodeInput(trailStartCode, true); });
         trailEndCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyTimecodeInput(trailEndCode, false); });
-        setInterval(updateSliderLabels, 60000); updateSliderLabels();
+        let sliderLabelTimer = null;
+        function scheduleSliderLabelRefresh() {
+            if (sliderLabelTimer) clearTimeout(sliderLabelTimer);
+            if (document.hidden) return;
+            const nextTickMs = 1000 - (Date.now() % 1000);
+            sliderLabelTimer = setTimeout(() => {
+                updateSliderLabels(false);
+                scheduleSliderLabelRefresh();
+            }, Math.max(50, nextTickMs));
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) updateSliderLabels(true);
+            scheduleSliderLabelRefresh();
+        });
+        updateSliderLabels(true);
+        scheduleSliderLabelRefresh();
 
         // Measure Tool
         function nmToDisplay(nm) {
@@ -1308,27 +1384,35 @@
             return { R_CX, R_CY, ppd: R_MIN / activeZoomDeg };
         }
 
+        function projectWorldToCanvas(lat, lon, projection) {
+            if (projection.useMapProjection && networkMode === 'ONLINE' && leafMap) {
+                const pt = leafMap.latLngToContainerPoint([lat, lon]);
+                return { x: pt.x, y: pt.y };
+            }
+            return {
+                x: projection.R_CX + ((lon - REF_LON) * COS_LAT * projection.ppd),
+                y: projection.R_CY - ((lat - REF_LAT) * projection.ppd)
+            };
+        }
+
         function exportCleanSnapshot() {
             const snapCanvas = document.createElement('canvas');
             snapCanvas.width = rCanvas.width;
             snapCanvas.height = rCanvas.height;
             const sctx = snapCanvas.getContext('2d');
             const { R_CX, R_CY, ppd } = getProjectionParamsForSnapshot(lastAircraftList, snapCanvas.width, snapCanvas.height);
+            const projection = { R_CX, R_CY, ppd, useMapProjection: false };
             const renderTime = Date.now();
-            const minSlider = parseFloat(trailMin.value);
-            const maxSlider = parseFloat(trailMax.value);
-            const minAgeMs = (TRAIL_WINDOW_MAX_MINUTES - maxSlider) * 60000;
-            const maxAgeMs = (TRAIL_WINDOW_MAX_MINUTES - minSlider) * 60000;
+            const { minAgeMs, maxAgeMs } = getTrailRangeWindow(renderTime);
             const timeSpan = maxAgeMs - minAgeMs || 1;
-            const getPoint = (lat, lon) => ({ x: R_CX + ((lon - REF_LON) * COS_LAT * ppd), y: R_CY - ((lat - REF_LAT) * ppd) });
 
             Object.values(trailHistory).forEach(historyObj => {
                 const validPoints = historyObj.path.filter(pt => { const age = renderTime - pt.time; return age >= minAgeMs && age <= maxAgeMs; });
                 if (validPoints.length < 2) return;
                 for (let i = 1; i < validPoints.length; i++) {
                     if (validPoints[i - 1].gapBreak || validPoints[i].gapBreak) continue;
-                    const p1 = getPoint(validPoints[i - 1].lat, validPoints[i - 1].lon);
-                    const p2 = getPoint(validPoints[i].lat, validPoints[i].lon);
+                    const p1 = projectWorldToCanvas(validPoints[i - 1].lat, validPoints[i - 1].lon, projection);
+                    const p2 = projectWorldToCanvas(validPoints[i].lat, validPoints[i].lon, projection);
                     const age = renderTime - validPoints[i].time;
                     const alpha = Math.max(0.04, 1.0 - ((age - minAgeMs) / timeSpan));
                     const [rC, gC, bC] = resolveAltitudeTrailColour(validPoints[i].alt);
@@ -1348,12 +1432,228 @@
         }
         document.getElementById('btn-clean-snap').addEventListener('click', exportCleanSnapshot);
 
-        function getCanvasPoint(lat, lon, R_CX, R_CY, ppd) {
-            if (networkMode === 'ONLINE' && leafMap) {
-                const pt = leafMap.latLngToContainerPoint([lat, lon]);
-                return { x: pt.x, y: pt.y };
+        async function exportTrailGeoJSON() {
+            const nowMs = Date.now();
+            const { fromMs, toMs } = getTrailRangeWindow(nowMs);
+            const params = new URLSearchParams({ from: String(fromMs), to: String(toMs) });
+            const response = await fetch(`${HTTP_API}/api/trails/export.geojson?${params.toString()}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const blob = await response.blob();
+            const disposition = response.headers.get('content-disposition') || '';
+            const filenameStarMatch = disposition.match(/filename\*\s*=\s*([^;]+)/i);
+            const filenameMatch = disposition.match(/filename\s*=\s*"?([^";]+)"?/i);
+            const fallbackName = `darts_trails_${fromMs}_${toMs}.geojson`;
+            const extractDispositionFilename = () => {
+                if (filenameStarMatch && filenameStarMatch[1]) {
+                    const rawValue = filenameStarMatch[1].trim();
+                    const encodedPart = rawValue.includes("''") ? rawValue.split("''").slice(1).join("''") : rawValue;
+                    const cleaned = encodedPart.replace(/^"(.*)"$/, '$1');
+                    try { return decodeURIComponent(cleaned); } catch (_) { return cleaned; }
+                }
+                if (filenameMatch && filenameMatch[1]) return filenameMatch[1];
+                return '';
+            };
+            const sanitizeDownloadFilename = (name, fallback) => {
+                const raw = String(name || '');
+                const leafName = raw.split('/').pop().split('\\').pop();
+                const safe = leafName.replace(/[\u0000-\u001f\u007f]/g, '').replace(/[<>:"/\\|?*]/g, '_').trim();
+                if (!safe || safe === '.' || safe === '..') return fallback;
+                return safe;
+            };
+            const downloadName = sanitizeDownloadFilename(extractDispositionFilename(), fallbackName);
+            const url = URL.createObjectURL(blob);
+            try {
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = downloadName;
+                a.click();
+            } finally {
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
             }
-            return { x: R_CX + ((lon - REF_LON) * COS_LAT * ppd), y: R_CY - ((lat - REF_LAT) * ppd) };
+        }
+
+        document.getElementById('btn-export-geojson').addEventListener('click', async () => {
+            try {
+                await exportTrailGeoJSON();
+            } catch (err) {
+                console.warn('GeoJSON export failed:', err);
+                alert('Unable to export trail GeoJSON right now.');
+            }
+        });
+
+        function getCanvasPoint(lat, lon, R_CX, R_CY, ppd) {
+            return projectWorldToCanvas(lat, lon, { R_CX, R_CY, ppd, useMapProjection: true });
+        }
+
+        function getOrCreateTrailHistory(icao, fallbackNowMs = Date.now()) {
+            if (!trailHistory[icao]) trailHistory[icao] = { path: [], lastUpdate: fallbackNowMs, lastPointTime: null };
+            return trailHistory[icao];
+        }
+
+        function getLastTrailPoint(path) {
+            for (let i = path.length - 1; i >= 0; i--) {
+                if (!path[i].gapBreak) return path[i];
+            }
+            return null;
+        }
+
+        function pruneTrailPathByAge(historyObj, nowMs = Date.now()) {
+            if (!historyObj || !Array.isArray(historyObj.path) || historyObj.path.length === 0) return;
+            const cutoffMs = nowMs - (TRAIL_WINDOW_MAX_MINUTES * 60000);
+            let firstKeepIdx = 0;
+            while (firstKeepIdx < historyObj.path.length && historyObj.path[firstKeepIdx].time < cutoffMs) firstKeepIdx++;
+            if (firstKeepIdx > 0) historyObj.path.splice(0, firstKeepIdx);
+            const firstTrailPointIdx = historyObj.path.findIndex(pt => !pt.gapBreak);
+            if (firstTrailPointIdx === -1) {
+                historyObj.path.length = 0;
+                historyObj.lastPointTime = null;
+                return;
+            }
+            if (firstTrailPointIdx > 0) historyObj.path.splice(0, firstTrailPointIdx);
+            const latest = getLastTrailPoint(historyObj.path);
+            historyObj.lastPointTime = latest ? latest.time : null;
+        }
+
+        function sortTrailPathChronologically(historyObj) {
+            if (!historyObj || !Array.isArray(historyObj.path) || historyObj.path.length < 2) return;
+            historyObj.path.sort((a, b) => {
+                const aTime = Number.isFinite(a?.time) ? a.time : 0;
+                const bTime = Number.isFinite(b?.time) ? b.time : 0;
+                if (aTime !== bTime) return aTime - bTime;
+                const aBreak = !!a?.gapBreak;
+                const bBreak = !!b?.gapBreak;
+                if (aBreak !== bBreak) return aBreak ? 1 : -1;
+                return 0;
+            });
+        }
+
+        function normalizeTrailPath(historyObj) {
+            if (!historyObj || !Array.isArray(historyObj.path) || historyObj.path.length < 2) return;
+            sortTrailPathChronologically(historyObj);
+            const compacted = [];
+            historyObj.path.forEach((entry) => {
+                const last = compacted[compacted.length - 1];
+                if (entry.gapBreak) {
+                    if (last && last.gapBreak && last.time === entry.time && last.markerType === entry.markerType) return;
+                    compacted.push(entry);
+                    return;
+                }
+                if (last && !last.gapBreak && last.time === entry.time && last.lat === entry.lat && last.lon === entry.lon) {
+                    last.alt = entry.alt;
+                    return;
+                }
+                compacted.push(entry);
+            });
+            historyObj.path = compacted;
+        }
+
+        function ingestTrailRows(rows) {
+            if (!Array.isArray(rows)) return;
+            const touchedIcaos = new Set();
+            rows.forEach((row) => {
+                if (!Array.isArray(row) || row.length < 2) return;
+                // /api/trails row layout: [icao, time, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type]
+                const icaoRaw = row[0];
+                const timeRaw = row[1];
+                const latRaw = row[2];
+                const lonRaw = row[3];
+                const altitude = row[4];
+                const markerType = row[9];
+                const icao = (typeof icaoRaw === 'string' ? icaoRaw.trim().toUpperCase() : '');
+                if (!icao) return;
+                touchedIcaos.add(icao);
+                const eventTime = Number.parseInt(timeRaw, 10);
+                if (!Number.isFinite(eventTime)) return;
+                const historyObj = getOrCreateTrailHistory(icao, eventTime);
+                const history = historyObj.path;
+                if (markerType) {
+                    history.push({ time: eventTime, gapBreak: true, markerType });
+                    historyObj.lastUpdate = Math.max(historyObj.lastUpdate || 0, eventTime);
+                    return;
+                }
+                const lat = Number.parseFloat(latRaw);
+                const lon = Number.parseFloat(lonRaw);
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+                history.push({ lat, lon, time: eventTime, alt: altitude });
+                historyObj.lastPointTime = Math.max(historyObj.lastPointTime || 0, eventTime);
+                historyObj.lastUpdate = Math.max(historyObj.lastUpdate || 0, eventTime);
+            });
+            const nowMs = Date.now();
+            touchedIcaos.forEach((icao) => {
+                const historyObj = trailHistory[icao];
+                normalizeTrailPath(historyObj);
+                pruneTrailPathByAge(historyObj, nowMs);
+            });
+        }
+
+        async function hydrateTrailHistory() {
+            if (trailHydrationLoaded || trailHydrationInFlight) return;
+            trailHydrationInFlight = true;
+            const nowMs = Date.now();
+            const fromMs = nowMs - (TRAIL_WINDOW_MAX_MINUTES * 60000);
+            try {
+                const response = await fetch(`${HTTP_API}/api/trails?from=${fromMs}&to=${nowMs}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const payload = await response.json();
+                ingestTrailRows(payload && payload.rows);
+                trailHydrationLoaded = true;
+                if (trailHydrationRetryTimer) {
+                    clearTimeout(trailHydrationRetryTimer);
+                    trailHydrationRetryTimer = null;
+                }
+                updateSliderLabels(true);
+            } catch (err) {
+                console.warn('Trail hydration unavailable:', err);
+                if (!trailHydrationLoaded && !trailHydrationRetryTimer) {
+                    trailHydrationRetryTimer = setTimeout(() => {
+                        trailHydrationRetryTimer = null;
+                        if (!trailHydrationLoaded) {
+                            isTrailHydrating = true;
+                            hydrateTrailHistory();
+                        }
+                    }, 10000);
+                }
+            } finally {
+                trailHydrationInFlight = false;
+                isTrailHydrating = false;
+                while (pendingLiveTrailUpdates.length > 0) {
+                    const queuedUpdates = pendingLiveTrailUpdates.splice(0, pendingLiveTrailUpdates.length);
+                    queuedUpdates.sort((a, b) => (a.time - b.time) || (a.seq - b.seq));
+                    queuedUpdates.forEach((sample) => appendLiveTrailSample(sample));
+                }
+            }
+        }
+
+        function appendLiveTrailSample(sample) {
+            if (!sample || !sample.icao || !Number.isFinite(sample.lat) || !Number.isFinite(sample.lon) || !Number.isFinite(sample.time)) return;
+            const historyObj = getOrCreateTrailHistory(sample.icao, sample.time);
+            normalizeTrailPath(historyObj);
+            const history = historyObj.path;
+            let previousPointIdx = -1;
+            for (let i = history.length - 1; i >= 0; i--) {
+                const entry = history[i];
+                if (entry.gapBreak) continue;
+                if (entry.time <= sample.time) {
+                    previousPointIdx = i;
+                    break;
+                }
+            }
+            if (previousPointIdx >= 0) {
+                const previousPointTime = history[previousPointIdx].time;
+                const hasGapMarkerInRange = history.some((entry, idx) => idx > previousPointIdx && entry.gapBreak && entry.time <= sample.time);
+                if (!hasGapMarkerInRange && (sample.time - previousPointTime) > TRAIL_REACQUIRE_GAP_MS) {
+                    history.push({ time: sample.time, gapBreak: true });
+                }
+            }
+            historyObj.lastUpdate = Math.max(historyObj.lastUpdate || 0, sample.time);
+            const hasExactPoint = history.some((entry) => !entry.gapBreak && entry.time === sample.time && entry.lat === sample.lat && entry.lon === sample.lon);
+            if (!hasExactPoint) {
+                history.push({ lat: sample.lat, lon: sample.lon, time: sample.time, alt: sample.alt });
+            }
+            normalizeTrailPath(historyObj);
+            const latestPoint = getLastTrailPoint(historyObj.path);
+            historyObj.lastPointTime = latestPoint ? latestPoint.time : null;
+            pruneTrailPathByAge(historyObj, sample.time);
         }
 
         // ==========================================
@@ -1597,8 +1897,7 @@
                     return { lat: cached.lat, lon: cached.lon, stalePos: true };
                 };
                 
-                const minSlider = parseFloat(trailMin.value); const maxSlider = parseFloat(trailMax.value);
-                const minAgeMs = (TRAIL_WINDOW_MAX_MINUTES - maxSlider) * 60000; const maxAgeMs = (TRAIL_WINDOW_MAX_MINUTES - minSlider) * 60000;
+                const { minAgeMs, maxAgeMs } = getTrailRangeWindow(renderTime);
                 const timeSpan = maxAgeMs - minAgeMs || 1; 
                 Object.keys(trailHistory).forEach(icao => {
                     const historyObj = trailHistory[icao];
@@ -2171,44 +2470,14 @@
                     if (p.lat !== undefined && p.lon !== undefined && p.lat !== null && p.lon !== null && p.lat !== '----' && p.lon !== '----') {
                         const latF = parseFloat(p.lat); const lonF = parseFloat(p.lon);
                         if (!Number.isFinite(latF) || !Number.isFinite(lonF)) return;
-                        if (!trailHistory[p.icao]) trailHistory[p.icao] = { path: [], lastUpdate: now, lastPointTime: null };
-                        const historyObj = trailHistory[p.icao];
-                        const gapSinceLastPointMs = (historyObj.lastPointTime === null) ? 0 : (now - historyObj.lastPointTime);
-                        const gapSinceLastSeenMs = now - historyObj.lastUpdate;
-                        const history = historyObj.path;
-                        const lastHistoryEntry = history.length > 0 ? history[history.length - 1] : null;
-                        if (historyObj.path.length > 0 && !lastHistoryEntry?.gapBreak && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
-                            historyObj.path.push({ time: now, gapBreak: true });
-                        }
-                        historyObj.lastUpdate = now;
-
-                        let lastTrailPoint = null;
-                        for (let i = history.length - 1; i >= 0; i--) {
-                            if (!history[i].gapBreak) {
-                                lastTrailPoint = history[i];
-                                break;
+                        const liveSample = { icao: p.icao, lat: latF, lon: lonF, alt: p.alt, time: now, seq: pendingLiveTrailSeq++ };
+                        if (isTrailHydrating) {
+                            pendingLiveTrailUpdates.push(liveSample);
+                            if (pendingLiveTrailUpdates.length > MAX_PENDING_TRAIL_UPDATES) {
+                                pendingLiveTrailUpdates.splice(0, pendingLiveTrailUpdates.length - MAX_PENDING_TRAIL_UPDATES);
                             }
                         }
-                        if (!lastTrailPoint || lastTrailPoint.lat !== latF || lastTrailPoint.lon !== lonF) {
-                            history.push({ lat: latF, lon: lonF, time: now, alt: p.alt });
-                            historyObj.lastPointTime = now;
-                        }
-                        if (history.length > 10000) {
-                            history.splice(0, history.length - 10000);
-                            if (history[0]?.gapBreak) {
-                                const firstTrailIdx = history.findIndex(pt => !pt.gapBreak);
-                                if (firstTrailIdx === -1) history.length = 0;
-                                else if (firstTrailIdx > 0) history.splice(0, firstTrailIdx);
-                            }
-                            let latestPointTime = null;
-                            for (let i = history.length - 1; i >= 0; i--) {
-                                if (!history[i].gapBreak) {
-                                    latestPointTime = history[i].time;
-                                    break;
-                                }
-                            }
-                            historyObj.lastPointTime = latestPointTime;
-                        }
+                        else appendLiveTrailSample(liveSample);
                     }
                 });
 
@@ -2220,6 +2489,8 @@
 
             } catch (err) { console.warn("Soft catch on Matrix Loop:", err); }
         };
+
+        hydrateTrailHistory();
 
         // Dedicated pulse
         function pulse() {
