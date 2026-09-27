@@ -2683,8 +2683,9 @@ def build_geojson_from_trail_rows(rows):
     current_icao = None
     segment_points = []
     segment_meta = {}
+    pending_break_reason = None
 
-    def flush_segment(break_reason=None):
+    def flush_segment(end_break_reason=None):
         nonlocal segment_points, segment_meta
         if len(segment_points) >= 2:
             start_time = segment_points[0]["ts_ms"]
@@ -2705,7 +2706,8 @@ def build_geojson_from_trail_rows(rows):
                     "start_time": _ms_to_rfc3339(start_time),
                     "end_time": _ms_to_rfc3339(end_time),
                     "point_count": len(segment_points),
-                    "break_reason": break_reason,
+                    "break_reason": segment_meta.get("break_reason"),
+                    "end_break_reason": end_break_reason,
                 },
             })
         segment_points = []
@@ -2717,6 +2719,7 @@ def build_geojson_from_trail_rows(rows):
         current_icao = icao
         if marker_type:
             flush_segment(marker_type)
+            pending_break_reason = marker_type
             continue
         if lat is None or lon is None:
             continue
@@ -2726,7 +2729,9 @@ def build_geojson_from_trail_rows(rows):
                 "callsign": callsign,
                 "source_label": source_label,
                 "receiver_id": receiver_id,
+                "break_reason": pending_break_reason,
             }
+            pending_break_reason = None
         segment_points.append({
             "ts_ms": int(ts_ms),
             "lat": float(lat),
