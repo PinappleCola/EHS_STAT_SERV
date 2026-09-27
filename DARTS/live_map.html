@@ -1599,20 +1599,28 @@
         function appendLiveTrailSample(sample) {
             if (!sample || !sample.icao || !Number.isFinite(sample.lat) || !Number.isFinite(sample.lon) || !Number.isFinite(sample.time)) return;
             const historyObj = getOrCreateTrailHistory(sample.icao, sample.time);
-            const isChronological = historyObj.lastPointTime === null || sample.time >= historyObj.lastPointTime;
-            const gapSinceLastPointMs = (historyObj.lastPointTime === null) ? 0 : (sample.time - historyObj.lastPointTime);
-            const gapSinceLastSeenMs = sample.time - historyObj.lastUpdate;
+            normalizeTrailPath(historyObj);
             const history = historyObj.path;
-            const lastHistoryEntry = history.length > 0 ? history[history.length - 1] : null;
-            if (isChronological && historyObj.path.length > 0 && !lastHistoryEntry?.gapBreak && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
-                historyObj.path.push({ time: sample.time, gapBreak: true });
+            let previousPointIdx = -1;
+            for (let i = 0; i < history.length; i++) {
+                const entry = history[i];
+                if (entry.gapBreak) continue;
+                if (entry.time <= sample.time) previousPointIdx = i;
+                else break;
+            }
+            if (previousPointIdx >= 0) {
+                const previousPointTime = history[previousPointIdx].time;
+                const hasGapMarkerInRange = history.some((entry, idx) => idx > previousPointIdx && entry.gapBreak && entry.time <= sample.time);
+                if (!hasGapMarkerInRange && (sample.time - previousPointTime) > TRAIL_REACQUIRE_GAP_MS) {
+                    history.push({ time: sample.time, gapBreak: true });
+                }
             }
             historyObj.lastUpdate = Math.max(historyObj.lastUpdate || 0, sample.time);
             const hasExactPoint = history.some((entry) => !entry.gapBreak && entry.time === sample.time && entry.lat === sample.lat && entry.lon === sample.lon);
             if (!hasExactPoint) {
                 history.push({ lat: sample.lat, lon: sample.lon, time: sample.time, alt: sample.alt });
             }
-            if (!isChronological) normalizeTrailPath(historyObj);
+            normalizeTrailPath(historyObj);
             const latestPoint = getLastTrailPoint(historyObj.path);
             historyObj.lastPointTime = latestPoint ? latestPoint.time : null;
             pruneTrailPathByAge(historyObj, sample.time);
