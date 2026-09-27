@@ -1470,6 +1470,19 @@
             historyObj.lastPointTime = latest ? latest.time : null;
         }
 
+        function sortTrailPathChronologically(historyObj) {
+            if (!historyObj || !Array.isArray(historyObj.path) || historyObj.path.length < 2) return;
+            historyObj.path.sort((a, b) => {
+                const aTime = Number.isFinite(a?.time) ? a.time : 0;
+                const bTime = Number.isFinite(b?.time) ? b.time : 0;
+                if (aTime !== bTime) return aTime - bTime;
+                const aBreak = !!a?.gapBreak;
+                const bBreak = !!b?.gapBreak;
+                if (aBreak !== bBreak) return aBreak ? -1 : 1;
+                return 0;
+            });
+        }
+
         function ingestTrailRows(rows) {
             if (!Array.isArray(rows)) return;
             const touchedIcaos = new Set();
@@ -1503,7 +1516,9 @@
             });
             const nowMs = Date.now();
             touchedIcaos.forEach((icao) => {
-                pruneTrailPathByAge(trailHistory[icao], nowMs);
+                const historyObj = trailHistory[icao];
+                sortTrailPathChronologically(historyObj);
+                pruneTrailPathByAge(historyObj, nowMs);
             });
         }
 
