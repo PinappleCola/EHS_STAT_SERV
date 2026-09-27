@@ -403,6 +403,7 @@
         let trailHydrationInFlight = false;
         let trailHydrationRetryTimer = null;
         const pendingLiveTrailUpdates = [];
+        const MAX_PENDING_TRAIL_UPDATES = 20000;
         let pendingLiveTrailSeq = 0;
         const entityCache = {};
         
@@ -2472,7 +2473,12 @@
                         const latF = parseFloat(p.lat); const lonF = parseFloat(p.lon);
                         if (!Number.isFinite(latF) || !Number.isFinite(lonF)) return;
                         const liveSample = { icao: p.icao, lat: latF, lon: lonF, alt: p.alt, time: now, seq: pendingLiveTrailSeq++ };
-                        if (isTrailHydrating) pendingLiveTrailUpdates.push(liveSample);
+                        if (isTrailHydrating) {
+                            pendingLiveTrailUpdates.push(liveSample);
+                            if (pendingLiveTrailUpdates.length > MAX_PENDING_TRAIL_UPDATES) {
+                                pendingLiveTrailUpdates.splice(0, pendingLiveTrailUpdates.length - MAX_PENDING_TRAIL_UPDATES);
+                            }
+                        }
                         else appendLiveTrailSample(liveSample);
                     }
                 });
