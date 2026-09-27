@@ -2724,6 +2724,7 @@ def build_geojson_from_trail_rows(rows):
     for _row_id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type in rows:
         if current_icao is not None and icao != current_icao:
             flush_segment()
+            pending_break_reason = None
         current_icao = icao
         if marker_type:
             flush_segment(marker_type)
