@@ -1,0 +1,36 @@
+{
+    "note": "Temporary standalone trail JSON config. JSON files will be consolidated later.",
+    "maximum_window_minutes": 1440,
+    "stale_position_threshold_seconds": 65,
+    "adaptive_gap": {
+        "enabled": true,
+        "history_size": 20,
+        "multiplier": 4.0,
+        "min_seconds": 10,
+        "max_seconds": 65
+    },
+    "plausibility": {
+        "max_airborne_speed_kt": 750,
+        "max_ground_speed_kt": 80,
+        "max_jump_nm": 10
+    },
+    "persistence": {
+        "db_path": "data/trails.db",
+        "retention_hours": 24,
+        "sample_interval_seconds": 1,
+        "flush_interval_seconds": 5,
+        "prune_interval_seconds": 3600,
+        "batch_size": 500
+    },
+    "export": {
+        "filename_prefix": "darts_trails",
+        "content_disposition": "attachment"
+    },
+    "render": {
+        "default_mode": "lines",
+        "alternate_mode": "dots"
+    },
+    "display": {
+        "local_time": true
+    }
+}
