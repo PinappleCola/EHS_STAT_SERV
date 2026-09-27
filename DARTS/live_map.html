@@ -846,13 +846,29 @@
             return (h * 3600 + mm * 60 + s) / 60;
         }
 
-        function parseLocalClockToAgeMinutes(input, nowMs = Date.now()) {
+        function parseLocalClockToAgeMinutes(input, referenceTimeMs, nowMs = Date.now()) {
             const targetMinutes = parseHmsToMinutes(input);
             if (targetMinutes === null) return null;
+            const targetSeconds = Math.round(targetMinutes * 60);
             const now = new Date(nowMs);
-            const nowMinutes = (now.getHours() * 60) + now.getMinutes() + (now.getSeconds() / 60);
-            let ageMinutes = nowMinutes - targetMinutes;
-            if (ageMinutes < 0) ageMinutes += MINUTES_PER_DAY;
+            const localCandidate = new Date(now);
+            localCandidate.setHours(Math.floor(targetSeconds / 3600), Math.floor((targetSeconds % 3600) / 60), targetSeconds % 60, 0);
+            const candidateMs = [
+                localCandidate.getTime() - (MINUTES_PER_DAY * 60000),
+                localCandidate.getTime(),
+                localCandidate.getTime() + (MINUTES_PER_DAY * 60000),
+            ];
+            let chosenMs = candidateMs[0];
+            let minDistance = Math.abs(chosenMs - referenceTimeMs);
+            candidateMs.slice(1).forEach((candidate) => {
+                const distance = Math.abs(candidate - referenceTimeMs);
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    chosenMs = candidate;
+                }
+            });
+            let ageMinutes = (nowMs - chosenMs) / 60000;
+            if (!Number.isFinite(ageMinutes)) return null;
             return Math.max(0, Math.min(TRAIL_WINDOW_MAX_MINUTES, ageMinutes));
         }
 
@@ -901,7 +917,10 @@
         trailMin.addEventListener('input', () => updateSliderLabels(true, 'min'));
         trailMax.addEventListener('input', () => updateSliderLabels(true, 'max'));
         function applyTimecodeInput(inputEl, isStart) {
-            const parsedAgeMinutes = parseLocalClockToAgeMinutes(inputEl.value);
+            const nowMs = Date.now();
+            const { fromMs, toMs } = getTrailRangeWindow(nowMs);
+            const referenceTimeMs = isStart ? fromMs : toMs;
+            const parsedAgeMinutes = parseLocalClockToAgeMinutes(inputEl.value, referenceTimeMs, nowMs);
             if (parsedAgeMinutes === null) {
                 inputEl.style.borderColor = '#ef4444';
                 return;
@@ -1556,6 +1575,7 @@
         function appendLiveTrailSample(sample) {
             if (!sample || !sample.icao || !Number.isFinite(sample.lat) || !Number.isFinite(sample.lon) || !Number.isFinite(sample.time)) return;
             const historyObj = getOrCreateTrailHistory(sample.icao, sample.time);
+            if (historyObj.lastUpdate !== null && sample.time < historyObj.lastUpdate) return;
             const gapSinceLastPointMs = (historyObj.lastPointTime === null) ? 0 : (sample.time - historyObj.lastPointTime);
             const gapSinceLastSeenMs = sample.time - historyObj.lastUpdate;
             const history = historyObj.path;
