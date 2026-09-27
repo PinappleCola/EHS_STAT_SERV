@@ -2428,6 +2428,7 @@ load_trail_config()
 trail_db_conn = None
 trail_db_lock = threading.Lock()
 trail_runtime_state = {}
+trail_runtime_state_lock = threading.Lock()
 
 
 def get_trail_db_path():
@@ -2458,10 +2459,20 @@ def init_trail_store():
                       callsign TEXT,
                       source_label TEXT,
                       receiver_id TEXT,
-                      marker_type TEXT)''')
+                      marker_type TEXT,
+                      event_key TEXT UNIQUE)''')
+        existing_columns = [row[1] for row in c.execute("PRAGMA table_info(trail_points)").fetchall()]
+        if "event_key" not in existing_columns:
+            c.execute("ALTER TABLE trail_points ADD COLUMN event_key TEXT")
+            c.execute(
+                "UPDATE trail_points SET event_key = "
+                "(icao || ':' || ts_ms || ':' || COALESCE(marker_type, 'point') || ':' || COALESCE(CAST(lat AS TEXT), '') || ':' || COALESCE(CAST(lon AS TEXT), '')) "
+                "WHERE event_key IS NULL"
+            )
         c.execute("CREATE INDEX IF NOT EXISTS idx_trail_points_ts ON trail_points(ts_ms)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_trail_points_icao_ts ON trail_points(icao, ts_ms)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_trail_points_marker ON trail_points(marker_type)")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_trail_points_event_key ON trail_points(event_key)")
         trail_db_conn.commit()
 
 
@@ -2469,12 +2480,16 @@ def persist_trail_records(records):
     if not records:
         return
     with trail_db_lock:
-        trail_db_conn.executemany(
-            "INSERT INTO trail_points (icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            records,
-        )
-        trail_db_conn.commit()
+        try:
+            trail_db_conn.executemany(
+                "INSERT OR IGNORE INTO trail_points (icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type, event_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                records,
+            )
+            trail_db_conn.commit()
+        except Exception:
+            trail_db_conn.rollback()
+            raise
 
 
 def prune_trail_records(now_ms=None):
@@ -2486,10 +2501,11 @@ def prune_trail_records(now_ms=None):
     with trail_db_lock:
         trail_db_conn.execute("DELETE FROM trail_points WHERE ts_ms < ?", (cutoff_ms,))
         trail_db_conn.commit()
-    for icao, state in list(trail_runtime_state.items()):
-        last_point_ts_ms = state.get("last_point_ts_ms")
-        if last_point_ts_ms is not None and last_point_ts_ms < cutoff_ms:
-            del trail_runtime_state[icao]
+    with trail_runtime_state_lock:
+        for icao, state in list(trail_runtime_state.items()):
+            last_point_ts_ms = state.get("last_point_ts_ms")
+            if last_point_ts_ms is not None and last_point_ts_ms < cutoff_ms:
+                del trail_runtime_state[icao]
 
 
 def resolve_trail_source_metadata():
@@ -2548,6 +2564,12 @@ def _trail_callsign_or_none(value):
     return str(value)
 
 
+def make_trail_event_key(icao, ts_ms, lat, lon, marker_type):
+    lat_key = "" if lat is None else f"{float(lat):.6f}"
+    lon_key = "" if lon is None else f"{float(lon):.6f}"
+    return f"{str(icao).upper()}:{int(ts_ms)}:{marker_type or 'point'}:{lat_key}:{lon_key}"
+
+
 def _trail_on_ground_flag(data):
     air_ground = str(data.get("air_ground", "----")).upper()
     altitude = data.get("alt")
@@ -2597,41 +2619,42 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
         altitude = data.get("alt")
         on_ground = _trail_on_ground_flag(data)
         callsign = _trail_callsign_or_none(data.get("callsign"))
-        recorder_state = trail_runtime_state.setdefault(icao, {
-            "last_point": None,
-            "last_point_ts_ms": None,
-            "intervals": [],
-            "last_activity_ms": now_ms,
-        })
-        previous_point = recorder_state.get("last_point")
-        if previous_point and previous_point["lat"] == lat and previous_point["lon"] == lon:
-            continue
+        with trail_runtime_state_lock:
+            recorder_state = trail_runtime_state.setdefault(icao, {
+                "last_point": None,
+                "last_point_ts_ms": None,
+                "intervals": [],
+                "last_activity_ms": now_ms,
+            })
+            previous_point = recorder_state.get("last_point")
+            if previous_point and previous_point["lat"] == lat and previous_point["lon"] == lon:
+                continue
 
-        delta_ms = 0
-        marker_type = None
-        if recorder_state.get("last_point_ts_ms") is not None:
-            delta_ms = now_ms - recorder_state["last_point_ts_ms"]
-            gap_threshold_ms = compute_trail_gap_threshold_ms(recorder_state, trail_cfg)
-            if delta_ms > gap_threshold_ms:
-                marker_type = "gap_break"
-            else:
-                marker_type = classify_trail_jump(previous_point, lat, lon, delta_ms, on_ground == 1, trail_cfg)
-            recorder_state["intervals"].append(max(delta_ms / 1000.0, 0.0))
-            if len(recorder_state["intervals"]) > max_interval_count:
-                recorder_state["intervals"] = recorder_state["intervals"][-max_interval_count:]
+            delta_ms = 0
+            marker_type = None
+            if recorder_state.get("last_point_ts_ms") is not None:
+                delta_ms = now_ms - recorder_state["last_point_ts_ms"]
+                gap_threshold_ms = compute_trail_gap_threshold_ms(recorder_state, trail_cfg)
+                if delta_ms > gap_threshold_ms:
+                    marker_type = "gap_break"
+                else:
+                    marker_type = classify_trail_jump(previous_point, lat, lon, delta_ms, on_ground == 1, trail_cfg)
+                recorder_state["intervals"].append(max(delta_ms / 1000.0, 0.0))
+                if len(recorder_state["intervals"]) > max_interval_count:
+                    recorder_state["intervals"] = recorder_state["intervals"][-max_interval_count:]
 
-        if marker_type:
-            records.append((icao, now_ms, None, None, None, None, callsign, source_label, receiver_id, marker_type))
-        records.append((icao, now_ms, lat, lon, None if altitude in (None, "") else str(altitude), on_ground, callsign, source_label, receiver_id, None))
+            if marker_type:
+                records.append((icao, now_ms, None, None, None, None, callsign, source_label, receiver_id, marker_type, make_trail_event_key(icao, now_ms, None, None, marker_type)))
+            records.append((icao, now_ms, lat, lon, None if altitude in (None, "") else str(altitude), on_ground, callsign, source_label, receiver_id, None, make_trail_event_key(icao, now_ms, lat, lon, None)))
 
-        recorder_state["last_point"] = {"lat": lat, "lon": lon}
-        recorder_state["last_point_ts_ms"] = now_ms
-        recorder_state["last_activity_ms"] = now_ms
+            recorder_state["last_point"] = {"lat": lat, "lon": lon}
+            recorder_state["last_point_ts_ms"] = now_ms
+            recorder_state["last_activity_ms"] = now_ms
 
     return records
 
 
-def iter_trail_rows(from_ms, to_ms, icao=None):
+def iter_trail_rows(from_ms, to_ms, icao=None, fetch_size=1000):
     sql = (
         "SELECT id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type "
         "FROM trail_points WHERE ts_ms >= ? AND ts_ms <= ?"
@@ -2642,8 +2665,13 @@ def iter_trail_rows(from_ms, to_ms, icao=None):
         params.append(str(icao).upper())
     sql += " ORDER BY icao ASC, ts_ms ASC, id ASC"
     with trail_db_lock:
-        rows = trail_db_conn.execute(sql, params).fetchall()
-    return rows
+        cursor = trail_db_conn.execute(sql, params)
+        while True:
+            batch = cursor.fetchmany(fetch_size)
+            if not batch:
+                break
+            for row in batch:
+                yield row
 
 
 def _ms_to_rfc3339(ms):
