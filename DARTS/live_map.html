@@ -398,6 +398,8 @@
         let lastAircraftList = []; 
         let renderHitboxes = []; 
         const trailHistory = {};
+        let isTrailHydrating = true;
+        const pendingLiveTrailUpdates = [];
         const entityCache = {};
         
         let airspaceGeoJSON = { type: "FeatureCollection", features: [] };
@@ -1416,7 +1418,13 @@
             const disposition = response.headers.get('content-disposition') || '';
             const filenameMatch = disposition.match(/filename="?([^"]+)"?/i);
             const fallbackName = `darts_trails_${fromMs}_${toMs}.geojson`;
-            const downloadName = filenameMatch ? filenameMatch[1] : fallbackName;
+            const sanitizeDownloadFilename = (name, fallback) => {
+                const raw = String(name || '');
+                const leafName = raw.split('/').pop().split('\\').pop();
+                const safe = leafName.replace(/[\u0000-\u001f\u007f]/g, '').replace(/[<>:"/\\|?*]/g, '_').trim();
+                return safe || fallback;
+            };
+            const downloadName = sanitizeDownloadFilename(filenameMatch ? filenameMatch[1] : '', fallbackName);
             const url = URL.createObjectURL(blob);
             try {
                 const a = document.createElement('a');
@@ -1535,7 +1543,33 @@
                 updateSliderLabels(true);
             } catch (err) {
                 console.warn('Trail hydration unavailable:', err);
+            } finally {
+                isTrailHydrating = false;
+                if (pendingLiveTrailUpdates.length > 0) {
+                    const queuedUpdates = pendingLiveTrailUpdates.splice(0, pendingLiveTrailUpdates.length);
+                    queuedUpdates.sort((a, b) => a.time - b.time);
+                    queuedUpdates.forEach((sample) => appendLiveTrailSample(sample));
+                }
             }
+        }
+
+        function appendLiveTrailSample(sample) {
+            if (!sample || !sample.icao || !Number.isFinite(sample.lat) || !Number.isFinite(sample.lon) || !Number.isFinite(sample.time)) return;
+            const historyObj = getOrCreateTrailHistory(sample.icao, sample.time);
+            const gapSinceLastPointMs = (historyObj.lastPointTime === null) ? 0 : (sample.time - historyObj.lastPointTime);
+            const gapSinceLastSeenMs = sample.time - historyObj.lastUpdate;
+            const history = historyObj.path;
+            const lastHistoryEntry = history.length > 0 ? history[history.length - 1] : null;
+            if (historyObj.path.length > 0 && !lastHistoryEntry?.gapBreak && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
+                historyObj.path.push({ time: sample.time, gapBreak: true });
+            }
+            historyObj.lastUpdate = sample.time;
+            const lastTrailPoint = getLastTrailPoint(history);
+            if (!lastTrailPoint || lastTrailPoint.lat !== sample.lat || lastTrailPoint.lon !== sample.lon) {
+                history.push({ lat: sample.lat, lon: sample.lon, time: sample.time, alt: sample.alt });
+                historyObj.lastPointTime = sample.time;
+            }
+            pruneTrailPathByAge(historyObj, sample.time);
         }
 
         // ==========================================
@@ -2352,22 +2386,9 @@
                     if (p.lat !== undefined && p.lon !== undefined && p.lat !== null && p.lon !== null && p.lat !== '----' && p.lon !== '----') {
                         const latF = parseFloat(p.lat); const lonF = parseFloat(p.lon);
                         if (!Number.isFinite(latF) || !Number.isFinite(lonF)) return;
-                        const historyObj = getOrCreateTrailHistory(p.icao, now);
-                        const gapSinceLastPointMs = (historyObj.lastPointTime === null) ? 0 : (now - historyObj.lastPointTime);
-                        const gapSinceLastSeenMs = now - historyObj.lastUpdate;
-                        const history = historyObj.path;
-                        const lastHistoryEntry = history.length > 0 ? history[history.length - 1] : null;
-                        if (historyObj.path.length > 0 && !lastHistoryEntry?.gapBreak && gapSinceLastPointMs > TRAIL_REACQUIRE_GAP_MS && gapSinceLastSeenMs > TRAIL_REACQUIRE_GAP_MS) {
-                            historyObj.path.push({ time: now, gapBreak: true });
-                        }
-                        historyObj.lastUpdate = now;
-
-                        let lastTrailPoint = getLastTrailPoint(history);
-                        if (!lastTrailPoint || lastTrailPoint.lat !== latF || lastTrailPoint.lon !== lonF) {
-                            history.push({ lat: latF, lon: lonF, time: now, alt: p.alt });
-                            historyObj.lastPointTime = now;
-                        }
-                        pruneTrailPathByAge(historyObj, now);
+                        const liveSample = { icao: p.icao, lat: latF, lon: lonF, alt: p.alt, time: now };
+                        if (isTrailHydrating) pendingLiveTrailUpdates.push(liveSample);
+                        else appendLiveTrailSample(liveSample);
                     }
                 });
 
