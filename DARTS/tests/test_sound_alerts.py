@@ -122,6 +122,7 @@ class SoundAlertTests(unittest.TestCase):
                     self.assertTrue(DARTS.trigger_sound("01"))
                     events = DARTS.get_recent_sound_events()
                     self.assertEqual(events[0]["event_id"], "session-abc:1")
+                    self.assertEqual(events[0]["url"], "/sounds/01")
                 finally:
                     DARTS.sound_events[:] = old_events
                     DARTS.sound_event_sequence = old_sequence

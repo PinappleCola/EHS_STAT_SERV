@@ -2746,7 +2746,14 @@
             if (!rememberPlayedSoundEvent(eventId)) return;
             const soundId = String(eventData.sound_id || '').padStart(2, '0');
             if (!/^\d{2}$/.test(soundId)) return;
-            const player = getSoundPlayer(`/sounds/${soundId}`);
+            let soundUrl = `/sounds/${soundId}`;
+            if (typeof eventData.url === 'string') {
+                const match = eventData.url.match(/^\/sounds\/(\d{2})(?:\.wav)?$/i);
+                if (match && match[1] === soundId) {
+                    soundUrl = eventData.url;
+                }
+            }
+            const player = getSoundPlayer(soundUrl);
             player.currentTime = 0;
             player.play().catch((error) => {
                 if (_soundPlaybackWarningShown) return;
