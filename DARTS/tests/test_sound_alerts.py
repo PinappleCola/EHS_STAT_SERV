@@ -1,13 +1,14 @@
 import importlib.util
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 
-def _load_darts_module():
-    darts_path = Path(__file__).resolve().parents[1] / "darts.py"
-    spec = importlib.util.spec_from_file_location("darts_under_test_sound", str(darts_path))
+def _load_darts_module(darts_path=None, module_name="darts_under_test_sound"):
+    darts_path = Path(darts_path) if darts_path else (Path(__file__).resolve().parents[1] / "darts.py")
+    spec = importlib.util.spec_from_file_location(module_name, str(darts_path))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -17,6 +18,36 @@ DARTS = _load_darts_module()
 
 
 class SoundAlertTests(unittest.TestCase):
+    def test_default_sound_files_dir_is_under_darts_root(self):
+        expected = Path(DARTS.__file__).resolve().parent / "SOUND_FILES"
+        self.assertEqual(Path(DARTS.SOUND_FILES_DIR).resolve(), expected)
+
+    def test_repository_sound_layout_uses_darts_sound_root(self):
+        sound_root = Path(DARTS.SOUND_FILES_DIR)
+        self.assertTrue(sound_root.is_dir())
+        self.assertTrue((sound_root / "README.md").is_file())
+
+    def test_default_discovery_reads_darts_sound_root_not_repo_root(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            darts_root = repo_root / "DARTS"
+            repo_sound_root = repo_root / "SOUND_FILES"
+            shutil.copytree(Path(DARTS.__file__).resolve().parent, darts_root)
+
+            darts_sound_root = darts_root / "SOUND_FILES"
+            repo_sound_root.mkdir(parents=True)
+            if not darts_sound_root.exists():
+                darts_sound_root.mkdir(parents=True)
+
+            (darts_sound_root / "10_Darts.wav").write_bytes(b"darts")
+            (repo_sound_root / "10_Repo.wav").write_bytes(b"repo")
+
+            temp_module = _load_darts_module(darts_root / "darts.py", module_name="darts_under_test_sound_temp")
+            discovered, _warnings = temp_module.discover_numbered_sound_files()
+
+            self.assertEqual(discovered["10"]["filename"], "10_Darts.wav")
+            self.assertEqual(Path(discovered["10"]["path"]).resolve().parent, darts_sound_root.resolve())
+
     def test_discover_numbered_sound_files_case_insensitive_and_deterministic(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
