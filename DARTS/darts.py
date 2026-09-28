@@ -21,6 +21,7 @@ import queue
 import re
 import os
 import http.server
+import uuid
 from urllib.parse import urlparse, parse_qs
 
 APP_VERSION = "v57"
@@ -3200,6 +3201,7 @@ audit_alerts_lock = threading.Lock()
 sound_events = []
 sound_events_lock = threading.Lock()
 sound_event_sequence = 0
+sound_event_session_id = uuid.uuid4().hex
 
 
 def trigger_sound(sound_id):
@@ -3215,7 +3217,7 @@ def trigger_sound(sound_id):
         sound_events[:] = [event for event in sound_events if (now - event["ts_epoch"]) <= SOUND_EVENT_RETENTION_S]
         sound_event_sequence += 1
         sound_events.append({
-            "event_id": sound_event_sequence,
+            "event_id": f"{sound_event_session_id}:{sound_event_sequence}",
             "sound_id": sound_id,
             "url": f"/sounds/{sound_id}",
             "ts_epoch": now,

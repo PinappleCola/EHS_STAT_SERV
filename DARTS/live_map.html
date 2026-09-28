@@ -2741,8 +2741,9 @@
         }
 
         function playSoundEvent(eventData) {
-            if (!eventData || typeof eventData.event_id !== 'number') return;
-            if (!rememberPlayedSoundEvent(eventData.event_id)) return;
+            if (!eventData || eventData.event_id === undefined || eventData.event_id === null) return;
+            const eventId = String(eventData.event_id);
+            if (!rememberPlayedSoundEvent(eventId)) return;
             const soundId = String(eventData.sound_id || '').padStart(2, '0');
             const url = eventData.url || `/sounds/${soundId}`;
             const player = getSoundPlayer(url);

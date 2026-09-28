@@ -107,6 +107,26 @@ class SoundAlertTests(unittest.TestCase):
                     self.assertFalse(DARTS.trigger_sound("09"))
                     print_mock.assert_not_called()
 
+    def test_trigger_sound_uses_restart_safe_opaque_event_ids(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "01_Test.wav").write_bytes(b"audio")
+            with mock.patch.object(DARTS, "SOUND_FILES_DIR", tmpdir):
+                old_events = list(DARTS.sound_events)
+                old_sequence = DARTS.sound_event_sequence
+                old_session_id = DARTS.sound_event_session_id
+                try:
+                    DARTS.sound_events[:] = []
+                    DARTS.sound_event_sequence = 0
+                    DARTS.sound_event_session_id = "session-abc"
+                    self.assertTrue(DARTS.trigger_sound("01"))
+                    events = DARTS.get_recent_sound_events()
+                    self.assertEqual(events[0]["event_id"], "session-abc:1")
+                finally:
+                    DARTS.sound_events[:] = old_events
+                    DARTS.sound_event_sequence = old_sequence
+                    DARTS.sound_event_session_id = old_session_id
+
 
 if __name__ == "__main__":
     unittest.main()
