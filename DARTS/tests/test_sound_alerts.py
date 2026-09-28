@@ -21,6 +21,23 @@ class SoundAlertTests(unittest.TestCase):
         expected = Path(DARTS.__file__).resolve().parent / "SOUND_FILES"
         self.assertEqual(Path(DARTS.SOUND_FILES_DIR).resolve(), expected)
 
+    def test_default_discovery_reads_darts_sound_root_not_repo_root(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            darts_sound_root = repo_root / "DARTS" / "SOUND_FILES"
+            repo_sound_root = repo_root / "SOUND_FILES"
+            darts_sound_root.mkdir(parents=True)
+            repo_sound_root.mkdir(parents=True)
+
+            (darts_sound_root / "01_Darts.wav").write_bytes(b"darts")
+            (repo_sound_root / "01_Repo.wav").write_bytes(b"repo")
+
+            with mock.patch.object(DARTS, "SOUND_FILES_DIR", str(darts_sound_root)):
+                discovered, _warnings = DARTS.discover_numbered_sound_files()
+
+            self.assertEqual(discovered["01"]["filename"], "01_Darts.wav")
+            self.assertEqual(Path(discovered["01"]["path"]).resolve().parent, darts_sound_root.resolve())
+
     def test_discover_numbered_sound_files_case_insensitive_and_deterministic(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
