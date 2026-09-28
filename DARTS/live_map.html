@@ -397,7 +397,7 @@
         
         let lastAircraftList = []; 
         let renderHitboxes = []; 
-        const trailHistory = {};
+        const trailHistory = Object.create(null);
         let isTrailHydrating = true;
         let trailHydrationLoaded = false;
         let trailHydrationInFlight = false;
