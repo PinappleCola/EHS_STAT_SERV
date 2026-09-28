@@ -1433,7 +1433,10 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=400)
             return
 
-        payload = build_geojson_from_trail_rows(query_trail_rows(from_ms, to_ms, icao=icao))
+        payload = build_geojson_from_trail_rows(
+            query_trail_rows(from_ms, to_ms, icao=icao, apply_backstop=False),
+            apply_backstop=True,
+        )
         trail_cfg = get_trail_config_snapshot()
         filename = f'{trail_cfg["export"]["filename_prefix"]}_{from_ms}_{to_ms}.geojson'
         self._send_bytes(
@@ -2806,8 +2809,9 @@ def _ms_to_rfc3339(ms):
     return datetime.datetime.fromtimestamp(ms / 1000.0, tz=datetime.timezone.utc).isoformat(timespec='milliseconds').replace("+00:00", "Z")
 
 
-def build_geojson_from_trail_rows(rows):
-    rows = apply_trail_break_backstop(rows)
+def build_geojson_from_trail_rows(rows, apply_backstop=False):
+    if apply_backstop:
+        rows = apply_trail_break_backstop(rows)
     features = []
     current_icao = None
     segment_points = []
