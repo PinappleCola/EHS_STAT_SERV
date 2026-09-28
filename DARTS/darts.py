@@ -2589,10 +2589,11 @@ def make_trail_event_key(icao, ts_ms, lat, lon, marker_type):
 
 
 def _load_last_trail_point_from_store(icao):
-    if trail_db_conn is None:
-        return None
     with trail_db_lock:
-        row = trail_db_conn.execute(
+        conn = trail_db_conn
+        if conn is None:
+            return None
+        row = conn.execute(
             "SELECT ts_ms, lat, lon FROM trail_points "
             "WHERE icao = ? AND marker_type IS NULL AND lat IS NOT NULL AND lon IS NOT NULL "
             "ORDER BY ts_ms DESC, id DESC LIMIT 1",
