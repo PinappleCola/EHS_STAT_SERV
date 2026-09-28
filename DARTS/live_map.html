@@ -2711,23 +2711,9 @@
         // =============================================
         let auditConfig = {};   // server-pushed config: { pointName: { outer_radius_nm, inner_radius_nm, colour_r, colour_g, colour_b } }
         let auditAlerts = [];   // server-pushed active alerts: [ { point_name, perimeter, icao, callsign } ]
-        const _soundPlayers = new Map();
         const _playedSoundEventIds = new Set();
         const _playedSoundEventOrder = [];
         let _soundPlaybackWarningShown = false;
-
-        function getSoundPlayer(url) {
-            if (!_soundPlayers.has(url)) {
-                _soundPlayers.set(url, []);
-            }
-            const players = _soundPlayers.get(url);
-            const reusable = players.find((player) => player.paused || player.ended);
-            if (reusable) return reusable;
-            const audio = new Audio(url);
-            audio.preload = 'auto';
-            players.push(audio);
-            return audio;
-        }
 
         function rememberPlayedSoundEvent(eventId) {
             if (_playedSoundEventIds.has(eventId)) return false;
@@ -2753,7 +2739,8 @@
                     soundUrl = eventData.url;
                 }
             }
-            const player = getSoundPlayer(soundUrl);
+            const player = new Audio(soundUrl);
+            player.preload = 'auto';
             player.currentTime = 0;
             player.play().catch((error) => {
                 if (_soundPlaybackWarningShown) return;
