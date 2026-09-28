@@ -21,14 +21,20 @@ import queue
 import re
 import os
 import http.server
+import uuid
 from urllib.parse import urlparse, parse_qs
 
-APP_VERSION = "v56"
+APP_VERSION = "v57"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(BASE_DIR)
 CONFIG_PATH = os.path.join(BASE_DIR, "runtime_config.json")
 ALTITUDE_COLOURS_PATH = os.path.join(BASE_DIR, "altitude_colours.json")
 WAYPOINT_SCORING_LUT_PATH = os.path.join(BASE_DIR, "waypoint_scoring_lut.json")
 TRAIL_CONFIG_PATH = os.path.join(BASE_DIR, "trail_config.json")
+LIVE_MAP_PATH = os.path.join(BASE_DIR, "live_map.html")
+LIVE_GRID_PATH = os.path.join(BASE_DIR, "live_grid.html")
+SOUND_FILES_DIR = os.path.join(REPO_ROOT, "SOUND_FILES")
+SOUND_FILE_PATTERN = re.compile(r"^(?P<sound_id>\d{2})_(?P<label>.+)\.wav$", re.IGNORECASE)
 
 try:
     import pyModeS as pms
@@ -162,6 +168,163 @@ DEFAULT_TRAIL_CONFIG = {
         "local_time": True,
     },
 }
+
+SQUAWK_SOUND_IDS = {
+    "7500": "05",
+    "7600": "06",
+    "7700": "07",
+}
+SOUND_EVENT_RETENTION_S = 5.0
+_sound_duplicate_warning_cache = set()
+
+
+def normalise_sound_id(sound_id):
+    if isinstance(sound_id, int):
+        sound_id = f"{sound_id:02d}"
+    else:
+        sound_id = str(sound_id).strip()
+    return sound_id if re.fullmatch(r"\d{2}", sound_id) else None
+
+
+def discover_numbered_sound_files(sound_dir=None):
+    sound_dir = sound_dir or SOUND_FILES_DIR
+    candidates = {}
+    warnings = []
+
+    try:
+        names = sorted(os.listdir(sound_dir), key=lambda value: (value.lower(), value))
+    except FileNotFoundError:
+        return {}, []
+    except NotADirectoryError:
+        return {}, [f"SOUND_FILES path is not a directory: {sound_dir}"]
+
+    for name in names:
+        full_path = os.path.join(sound_dir, name)
+        if not os.path.isfile(full_path):
+            continue
+        match = SOUND_FILE_PATTERN.fullmatch(name)
+        if not match:
+            continue
+        sound_id = match.group("sound_id")
+        candidates.setdefault(sound_id, []).append({
+            "sound_id": sound_id,
+            "filename": name,
+            "path": full_path,
+        })
+
+    selected = {}
+    for sound_id, matches in sorted(candidates.items()):
+        matches.sort(key=lambda item: (item["filename"].lower(), item["filename"]))
+        selected[sound_id] = matches[0]
+        if len(matches) > 1:
+            ignored = ", ".join(item["filename"] for item in matches[1:])
+            warnings.append(
+                f"Multiple files match sound {sound_id}; using {matches[0]['filename']} and ignoring {ignored}"
+            )
+    return selected, warnings
+
+
+def warn_sound_duplicates_once(warnings):
+    for warning in warnings:
+        if warning in _sound_duplicate_warning_cache:
+            continue
+        _sound_duplicate_warning_cache.add(warning)
+        print(f"[SOUND] WARNING {warning}")
+
+
+def resolve_numbered_sound_file(sound_id, sound_dir=None):
+    sound_id = normalise_sound_id(sound_id)
+    if sound_id is None:
+        return None
+    files, warnings = discover_numbered_sound_files(sound_dir)
+    if sound_dir in (None, SOUND_FILES_DIR):
+        warn_sound_duplicates_once(warnings)
+    return files.get(sound_id)
+
+
+def is_active_tcas_ra(value):
+    return str(value or "").strip().upper() not in {"", "----", "CLEAN"}
+
+
+def is_active_hazard(value):
+    text = str(value or "").strip()
+    if text in {"", "----"}:
+        return False
+    normalized = text.lower()
+    return normalized not in {"normal", "nil", "turb nil"}
+
+
+def merge_hazard_values(*values):
+    merged = []
+    for value in values:
+        text = str(value or "").strip()
+        if not is_active_hazard(text):
+            continue
+        for part in [segment.strip() for segment in text.split("|")]:
+            if not is_active_hazard(part):
+                continue
+            if part not in merged:
+                merged.append(part)
+    return " | ".join(merged) if merged else "----"
+
+
+def collect_aircraft_transition_sound_ids(previous_state, current_state):
+    sound_ids = []
+    if not is_active_tcas_ra(previous_state.get("tcas_ra")) and is_active_tcas_ra(current_state.get("tcas_ra")):
+        sound_ids.append("03")
+    if not is_active_hazard(previous_state.get("hazard")) and is_active_hazard(current_state.get("hazard")):
+        sound_ids.append("04")
+
+    previous_squawk = str(previous_state.get("squawk") or "").strip()
+    current_squawk = str(current_state.get("squawk") or "").strip()
+    squawk_sound_id = SQUAWK_SOUND_IDS.get(current_squawk)
+    if squawk_sound_id and previous_squawk != current_squawk:
+        sound_ids.append(squawk_sound_id)
+    return sound_ids
+
+
+def evaluate_audit_alert_entries(audit_points, aircraft_snapshot, previous_zone_occupants=None):
+    previous_zone_occupants = previous_zone_occupants or {}
+    active_alerts = []
+    updated_zone_occupants = {}
+    crossings = []
+
+    for ap in audit_points:
+        for perimeter_key, radius_key in [("OUTER", "outer_radius_nm"), ("INNER", "inner_radius_nm")]:
+            zone_key = (ap["name"], perimeter_key)
+            current_occupants = set()
+            radius = ap[radius_key]
+
+            for icao, data in sorted(aircraft_snapshot.items()):
+                ac_lat = data.get("lat")
+                ac_lon = data.get("lon")
+                if ac_lat in (None, "----") or ac_lon in (None, "----"):
+                    continue
+                try:
+                    distance_nm = haversine_nm(ap["lat"], ap["lon"], float(ac_lat), float(ac_lon))
+                except (TypeError, ValueError):
+                    continue
+                if distance_nm > radius:
+                    continue
+                current_occupants.add(icao)
+                active_alerts.append({
+                    "point_name": ap["name"],
+                    "perimeter": perimeter_key,
+                    "icao": icao,
+                    "callsign": str(data.get("callsign", "----")),
+                })
+
+            previous_occupants = previous_zone_occupants.get(zone_key, set())
+            new_entries = current_occupants - previous_occupants
+            updated_zone_occupants[zone_key] = current_occupants
+            for icao in sorted(new_entries):
+                crossings.append({
+                    "icao": icao,
+                    "point_name": ap["name"],
+                    "perimeter": perimeter_key,
+                })
+
+    return active_alerts, updated_zone_occupants, crossings
 
 # --- Optional pyModeS Support ---
 MODE_S_POLY = 0xFFF409
@@ -1384,6 +1547,24 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         return parsed.path, parse_qs(parsed.query)
 
+    def _serve_text_file(self, path, content_type="text/plain; charset=utf-8"):
+        try:
+            with open(path, "rb") as handle:
+                self._send_bytes(handle.read(), content_type=content_type)
+        except FileNotFoundError:
+            self._send_json({"error": "Not found"}, status=404)
+
+    def _serve_sound_file(self, sound_id):
+        sound_file = resolve_numbered_sound_file(sound_id)
+        if sound_file is None:
+            self._send_json({"error": "Not found"}, status=404)
+            return
+        try:
+            with open(sound_file["path"], "rb") as handle:
+                self._send_bytes(handle.read(), content_type="audio/wav")
+        except FileNotFoundError:
+            self._send_json({"error": "Not found"}, status=404)
+
     def _parse_trail_range(self, query):
         trail_cfg = get_trail_config_snapshot()
         max_window_ms = int(trail_cfg["maximum_window_minutes"] * 60000)
@@ -1459,6 +1640,13 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/fields":
             # Return the complete field registry so frontends can build column pickers
             self._send_json(FIELD_REGISTRY)
+        elif path in ("/", "/map"):
+            self._serve_text_file(LIVE_MAP_PATH, content_type="text/html; charset=utf-8")
+        elif path == "/grid":
+            self._serve_text_file(LIVE_GRID_PATH, content_type="text/html; charset=utf-8")
+        elif re.fullmatch(r"/sounds/\d{2}(?:\.wav)?", path, flags=re.IGNORECASE):
+            sound_id = os.path.basename(path).split(".", 1)[0]
+            self._serve_sound_file(sound_id)
         elif path == "/api/grid-config":
             # Returns the default config structure; user preferences are stored client-side
             default_cols = [f["key"] for f in FIELD_REGISTRY if f["defaultVisible"]]
@@ -3010,6 +3198,77 @@ audit_zone_lock = threading.Lock()
 # Active audit alerts sent to frontend: list of {point_name, perimeter, icao, callsign}
 audit_active_alerts = []
 audit_alerts_lock = threading.Lock()
+sound_events = []
+sound_events_lock = threading.Lock()
+sound_event_sequence = 0
+sound_event_session_id = uuid.uuid4().hex
+
+
+def trigger_sound(sound_id):
+    sound_id = normalise_sound_id(sound_id)
+    if sound_id is None:
+        return False
+    if resolve_numbered_sound_file(sound_id) is None:
+        return False
+
+    global sound_event_sequence
+    now = time.time()
+    with sound_events_lock:
+        sound_events[:] = [event for event in sound_events if (now - event["ts_epoch"]) <= SOUND_EVENT_RETENTION_S]
+        sound_event_sequence += 1
+        sound_events.append({
+            "event_id": f"{sound_event_session_id}:{sound_event_sequence}",
+            "sound_id": sound_id,
+            "url": f"/sounds/{sound_id}",
+            "ts_epoch": now,
+        })
+    print(f"[SOUND] Triggered {sound_id}")
+    return True
+
+
+def get_recent_sound_events():
+    now = time.time()
+    with sound_events_lock:
+        sound_events[:] = [event for event in sound_events if (now - event["ts_epoch"]) <= SOUND_EVENT_RETENTION_S]
+        return [
+            {
+                "event_id": event["event_id"],
+                "sound_id": event["sound_id"],
+                "url": event["url"],
+            }
+            for event in sound_events
+        ]
+
+
+def set_aircraft_hazard_source(icao, source_key, hazard_value):
+    normalized_value = str(hazard_value or "").strip()
+    if not is_active_hazard(normalized_value):
+        normalized_value = "----"
+
+    pending_sound_ids = []
+    with state_lock:
+        aircraft = aircraft_state.get(icao)
+        if aircraft is None:
+            return
+        previous_state = {
+            "tcas_ra": aircraft.get("tcas_ra"),
+            "hazard": aircraft.get("hazard"),
+            "squawk": aircraft.get("squawk"),
+        }
+        aircraft[source_key] = normalized_value
+        merged_hazard = merge_hazard_values(aircraft.get("_hazard_bds44"), aircraft.get("_hazard_bds45"))
+        if aircraft.get("hazard") != merged_hazard:
+            aircraft["hazard"] = merged_hazard
+            queue_telemetry_delta(time.time(), icao, "hazard", merged_hazard)
+            current_state = {
+                "tcas_ra": aircraft.get("tcas_ra"),
+                "hazard": aircraft.get("hazard"),
+                "squawk": aircraft.get("squawk"),
+            }
+            pending_sound_ids = collect_aircraft_transition_sound_ids(previous_state, current_state)
+
+    for sound_id in pending_sound_ids:
+        trigger_sound(sound_id)
 
 def haversine_nm(lat1, lon1, lat2, lon2):
     """Great-circle distance in nautical miles between two points."""
@@ -3295,6 +3554,8 @@ def run_audit_monitor():
         try:
             audit_points = get_audit_points()
             if not audit_points:
+                with audit_zone_lock:
+                    audit_zone_occupants.clear()
                 with audit_alerts_lock:
                     audit_active_alerts.clear()
                 continue
@@ -3302,48 +3563,39 @@ def run_audit_monitor():
             with state_lock:
                 ac_snapshot = {icao: data.copy() for icao, data in aircraft_state.items()}
 
-            new_alerts = []
-            seen_alerts = set()
-            for ap in audit_points:
-                for perimeter_key, radius_key in [("OUTER", "outer_radius_nm"), ("INNER", "inner_radius_nm")]:
-                    radius = ap[radius_key]
-                    zone_key = (ap["name"], perimeter_key)
+            pending_crossings = []
+            with audit_zone_lock:
+                previous_zone_occupants = {key: set(value) for key, value in audit_zone_occupants.items()}
+                new_alerts, updated_zone_occupants, crossings = evaluate_audit_alert_entries(
+                    audit_points,
+                    ac_snapshot,
+                    previous_zone_occupants,
+                )
+                audit_zone_occupants.clear()
+                audit_zone_occupants.update(updated_zone_occupants)
+                pending_crossings = [
+                    {
+                        "icao": crossing["icao"],
+                        "perimeter": crossing["perimeter"],
+                        "point_name": crossing["point_name"],
+                        "aircraft_data": ac_snapshot.get(crossing["icao"], {}).copy(),
+                    }
+                    for crossing in crossings
+                ]
 
-                    current_occupants = set()
-                    for icao, data in ac_snapshot.items():
-                        ac_lat = data.get("lat")
-                        ac_lon = data.get("lon")
-                        if ac_lat in (None, "----") or ac_lon in (None, "----"):
-                            continue
-                        try:
-                            dist = haversine_nm(ap["lat"], ap["lon"], float(ac_lat), float(ac_lon))
-                        except (ValueError, TypeError):
-                            continue
-                        if dist <= radius:
-                            current_occupants.add(icao)
-                            alert_key = (icao, ap["name"], perimeter_key)
-                            if alert_key not in seen_alerts:
-                                seen_alerts.add(alert_key)
-                                new_alerts.append({
-                                    "point_name": ap["name"],
-                                    "perimeter": perimeter_key,
-                                    "icao": icao,
-                                    "callsign": str(data.get("callsign", "----")),
-                                })
-
-                    # Atomic read-compare-write under a single lock acquisition
-                    with audit_zone_lock:
-                        prev_occupants = audit_zone_occupants.get(zone_key, set())
-                        new_entries = current_occupants - prev_occupants
-                        audit_zone_occupants[zone_key] = current_occupants
-
-                    # Log crossing events outside the lock to avoid holding it during I/O
-                    for icao in new_entries:
-                        ac_data = ac_snapshot.get(icao, {})
-                        log_audit_crossing(ap["name"], perimeter_key, ac_data)
-                        iso = get_iso_time()
-                        cs = ac_data.get("callsign", "----")
-                        print(f"{ANSI.DIM}[{iso}]{ANSI.RESET} {ANSI.MAGENTA}[AUDIT] {icao} ({cs}) entered {perimeter_key} zone of {ap['name']}{ANSI.RESET}")
+            for crossing in pending_crossings:
+                icao = crossing["icao"]
+                perimeter_key = crossing["perimeter"]
+                point_name = crossing["point_name"]
+                ac_data = crossing["aircraft_data"]
+                log_audit_crossing(point_name, perimeter_key, ac_data)
+                iso = get_iso_time()
+                cs = ac_data.get("callsign", "----")
+                print(f"{ANSI.DIM}[{iso}]{ANSI.RESET} {ANSI.MAGENTA}[AUDIT] {icao} ({cs}) entered {perimeter_key} zone of {point_name}{ANSI.RESET}")
+                if perimeter_key == "OUTER":
+                    trigger_sound("01")
+                elif perimeter_key == "INNER":
+                    trigger_sound("02")
 
             with audit_alerts_lock:
                 audit_active_alerts.clear()
@@ -3617,11 +3869,21 @@ def update_aircraft(icao, key, value):
                 # Display heading arbitration internals
                 "_display_heading": None, "_display_heading_time": 0, "_display_heading_source": "none",
                 "_track_update_time": 0, "_heading_update_time": 0, "_selected_heading_update_time": 0,
+                "_hazard_bds44": "----", "_hazard_bds45": "----",
                 "_lat_update_time": 0,
                 # System timing
                 "first_seen": datetime.datetime.now().strftime('%H:%M:%S'),
                 "latest_intent": {}, "latest_db_log": {}, "latest_sys_log": {}, "last_msg_time": 0, 
                 "last_seen": now, "first_seen_time": now
+            }
+
+        previous_state = None
+        current_state = None
+        if key in {"tcas_ra", "hazard", "squawk"}:
+            previous_state = {
+                "tcas_ra": aircraft_state[icao].get("tcas_ra"),
+                "hazard": aircraft_state[icao].get("hazard"),
+                "squawk": aircraft_state[icao].get("squawk"),
             }
 
         previous_value = aircraft_state[icao].get(key)
@@ -3675,6 +3937,17 @@ def update_aircraft(icao, key, value):
         p = aircraft_state[icao]
         if key == "last_seen":
             p["last_msg_time"] = now
+
+        if previous_state is not None:
+            current_state = {
+                "tcas_ra": aircraft_state[icao].get("tcas_ra"),
+                "hazard": aircraft_state[icao].get("hazard"),
+                "squawk": aircraft_state[icao].get("squawk"),
+            }
+
+    if previous_state is not None and current_state is not None and previous_state != current_state:
+        for sound_id in collect_aircraft_transition_sound_ids(previous_state, current_state):
+            trigger_sound(sound_id)
 
 
 def process_frame(frame):
@@ -3930,10 +4203,9 @@ def process_frame(frame):
                         if bds_data.get("humidity") is not None:
                             update_aircraft(icao, "humidity", round(float(bds_data["humidity"]), 1))
 
-                        turb_label = turbulence_label(bds_data.get("turbulence")) if bds_data.get("turbulence") is not None else None
-                        if turb_label and turb_label != "TURB NIL":
-                            update_aircraft(icao, "hazard", turb_label)
                         if bds_data.get("turbulence") is not None:
+                            turb_label = turbulence_label(bds_data.get("turbulence"))
+                            set_aircraft_hazard_source(icao, "_hazard_bds44", turb_label if turb_label != "TURB NIL" else "----")
                             update_aircraft(icao, "turbulence_level", int(bds_data["turbulence"]))
                     except Exception:
                         pass
@@ -3947,9 +4219,11 @@ def process_frame(frame):
                         if bds_data.get("radio_height") is not None:
                             update_aircraft(icao, "radio_height", int(bds_data["radio_height"]))
 
-                        hazard_summary = build_hazard_summary(bds_data)
-                        if hazard_summary != "----":
-                            update_aircraft(icao, "hazard", hazard_summary)
+                        if any(
+                            bds_data.get(field_name) is not None
+                            for field_name in ("turbulence", "wind_shear", "microburst", "icing", "wake_vortex")
+                        ):
+                            set_aircraft_hazard_source(icao, "_hazard_bds45", build_hazard_summary(bds_data))
                         if bds_data.get("wind_shear") is not None:
                             update_aircraft(icao, "wind_shear_level", int(bds_data["wind_shear"]))
                         if bds_data.get("microburst") is not None:
@@ -4295,6 +4569,7 @@ async def broadcast_state(websocket):
                     _audit_cfg_snap = dict(audit_config_cache)
                 with audit_alerts_lock:
                     _audit_alerts_snap = list(audit_active_alerts)
+                _sound_events = get_recent_sound_events()
                 _wpt_updates, _wpt_version = get_waypoint_scoring_updates_since(last_waypoint_scoring_version)
                 last_waypoint_scoring_version = _wpt_version
                 _wpt_metrics = snapshot_waypoint_scoring_metrics()
@@ -4304,6 +4579,7 @@ async def broadcast_state(websocket):
                     "meta": { "ledger_count": ledger_count, "waypoint_scoring_metrics": _wpt_metrics },
                     "audit_config": _audit_cfg_snap,
                     "audit_alerts": _audit_alerts_snap,
+                    "sound_events": _sound_events,
                     "waypoint_scoring_updates": _wpt_updates,
                     "waypoint_scoring_version": _wpt_version,
                 }
