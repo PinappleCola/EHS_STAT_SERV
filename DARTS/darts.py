@@ -1433,7 +1433,10 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=400)
             return
 
-        payload = build_geojson_from_trail_rows(query_trail_rows(from_ms, to_ms, icao=icao))
+        payload = build_geojson_from_trail_rows(
+            query_trail_rows(from_ms, to_ms, icao=icao, apply_backstop=False),
+            apply_backstop=True,
+        )
         trail_cfg = get_trail_config_snapshot()
         filename = f'{trail_cfg["export"]["filename_prefix"]}_{from_ms}_{to_ms}.geojson'
         self._send_bytes(
@@ -2588,6 +2591,26 @@ def make_trail_event_key(icao, ts_ms, lat, lon, marker_type):
     return f"{str(icao).upper()}:{int(ts_ms)}:{marker_type or 'point'}:{lat_key}:{lon_key}"
 
 
+def _load_last_trail_point_from_store(icao):
+    with trail_db_lock:
+        conn = trail_db_conn
+        if conn is None:
+            return None
+        row = conn.execute(
+            "SELECT ts_ms, lat, lon FROM trail_points "
+            "WHERE icao = ? AND marker_type IS NULL AND lat IS NOT NULL AND lon IS NOT NULL "
+            "ORDER BY ts_ms DESC, id DESC LIMIT 1",
+            (str(icao).upper(),),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "last_point": {"lat": float(row[1]), "lon": float(row[2])},
+        "last_point_ts_ms": int(row[0]),
+        "last_observation_ts_ms": int(row[0]),
+    }
+
+
 def _trail_on_ground_flag(data):
     air_ground = str(data.get("air_ground", "----")).upper()
     altitude = data.get("alt")
@@ -2637,6 +2660,7 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
         altitude = data.get("alt")
         on_ground = _trail_on_ground_flag(data)
         callsign = _trail_callsign_or_none(data.get("callsign"))
+        needs_bootstrap_lookup = False
         with trail_runtime_state_lock:
             recorder_state = trail_runtime_state.setdefault(icao, {
                 "last_point": None,
@@ -2644,12 +2668,31 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
                 "last_observation_ts_ms": None,
                 "intervals": [],
                 "last_activity_ms": now_ms,
+                "bootstrap_attempted": False,
             })
+            if not recorder_state.get("bootstrap_attempted"):
+                recorder_state["bootstrap_attempted"] = True
+                needs_bootstrap_lookup = recorder_state.get("last_point_ts_ms") is None
+
+        bootstrap_state = None
+        if needs_bootstrap_lookup:
+            bootstrap_state = _load_last_trail_point_from_store(icao)
+
+        with trail_runtime_state_lock:
+            recorder_state = trail_runtime_state.setdefault(icao, {
+                "last_point": None,
+                "last_point_ts_ms": None,
+                "last_observation_ts_ms": None,
+                "intervals": [],
+                "last_activity_ms": now_ms,
+                "bootstrap_attempted": True,
+            })
+            if bootstrap_state and recorder_state.get("last_point_ts_ms") is None:
+                recorder_state["last_point"] = dict(bootstrap_state["last_point"])
+                recorder_state["last_point_ts_ms"] = int(bootstrap_state["last_point_ts_ms"])
+                recorder_state["last_observation_ts_ms"] = int(bootstrap_state["last_observation_ts_ms"])
             previous_point = recorder_state.get("last_point")
-            if previous_point and previous_point["lat"] == lat and previous_point["lon"] == lon:
-                recorder_state["last_observation_ts_ms"] = now_ms
-                recorder_state["last_activity_ms"] = now_ms
-                continue
+            is_duplicate_point = bool(previous_point and previous_point["lat"] == lat and previous_point["lon"] == lon)
 
             delta_ms = 0
             marker_type = None
@@ -2667,6 +2710,10 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
 
             if marker_type:
                 records.append((icao, now_ms, None, None, None, None, callsign, source_label, receiver_id, marker_type, make_trail_event_key(icao, now_ms, None, None, marker_type)))
+            if is_duplicate_point:
+                recorder_state["last_observation_ts_ms"] = now_ms
+                recorder_state["last_activity_ms"] = now_ms
+                continue
             records.append((icao, now_ms, lat, lon, None if altitude in (None, "") else str(altitude), on_ground, callsign, source_label, receiver_id, None, make_trail_event_key(icao, now_ms, lat, lon, None)))
 
             recorder_state["last_point"] = {"lat": lat, "lon": lon}
@@ -2677,7 +2724,83 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
     return records
 
 
-def query_trail_rows(from_ms, to_ms, icao=None):
+def _trail_row_marker_rank(marker_type):
+    return 0 if marker_type else 1
+
+
+def _trail_sort_rows(rows):
+    def _sort_key(row):
+        row_id, icao, ts_ms, _lat, _lon, _altitude, _on_ground, _callsign, _source_label, _receiver_id, marker_type = row
+        row_id_sort = int(row_id) if isinstance(row_id, int) else -1
+        return (str(icao), int(ts_ms), _trail_row_marker_rank(marker_type), row_id_sort)
+    return sorted(rows, key=_sort_key)
+
+
+def apply_trail_break_backstop(rows, trail_cfg=None):
+    if not rows:
+        return []
+    cfg = _normalize_trail_config(trail_cfg) if trail_cfg is not None else get_trail_config_snapshot()
+    max_interval_count = cfg["adaptive_gap"]["history_size"]
+    ordered_rows = _trail_sort_rows(rows)
+    output = []
+    current_icao = None
+    query_state = {
+        "last_point": None,
+        "last_point_ts_ms": None,
+        "last_observation_ts_ms": None,
+        "intervals": [],
+    }
+
+    def _reset_state():
+        query_state["last_point"] = None
+        query_state["last_point_ts_ms"] = None
+        query_state["last_observation_ts_ms"] = None
+
+    for row in ordered_rows:
+        _row_id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type = row
+        ts_value = int(ts_ms)
+        if current_icao is not None and icao != current_icao:
+            query_state["intervals"] = []
+            _reset_state()
+        current_icao = icao
+
+        if marker_type:
+            output.append(row)
+            _reset_state()
+            continue
+
+        if lat is None or lon is None:
+            output.append(row)
+            continue
+
+        lat_value = float(lat)
+        lon_value = float(lon)
+        break_type = None
+        if query_state.get("last_point_ts_ms") is not None:
+            base_observation_ms = query_state.get("last_observation_ts_ms") or query_state["last_point_ts_ms"]
+            delta_ms = max(ts_value - int(base_observation_ms), 0)
+            gap_threshold_ms = compute_trail_gap_threshold_ms(query_state, cfg)
+            if delta_ms > gap_threshold_ms:
+                break_type = "gap_break"
+            else:
+                break_type = classify_trail_jump(query_state.get("last_point"), lat_value, lon_value, delta_ms, on_ground == 1, cfg)
+            query_state["intervals"].append(max(delta_ms / 1000.0, 0.0))
+            if len(query_state["intervals"]) > max_interval_count:
+                query_state["intervals"] = query_state["intervals"][-max_interval_count:]
+
+        if break_type:
+            output.append((None, icao, ts_value, None, None, None, None, callsign, source_label, receiver_id, break_type))
+            _reset_state()
+
+        output.append(row)
+        query_state["last_point"] = {"lat": lat_value, "lon": lon_value}
+        query_state["last_point_ts_ms"] = ts_value
+        query_state["last_observation_ts_ms"] = ts_value
+
+    return output
+
+
+def query_trail_rows(from_ms, to_ms, icao=None, apply_backstop=True):
     sql = (
         "SELECT id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type "
         "FROM trail_points WHERE ts_ms >= ? AND ts_ms <= ?"
@@ -2686,16 +2809,21 @@ def query_trail_rows(from_ms, to_ms, icao=None):
     if icao:
         sql += " AND icao = ?"
         params.append(str(icao).upper())
-    sql += " ORDER BY icao ASC, ts_ms ASC, id ASC"
+    sql += " ORDER BY icao ASC, ts_ms ASC, CASE WHEN marker_type IS NULL THEN 1 ELSE 0 END ASC, id ASC"
     with trail_db_lock:
-        return trail_db_conn.execute(sql, params).fetchall()
+        rows = trail_db_conn.execute(sql, params).fetchall()
+    if not apply_backstop:
+        return rows
+    return apply_trail_break_backstop(rows)
 
 
 def _ms_to_rfc3339(ms):
     return datetime.datetime.fromtimestamp(ms / 1000.0, tz=datetime.timezone.utc).isoformat(timespec='milliseconds').replace("+00:00", "Z")
 
 
-def build_geojson_from_trail_rows(rows):
+def build_geojson_from_trail_rows(rows, apply_backstop=False):
+    if apply_backstop:
+        rows = apply_trail_break_backstop(rows)
     features = []
     current_icao = None
     segment_points = []
