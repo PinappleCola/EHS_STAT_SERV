@@ -1,5 +1,7 @@
 # SOUND_FILES
 
+This directory is the DARTS runtime sound root (`DARTS/SOUND_FILES`).
+
 Place operator alert WAV files in this directory using the naming convention:
 
 - `XX_description.wav`

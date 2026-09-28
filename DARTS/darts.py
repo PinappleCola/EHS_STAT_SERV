@@ -33,7 +33,7 @@ WAYPOINT_SCORING_LUT_PATH = os.path.join(BASE_DIR, "waypoint_scoring_lut.json")
 TRAIL_CONFIG_PATH = os.path.join(BASE_DIR, "trail_config.json")
 LIVE_MAP_PATH = os.path.join(BASE_DIR, "live_map.html")
 LIVE_GRID_PATH = os.path.join(BASE_DIR, "live_grid.html")
-SOUND_FILES_DIR = os.path.join(REPO_ROOT, "SOUND_FILES")
+SOUND_FILES_DIR = os.path.join(BASE_DIR, "SOUND_FILES")
 SOUND_FILE_PATTERN = re.compile(r"^(?P<sound_id>\d{2})_(?P<label>.+)\.wav$", re.IGNORECASE)
 
 try:

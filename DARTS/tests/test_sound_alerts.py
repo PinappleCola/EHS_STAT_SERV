@@ -17,6 +17,10 @@ DARTS = _load_darts_module()
 
 
 class SoundAlertTests(unittest.TestCase):
+    def test_default_sound_files_dir_is_under_darts_root(self):
+        expected = Path(DARTS.__file__).resolve().parent / "SOUND_FILES"
+        self.assertEqual(Path(DARTS.SOUND_FILES_DIR).resolve(), expected)
+
     def test_discover_numbered_sound_files_case_insensitive_and_deterministic(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
