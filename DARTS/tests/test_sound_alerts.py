@@ -22,9 +22,10 @@ class SoundAlertTests(unittest.TestCase):
         expected = Path(DARTS.__file__).resolve().parent / "SOUND_FILES"
         self.assertEqual(Path(DARTS.SOUND_FILES_DIR).resolve(), expected)
 
-    def test_repository_sample_sound_asset_is_under_darts_sound_root(self):
-        sample_file = Path(DARTS.SOUND_FILES_DIR) / "01_Audit_Outer.wav"
-        self.assertTrue(sample_file.is_file())
+    def test_repository_sound_layout_uses_darts_sound_root(self):
+        sound_root = Path(DARTS.SOUND_FILES_DIR)
+        self.assertTrue(sound_root.is_dir())
+        self.assertTrue((sound_root / "README.md").is_file())
 
     def test_default_discovery_reads_darts_sound_root_not_repo_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
