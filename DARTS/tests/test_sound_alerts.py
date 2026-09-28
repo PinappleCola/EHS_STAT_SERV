@@ -1,13 +1,14 @@
 import importlib.util
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 
-def _load_darts_module():
-    darts_path = Path(__file__).resolve().parents[1] / "darts.py"
-    spec = importlib.util.spec_from_file_location("darts_under_test_sound", str(darts_path))
+def _load_darts_module(darts_path=None, module_name="darts_under_test_sound"):
+    darts_path = Path(darts_path) if darts_path else (Path(__file__).resolve().parents[1] / "darts.py")
+    spec = importlib.util.spec_from_file_location(module_name, str(darts_path))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -23,17 +24,21 @@ class SoundAlertTests(unittest.TestCase):
 
     def test_default_discovery_reads_darts_sound_root_not_repo_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            repo_root = Path(tmpdir)
-            darts_sound_root = repo_root / "DARTS" / "SOUND_FILES"
+            repo_root = Path(tmpdir) / "repo"
+            darts_root = repo_root / "DARTS"
+            darts_sound_root = darts_root / "SOUND_FILES"
             repo_sound_root = repo_root / "SOUND_FILES"
-            darts_sound_root.mkdir(parents=True)
+            darts_root.mkdir(parents=True)
             repo_sound_root.mkdir(parents=True)
+            darts_sound_root.mkdir(parents=True)
+
+            shutil.copy2(Path(DARTS.__file__), darts_root / "darts.py")
 
             (darts_sound_root / "01_Darts.wav").write_bytes(b"darts")
             (repo_sound_root / "01_Repo.wav").write_bytes(b"repo")
 
-            with mock.patch.object(DARTS, "SOUND_FILES_DIR", str(darts_sound_root)):
-                discovered, _warnings = DARTS.discover_numbered_sound_files()
+            temp_module = _load_darts_module(darts_root / "darts.py", module_name="darts_under_test_sound_temp")
+            discovered, _warnings = temp_module.discover_numbered_sound_files()
 
             self.assertEqual(discovered["01"]["filename"], "01_Darts.wav")
             self.assertEqual(Path(discovered["01"]["path"]).resolve().parent, darts_sound_root.resolve())
