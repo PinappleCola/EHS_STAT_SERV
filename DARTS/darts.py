@@ -2784,7 +2784,7 @@ def apply_trail_break_backstop(rows, trail_cfg=None):
     return output
 
 
-def query_trail_rows(from_ms, to_ms, icao=None):
+def query_trail_rows(from_ms, to_ms, icao=None, apply_backstop=True):
     sql = (
         "SELECT id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type "
         "FROM trail_points WHERE ts_ms >= ? AND ts_ms <= ?"
@@ -2796,6 +2796,8 @@ def query_trail_rows(from_ms, to_ms, icao=None):
     sql += " ORDER BY icao ASC, ts_ms ASC, CASE WHEN marker_type IS NULL THEN 1 ELSE 0 END ASC, id ASC"
     with trail_db_lock:
         rows = trail_db_conn.execute(sql, params).fetchall()
+    if not apply_backstop:
+        return rows
     return apply_trail_break_backstop(rows)
 
 
