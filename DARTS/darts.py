@@ -2723,7 +2723,7 @@ def _trail_sort_rows(rows):
 def apply_trail_break_backstop(rows, trail_cfg=None):
     if not rows:
         return []
-    cfg = trail_cfg if trail_cfg is not None else get_trail_config_snapshot()
+    cfg = _normalize_trail_config(trail_cfg) if trail_cfg is not None else get_trail_config_snapshot()
     max_interval_count = cfg["adaptive_gap"]["history_size"]
     ordered_rows = _trail_sort_rows(rows)
     output = []
