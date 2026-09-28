@@ -26,6 +26,7 @@ class SoundAlertTests(unittest.TestCase):
         sound_root = Path(DARTS.SOUND_FILES_DIR)
         self.assertTrue(sound_root.is_dir())
         self.assertTrue((sound_root / "README.md").is_file())
+        self.assertTrue(list(sound_root.glob("*.wav")))
 
     def test_default_discovery_reads_darts_sound_root_not_repo_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
