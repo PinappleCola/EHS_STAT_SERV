@@ -1522,7 +1522,7 @@
                 if (aTime !== bTime) return aTime - bTime;
                 const aBreak = !!a?.gapBreak;
                 const bBreak = !!b?.gapBreak;
-                if (aBreak !== bBreak) return aBreak ? 1 : -1;
+                if (aBreak !== bBreak) return aBreak ? -1 : 1;
                 return 0;
             });
         }
@@ -1629,6 +1629,13 @@
             const historyObj = getOrCreateTrailHistory(sample.icao, sample.time);
             normalizeTrailPath(historyObj);
             const history = historyObj.path;
+            let latestPointIdx = -1;
+            for (let i = history.length - 1; i >= 0; i--) {
+                if (!history[i].gapBreak) {
+                    latestPointIdx = i;
+                    break;
+                }
+            }
             let previousPointIdx = -1;
             for (let i = history.length - 1; i >= 0; i--) {
                 const entry = history[i];
@@ -1636,6 +1643,16 @@
                 if (entry.time <= sample.time) {
                     previousPointIdx = i;
                     break;
+                }
+            }
+            if (latestPointIdx >= 0) {
+                const latestPoint = history[latestPointIdx];
+                const hasBreakAfterLatest = history.some((entry, idx) => idx > latestPointIdx && entry.gapBreak && entry.time <= sample.time);
+                if (!hasBreakAfterLatest && latestPoint.lat === sample.lat && latestPoint.lon === sample.lon) {
+                    historyObj.lastUpdate = Math.max(historyObj.lastUpdate || 0, sample.time);
+                    historyObj.lastPointTime = latestPoint.time;
+                    pruneTrailPathByAge(historyObj, sample.time);
+                    return;
                 }
             }
             if (previousPointIdx >= 0) {
