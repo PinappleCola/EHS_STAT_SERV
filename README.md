@@ -95,6 +95,18 @@ python darts.py
 
 ---
 
+## Sound alerts
+
+- Put alert WAV files in the repository root `SOUND_FILES/` directory using `XX_description.wav`.
+- IDs `01`-`07` are active sound triggers, while `08`-`10` are reserved for future use.
+- DARTS ignores missing numbered files, so unconfigured sounds stay silent without failing the app.
+- Sound playback happens in the browser live map over the existing localhost HTTP/WebSocket stack, so browser autoplay rules may require a click or other user interaction before audio can play.
+- WAV clips under about five seconds are recommended; larger uncompressed files increase transfer, memory, and startup cost.
+
+See `SOUND_FILES/README.md` for the current ID map and duplicate-file behavior.
+
+---
+
 ## Configuration (`DARTS/runtime_config.json`)
 
 | Key | Default (Windows) | Default (Pi/Linux) | Description |

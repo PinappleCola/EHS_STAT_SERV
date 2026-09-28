@@ -2461,21 +2461,11 @@
                 if (typeof parsedData.waypoint_scoring_version === 'number') {
                     waypointScoringVersion = parsedData.waypoint_scoring_version;
                 }
+                if (Array.isArray(parsedData.sound_events)) {
+                    parsedData.sound_events.forEach(playSoundEvent);
+                }
                 if (parsedData.audit_alerts) {
                     auditAlerts = parsedData.audit_alerts;
-                    // Detect new outer circle crossings and play alert sound
-                    const currentOuterKeys = new Set();
-                    auditAlerts.forEach(a => {
-                        if (a.perimeter === 'OUTER') {
-                            currentOuterKeys.add(a.icao + '|' + a.point_name);
-                        }
-                    });
-                    let hasNewOuter = [...currentOuterKeys].some(k => !_prevOuterAlertKeys.has(k));
-                    if (hasNewOuter) {
-                        _auditAlertAudio.currentTime = 0;
-                        _auditAlertAudio.play().catch(() => {});
-                    }
-                    _prevOuterAlertKeys = currentOuterKeys;
                     updateAuditHud();
                 }
                 
@@ -2721,8 +2711,44 @@
         // =============================================
         let auditConfig = {};   // server-pushed config: { pointName: { outer_radius_nm, inner_radius_nm, colour_r, colour_g, colour_b } }
         let auditAlerts = [];   // server-pushed active alerts: [ { point_name, perimeter, icao, callsign } ]
-        let _prevOuterAlertKeys = new Set();  // track previous outer alert keys to detect new crossings
-        const _auditAlertAudio = new Audio('ALERT_01.wav');
+        const _soundPlayers = new Map();
+        const _playedSoundEventIds = new Set();
+        const _playedSoundEventOrder = [];
+        let _soundPlaybackWarningShown = false;
+
+        function getSoundPlayer(url) {
+            if (!_soundPlayers.has(url)) {
+                const audio = new Audio(url);
+                audio.preload = 'auto';
+                _soundPlayers.set(url, audio);
+            }
+            return _soundPlayers.get(url);
+        }
+
+        function rememberPlayedSoundEvent(eventId) {
+            if (_playedSoundEventIds.has(eventId)) return false;
+            _playedSoundEventIds.add(eventId);
+            _playedSoundEventOrder.push(eventId);
+            while (_playedSoundEventOrder.length > 256) {
+                const oldestId = _playedSoundEventOrder.shift();
+                _playedSoundEventIds.delete(oldestId);
+            }
+            return true;
+        }
+
+        function playSoundEvent(eventData) {
+            if (!eventData || typeof eventData.event_id !== 'number') return;
+            if (!rememberPlayedSoundEvent(eventData.event_id)) return;
+            const soundId = String(eventData.sound_id || '').padStart(2, '0');
+            const url = eventData.url || `/sounds/${soundId}`;
+            const player = getSoundPlayer(url);
+            player.currentTime = 0;
+            player.play().catch((error) => {
+                if (_soundPlaybackWarningShown) return;
+                _soundPlaybackWarningShown = true;
+                console.warn('Sound playback is blocked until the browser tab receives a user interaction.', error);
+            });
+        }
 
         function toggleAuditModal() {
             const modal = document.getElementById('audit-modal');
