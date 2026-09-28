@@ -3564,29 +3564,26 @@ def run_audit_monitor():
                 ac_snapshot = {icao: data.copy() for icao, data in aircraft_state.items()}
             with audit_zone_lock:
                 previous_zone_occupants = {key: set(value) for key, value in audit_zone_occupants.items()}
-            new_alerts, updated_zone_occupants, crossings = evaluate_audit_alert_entries(
-                audit_points,
-                ac_snapshot,
-                previous_zone_occupants,
-            )
-
-            with audit_zone_lock:
+                new_alerts, updated_zone_occupants, crossings = evaluate_audit_alert_entries(
+                    audit_points,
+                    ac_snapshot,
+                    previous_zone_occupants,
+                )
                 audit_zone_occupants.clear()
                 audit_zone_occupants.update(updated_zone_occupants)
-
-            for crossing in crossings:
-                icao = crossing["icao"]
-                perimeter_key = crossing["perimeter"]
-                point_name = crossing["point_name"]
-                ac_data = ac_snapshot.get(icao, {})
-                log_audit_crossing(point_name, perimeter_key, ac_data)
-                iso = get_iso_time()
-                cs = ac_data.get("callsign", "----")
-                print(f"{ANSI.DIM}[{iso}]{ANSI.RESET} {ANSI.MAGENTA}[AUDIT] {icao} ({cs}) entered {perimeter_key} zone of {point_name}{ANSI.RESET}")
-                if perimeter_key == "OUTER":
-                    trigger_sound("01")
-                elif perimeter_key == "INNER":
-                    trigger_sound("02")
+                for crossing in crossings:
+                    icao = crossing["icao"]
+                    perimeter_key = crossing["perimeter"]
+                    point_name = crossing["point_name"]
+                    ac_data = ac_snapshot.get(icao, {})
+                    log_audit_crossing(point_name, perimeter_key, ac_data)
+                    iso = get_iso_time()
+                    cs = ac_data.get("callsign", "----")
+                    print(f"{ANSI.DIM}[{iso}]{ANSI.RESET} {ANSI.MAGENTA}[AUDIT] {icao} ({cs}) entered {perimeter_key} zone of {point_name}{ANSI.RESET}")
+                    if perimeter_key == "OUTER":
+                        trigger_sound("01")
+                    elif perimeter_key == "INNER":
+                        trigger_sound("02")
 
             with audit_alerts_lock:
                 audit_active_alerts.clear()
