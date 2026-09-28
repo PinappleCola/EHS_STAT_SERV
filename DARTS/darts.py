@@ -3936,7 +3936,7 @@ def update_aircraft(icao, key, value):
                 "squawk": aircraft_state[icao].get("squawk"),
             }
 
-    if previous_state is not None and previous_value != value:
+    if previous_state is not None and current_state is not None and previous_state != current_state:
         for sound_id in collect_aircraft_transition_sound_ids(previous_state, current_state):
             trigger_sound(sound_id)
 

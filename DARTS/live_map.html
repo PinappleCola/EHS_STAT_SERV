@@ -2745,8 +2745,8 @@
             const eventId = String(eventData.event_id);
             if (!rememberPlayedSoundEvent(eventId)) return;
             const soundId = String(eventData.sound_id || '').padStart(2, '0');
-            const url = eventData.url || `/sounds/${soundId}`;
-            const player = getSoundPlayer(url);
+            if (!/^\d{2}$/.test(soundId)) return;
+            const player = getSoundPlayer(`/sounds/${soundId}`);
             player.currentTime = 0;
             player.play().catch((error) => {
                 if (_soundPlaybackWarningShown) return;
