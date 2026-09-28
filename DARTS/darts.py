@@ -2660,10 +2660,7 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
         altitude = data.get("alt")
         on_ground = _trail_on_ground_flag(data)
         callsign = _trail_callsign_or_none(data.get("callsign"))
-        bootstrap_state = None
-        cached_state = trail_runtime_state.get(icao)
-        if not cached_state or not cached_state.get("bootstrap_attempted"):
-            bootstrap_state = _load_last_trail_point_from_store(icao)
+        needs_bootstrap_lookup = False
         with trail_runtime_state_lock:
             recorder_state = trail_runtime_state.setdefault(icao, {
                 "last_point": None,
@@ -2675,10 +2672,25 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
             })
             if not recorder_state.get("bootstrap_attempted"):
                 recorder_state["bootstrap_attempted"] = True
-                if bootstrap_state and recorder_state.get("last_point_ts_ms") is None:
-                    recorder_state["last_point"] = dict(bootstrap_state["last_point"])
-                    recorder_state["last_point_ts_ms"] = int(bootstrap_state["last_point_ts_ms"])
-                    recorder_state["last_observation_ts_ms"] = int(bootstrap_state["last_observation_ts_ms"])
+                needs_bootstrap_lookup = recorder_state.get("last_point_ts_ms") is None
+
+        bootstrap_state = None
+        if needs_bootstrap_lookup:
+            bootstrap_state = _load_last_trail_point_from_store(icao)
+
+        with trail_runtime_state_lock:
+            recorder_state = trail_runtime_state.setdefault(icao, {
+                "last_point": None,
+                "last_point_ts_ms": None,
+                "last_observation_ts_ms": None,
+                "intervals": [],
+                "last_activity_ms": now_ms,
+                "bootstrap_attempted": True,
+            })
+            if bootstrap_state and recorder_state.get("last_point_ts_ms") is None:
+                recorder_state["last_point"] = dict(bootstrap_state["last_point"])
+                recorder_state["last_point_ts_ms"] = int(bootstrap_state["last_point_ts_ms"])
+                recorder_state["last_observation_ts_ms"] = int(bootstrap_state["last_observation_ts_ms"])
             previous_point = recorder_state.get("last_point")
             is_duplicate_point = bool(previous_point and previous_point["lat"] == lat and previous_point["lon"] == lon)
 
