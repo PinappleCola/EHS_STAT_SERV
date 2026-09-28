@@ -36,7 +36,8 @@ class SoundAlertTests(unittest.TestCase):
 
             darts_sound_root = darts_root / "SOUND_FILES"
             repo_sound_root.mkdir(parents=True)
-            darts_sound_root.mkdir(parents=True, exist_ok=True)
+            if not darts_sound_root.exists():
+                darts_sound_root.mkdir(parents=True)
 
             (darts_sound_root / "11_Darts.wav").write_bytes(b"darts")
             (repo_sound_root / "11_Repo.wav").write_bytes(b"repo")
