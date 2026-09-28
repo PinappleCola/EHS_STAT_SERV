@@ -26,22 +26,21 @@ class SoundAlertTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
             darts_root = repo_root / "DARTS"
-            darts_sound_root = darts_root / "SOUND_FILES"
             repo_sound_root = repo_root / "SOUND_FILES"
-            darts_root.mkdir(parents=True)
+            shutil.copytree(Path(DARTS.__file__).resolve().parent, darts_root)
+
+            darts_sound_root = darts_root / "SOUND_FILES"
             repo_sound_root.mkdir(parents=True)
-            darts_sound_root.mkdir(parents=True)
+            darts_sound_root.mkdir(parents=True, exist_ok=True)
 
-            shutil.copy2(Path(DARTS.__file__), darts_root / "darts.py")
-
-            (darts_sound_root / "01_Darts.wav").write_bytes(b"darts")
-            (repo_sound_root / "01_Repo.wav").write_bytes(b"repo")
+            (darts_sound_root / "11_Darts.wav").write_bytes(b"darts")
+            (repo_sound_root / "11_Repo.wav").write_bytes(b"repo")
 
             temp_module = _load_darts_module(darts_root / "darts.py", module_name="darts_under_test_sound_temp")
             discovered, _warnings = temp_module.discover_numbered_sound_files()
 
-            self.assertEqual(discovered["01"]["filename"], "01_Darts.wav")
-            self.assertEqual(Path(discovered["01"]["path"]).resolve().parent, darts_sound_root.resolve())
+            self.assertEqual(discovered["11"]["filename"], "11_Darts.wav")
+            self.assertEqual(Path(discovered["11"]["path"]).resolve().parent, darts_sound_root.resolve())
 
     def test_discover_numbered_sound_files_case_insensitive_and_deterministic(self):
         with tempfile.TemporaryDirectory() as tmpdir:
