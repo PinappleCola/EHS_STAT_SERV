@@ -2718,11 +2718,15 @@
 
         function getSoundPlayer(url) {
             if (!_soundPlayers.has(url)) {
-                const audio = new Audio(url);
-                audio.preload = 'auto';
-                _soundPlayers.set(url, audio);
+                _soundPlayers.set(url, []);
             }
-            return _soundPlayers.get(url);
+            const players = _soundPlayers.get(url);
+            const reusable = players.find((player) => player.paused || player.ended);
+            if (reusable) return reusable;
+            const audio = new Audio(url);
+            audio.preload = 'auto';
+            players.push(audio);
+            return audio;
         }
 
         function rememberPlayedSoundEvent(eventId) {
