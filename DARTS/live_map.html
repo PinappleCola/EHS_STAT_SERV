@@ -2713,6 +2713,9 @@
         let auditAlerts = [];   // server-pushed active alerts: [ { point_name, perimeter, icao, callsign } ]
         const _playedSoundEventIds = new Set();
         const _playedSoundEventOrder = [];
+        const _pendingSoundEvents = [];
+        const SOUND_EVENT_QUEUE_RETENTION_MS = 5000;
+        let _soundPlaybackEnabled = false;
         let _soundPlaybackWarningShown = false;
 
         function rememberPlayedSoundEvent(eventId) {
@@ -2726,19 +2729,7 @@
             return true;
         }
 
-        function playSoundEvent(eventData) {
-            if (!eventData || eventData.event_id === undefined || eventData.event_id === null) return;
-            const eventId = String(eventData.event_id);
-            if (!rememberPlayedSoundEvent(eventId)) return;
-            const soundId = String(eventData.sound_id || '').padStart(2, '0');
-            if (!/^\d{2}$/.test(soundId)) return;
-            let soundUrl = `/sounds/${soundId}`;
-            if (typeof eventData.url === 'string') {
-                const match = eventData.url.match(/^\/sounds\/(\d{2})(?:\.wav)?$/i);
-                if (match && match[1] === soundId) {
-                    soundUrl = eventData.url;
-                }
-            }
+        function playSoundUrl(soundUrl) {
             const player = new Audio(soundUrl);
             player.preload = 'auto';
             player.currentTime = 0;
@@ -2747,6 +2738,46 @@
                 _soundPlaybackWarningShown = true;
                 console.warn('Sound playback is blocked until the browser tab receives a user interaction.', error);
             });
+        }
+
+        function enableSoundPlayback(event) {
+            if (!event.isTrusted || _soundPlaybackEnabled) return;
+            _soundPlaybackEnabled = true;
+            const now = Date.now();
+            while (_pendingSoundEvents.length) {
+                const pending = _pendingSoundEvents.shift();
+                if (now - pending.queuedAt <= SOUND_EVENT_QUEUE_RETENTION_MS) {
+                    playSoundUrl(pending.soundUrl);
+                }
+            }
+        }
+
+        document.addEventListener('pointerdown', enableSoundPlayback, true);
+        document.addEventListener('keydown', enableSoundPlayback, true);
+
+        function playSoundEvent(eventData) {
+            if (!eventData || eventData.event_id === undefined || eventData.event_id === null) return;
+            const eventId = String(eventData.event_id);
+            const soundId = String(eventData.sound_id || '').padStart(2, '0');
+            if (!/^\d{2}$/.test(soundId)) return;
+            if (!rememberPlayedSoundEvent(eventId)) return;
+            let soundUrl = `/sounds/${soundId}`;
+            if (typeof eventData.url === 'string') {
+                const match = eventData.url.match(/^\/sounds\/(\d{2})(?:\.wav)?$/i);
+                if (match && match[1] === soundId) {
+                    soundUrl = eventData.url;
+                }
+            }
+            if (_soundPlaybackEnabled) {
+                playSoundUrl(soundUrl);
+                return;
+            }
+            const now = Date.now();
+            while (_pendingSoundEvents.length && now - _pendingSoundEvents[0].queuedAt > SOUND_EVENT_QUEUE_RETENTION_MS) {
+                _pendingSoundEvents.shift();
+            }
+            if (_pendingSoundEvents.length === 256) _pendingSoundEvents.shift();
+            _pendingSoundEvents.push({ soundUrl, queuedAt: now });
         }
 
         function toggleAuditModal() {
