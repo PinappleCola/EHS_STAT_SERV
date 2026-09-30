@@ -2714,6 +2714,7 @@
         const _playedSoundEventIds = new Set();
         const _playedSoundEventOrder = [];
         const _pendingSoundEvents = [];
+        const _activeSoundPlayers = new Set();
         const SOUND_EVENT_QUEUE_RETENTION_MS = 5000;
         let _soundPlaybackEnabled = false;
         let _soundPlaybackWarningShown = false;
@@ -2732,8 +2733,13 @@
         function playSoundUrl(soundUrl) {
             const player = new Audio(soundUrl);
             player.preload = 'auto';
-            player.currentTime = 0;
-            player.play().catch((error) => {
+            _activeSoundPlayers.add(player);
+            if (typeof player.addEventListener === 'function') {
+                const releasePlayer = () => _activeSoundPlayers.delete(player);
+                player.addEventListener('ended', releasePlayer, { once: true });
+                player.addEventListener('error', releasePlayer, { once: true });
+            }
+            Promise.resolve(player.play()).catch((error) => {
                 if (_soundPlaybackWarningShown) return;
                 _soundPlaybackWarningShown = true;
                 console.warn('Sound playback is blocked until the browser tab receives a user interaction.', error);
