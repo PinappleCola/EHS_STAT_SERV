@@ -34,7 +34,7 @@ const context = {
     },
 };
 vm.runInNewContext(
-    `${liveMap.slice(start, end)}\nglobalThis.soundTestApi = { playSoundEvent };`,
+    `${liveMap.slice(start, end)}\nglobalThis.soundTestApi = { playSoundEvent, activeSoundPlayers: _activeSoundPlayers };`,
     context
 );
 
@@ -44,6 +44,7 @@ listeners.pointerdown({ isTrusted: false });
 assert.deepStrictEqual(playedSounds, []);
 listeners.pointerdown({ isTrusted: true });
 assert.deepStrictEqual(playedSounds, ['/sounds/01']);
+assert.strictEqual(context.soundTestApi.activeSoundPlayers.size, 1);
 
 context.soundTestApi.playSoundEvent({ event_id: 'session:1', sound_id: '01', url: '/sounds/01' });
 context.soundTestApi.playSoundEvent({ event_id: 'session:2', sound_id: '01', url: '/sounds/01' });
