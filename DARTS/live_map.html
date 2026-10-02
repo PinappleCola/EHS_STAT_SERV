@@ -2781,19 +2781,37 @@
             return true;
         }
 
+        function resolveSoundUrl(soundUrl) {
+            return soundUrl.startsWith('/') ? `${HTTP_API}${soundUrl}` : soundUrl;
+        }
+
         function playSoundUrl(soundUrl) {
-            const player = new Audio(soundUrl);
+            const resolvedUrl = resolveSoundUrl(soundUrl);
+            const player = new Audio(resolvedUrl);
             player.preload = 'auto';
             _activeSoundPlayers.add(player);
+            let failureLogged = false;
+            const logSoundFailure = (error) => {
+                if (failureLogged) return;
+                failureLogged = true;
+                console.warn(`Sound playback failed for ${resolvedUrl}`, error);
+            };
             if (typeof player.addEventListener === 'function') {
                 const releasePlayer = () => _activeSoundPlayers.delete(player);
                 player.addEventListener('ended', releasePlayer, { once: true });
-                player.addEventListener('error', releasePlayer, { once: true });
+                player.addEventListener('error', () => {
+                    releasePlayer();
+                    logSoundFailure(player.error);
+                }, { once: true });
             }
             Promise.resolve(player.play()).catch((error) => {
-                if (_soundPlaybackWarningShown) return;
-                _soundPlaybackWarningShown = true;
-                console.warn('Sound playback is blocked until the browser tab receives a user interaction.', error);
+                if (error && error.name === 'NotAllowedError') {
+                    if (_soundPlaybackWarningShown) return;
+                    _soundPlaybackWarningShown = true;
+                    console.warn('Sound playback is blocked until the browser tab receives a user interaction.', error);
+                    return;
+                }
+                logSoundFailure(error);
             });
         }
 
@@ -3030,4 +3048,4 @@
 
     </script>
 </body>
-</html>
+</html>
