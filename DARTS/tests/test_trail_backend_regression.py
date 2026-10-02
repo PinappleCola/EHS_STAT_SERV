@@ -3,7 +3,9 @@ import importlib.util
 import sqlite3
 import threading
 import unittest
+import json
 from pathlib import Path
+from unittest.mock import patch
 
 
 def _load_darts_module():
@@ -182,6 +184,67 @@ class TrailBackendRegressionTests(unittest.TestCase):
         rows = DARTS.query_trail_rows(ts - 1, ts + 1, icao=icao)
         self.assertEqual(rows[0][10], "gap_break")
         self.assertIsNone(rows[1][10])
+
+    def test_3d_export_preserves_altitudes_and_2d_properties_across_breaks(self):
+        icao = "ALT001"
+        t0 = 7_000_000
+        altitudes = ["-120", "GROUND", None, "", "oops", "NaN", "Infinity", "123.5"]
+        records = [
+            (icao, t0 + i * 1000, -33.0 + i * 0.0001, 151.0 + i * 0.0001,
+             altitude, 0, "ALT", "RX", "A", None,
+             DARTS.make_trail_event_key(icao, t0 + i * 1000, -33.0 + i * 0.0001,
+                                        151.0 + i * 0.0001, None))
+            for i, altitude in enumerate(altitudes)
+        ]
+        marker_time = t0 + 8_000
+        records.append((icao, marker_time, None, None, None, None, "ALT", "RX", "A",
+                        "gap_break", DARTS.make_trail_event_key(icao, marker_time, None, None, "gap_break")))
+        for i in range(2):
+            ts = marker_time + i * 1000
+            records.append((icao, ts, -33.001 - i * 0.0001, 151.001 + i * 0.0001,
+                            "-45", 0, "ALT", "RX", "A", None,
+                            DARTS.make_trail_event_key(icao, ts, -33.001 - i * 0.0001,
+                                                       151.001 + i * 0.0001, None)))
+        self._persist(records)
+        rows = DARTS.query_trail_rows(t0, marker_time + 1000, icao=icao, apply_backstop=False)
+        two_d = DARTS.build_geojson_from_trail_rows(rows, apply_backstop=True)
+        three_d = DARTS.build_geojson3d_from_trail_rows(rows, apply_backstop=True)
+        self.assertEqual(three_d["type"], "FeatureCollection")
+        self.assertEqual(len(three_d["features"]), 2)
+        self.assertEqual(three_d["features"][0]["geometry"]["coordinates"],
+                         [[row[4], row[3], z] for row, z in zip(rows[:8], [-120, 0, 0, 0, 0, 0, 0, 123.5])])
+        for feature_2d, feature_3d in zip(two_d["features"], three_d["features"]):
+            self.assertEqual(feature_3d["geometry"]["type"], "LineString")
+            self.assertEqual([point[:2] for point in feature_3d["geometry"]["coordinates"]],
+                             feature_2d["geometry"]["coordinates"])
+            self.assertEqual({k: v for k, v in feature_3d["properties"].items()
+                              if k not in ("dimensions", "altitude_units")}, feature_2d["properties"])
+            self.assertEqual(feature_3d["properties"]["dimensions"], 3)
+            self.assertEqual(feature_3d["properties"]["altitude_units"], "ft")
+        self.assertEqual(three_d["features"][0]["properties"]["point_altitudes"], altitudes)
+        self.assertEqual(three_d["features"][0]["properties"]["end_break_reason"], "gap_break")
+        self.assertEqual(three_d["features"][1]["properties"]["break_reason"], "gap_break")
+        self.assertEqual([point[2] for point in three_d["features"][1]["geometry"]["coordinates"]], [-45, -45])
+
+    def test_3d_export_handler_reads_rows_and_sets_download_headers(self):
+        class Response:
+            def _parse_trail_range(self, query):
+                return 1000, 2000, "ALT001"
+
+            def _send_bytes(self, body, **kwargs):
+                self.body = body
+                self.kwargs = kwargs
+
+        row = (1, "ALT001", 1000, -33.0, 151.0, "-7", 0, "ALT", "RX", "A", None)
+        row2 = (2, "ALT001", 2000, -33.0001, 151.0001, "GROUND", 1, "ALT", "RX", "A", None)
+        response = Response()
+        with patch.object(DARTS, "query_trail_rows", return_value=[row, row2]) as query:
+            DARTS.DARTSAPIHandler._handle_export_trails_geojson_3d(response, {})
+        query.assert_called_once_with(1000, 2000, icao="ALT001", apply_backstop=False)
+        self.assertEqual(response.kwargs["content_type"], "application/geo+json")
+        self.assertIn("_1000_2000_3d.geojson", response.kwargs["extra_headers"]["Content-Disposition"])
+        self.assertEqual(json.loads(response.body)["features"][0]["geometry"]["coordinates"],
+                         [[151.0, -33.0, -7], [151.0001, -33.0001, 0]])
 
 
 if __name__ == "__main__":
