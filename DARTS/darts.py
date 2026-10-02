@@ -1628,6 +1628,27 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             },
         )
 
+    def _handle_export_trails_geojson_3d(self, query):
+        try:
+            from_ms, to_ms, icao = self._parse_trail_range(query)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+
+        payload = build_geojson3d_from_trail_rows(
+            query_trail_rows(from_ms, to_ms, icao=icao, apply_backstop=False),
+            apply_backstop=True,
+        )
+        trail_cfg = get_trail_config_snapshot()
+        filename = f'{trail_cfg["export"]["filename_prefix"]}_{from_ms}_{to_ms}_3d.geojson'
+        self._send_bytes(
+            json.dumps(payload).encode("utf-8"),
+            content_type="application/geo+json",
+            extra_headers={
+                "Content-Disposition": f'{trail_cfg["export"]["content_disposition"]}; filename="{filename}"'
+            },
+        )
+
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -1693,6 +1714,8 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._handle_get_trails(query)
         elif path == "/api/trails/export.geojson":
             self._handle_export_trails_geojson(query)
+        elif path == "/api/trails/export3d.geojson":
+            self._handle_export_trails_geojson_3d(query)
         elif path == "/api/trail-rules":
             cfg = get_trail_config_snapshot()
             cfg["persistence"]["db_path"] = get_trail_db_path()
@@ -3044,6 +3067,91 @@ def build_geojson_from_trail_rows(rows, apply_backstop=False):
                     "point_on_ground": [pt["on_ground"] for pt in segment_points],
                     "break_reason": segment_meta.get("break_reason"),
                     "end_break_reason": end_break_reason,
+                },
+            })
+        segment_points = []
+        segment_meta = {}
+
+    for _row_id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type in rows:
+        if current_icao is not None and icao != current_icao:
+            flush_segment()
+            pending_break_reason = None
+        current_icao = icao
+        if marker_type:
+            flush_segment(marker_type)
+            pending_break_reason = marker_type
+            continue
+        if lat is None or lon is None:
+            continue
+        if not segment_points:
+            segment_meta = {
+                "icao": icao,
+                "callsign": callsign,
+                "source_label": source_label,
+                "receiver_id": receiver_id,
+                "break_reason": pending_break_reason,
+            }
+            pending_break_reason = None
+        segment_points.append({
+            "ts_ms": int(ts_ms),
+            "lat": float(lat),
+            "lon": float(lon),
+            "altitude": altitude,
+            "on_ground": on_ground,
+        })
+
+    flush_segment()
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+
+def build_geojson3d_from_trail_rows(rows, apply_backstop=False):
+    # Experimental export: keep the 2D builder independent and preserve raw barometric feet.
+    if apply_backstop:
+        rows = apply_trail_break_backstop(rows)
+    features = []
+    current_icao = None
+    segment_points = []
+    segment_meta = {}
+    pending_break_reason = None
+
+    def altitude_z(raw_altitude):
+        try:
+            value = float(raw_altitude)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        return value if math.isfinite(value) else 0
+
+    def flush_segment(end_break_reason=None):
+        nonlocal segment_points, segment_meta
+        if len(segment_points) >= 2:
+            start_time = segment_points[0]["ts_ms"]
+            end_time = segment_points[-1]["ts_ms"]
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[pt["lon"], pt["lat"], altitude_z(pt["altitude"])] for pt in segment_points],
+                },
+                "properties": {
+                    "icao": segment_meta.get("icao"),
+                    "callsign": segment_meta.get("callsign"),
+                    "source_label": segment_meta.get("source_label"),
+                    "receiver_id": segment_meta.get("receiver_id"),
+                    "start_time_ms": start_time,
+                    "end_time_ms": end_time,
+                    "start_time": _ms_to_rfc3339(start_time),
+                    "end_time": _ms_to_rfc3339(end_time),
+                    "point_count": len(segment_points),
+                    "point_times_ms": [pt["ts_ms"] for pt in segment_points],
+                    "point_altitudes": [pt["altitude"] for pt in segment_points],
+                    "point_on_ground": [pt["on_ground"] for pt in segment_points],
+                    "break_reason": segment_meta.get("break_reason"),
+                    "end_break_reason": end_break_reason,
+                    "dimensions": 3,
+                    "altitude_units": "ft",
                 },
             })
         segment_points = []

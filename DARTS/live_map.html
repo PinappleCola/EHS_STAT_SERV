@@ -230,6 +230,7 @@
             <button id="btn-lock" class="btn-action">SNAP CURRENT LOC</button>
             <button id="btn-clean-snap" class="btn-action">CLEAN SCREENSHOT</button>
             <button id="btn-export-geojson" class="btn-action btn-action-alt">EXPORT GEOJSON</button>
+            <button id="btn-export-geojson-3d" class="btn-action btn-action-alt">EXPORT 3D</button>
             <button onclick="openTagConfig()" class="btn-action" title="Open data tag field configuration">DATA TAGS</button>
             <button onclick="showPerfOverlay=!showPerfOverlay" class="btn-action" title="Toggle performance overlay">PERF</button>
             <button id="btn-intent-coord" class="btn-action btn-toggle" onclick="toggleIntentCoord()" title="Show FMS intent waypoint overlay (BDS 4,2)">INTENT COORD</button>
@@ -1478,6 +1479,56 @@
             } catch (err) {
                 console.warn('GeoJSON export failed:', err);
                 alert('Unable to export trail GeoJSON right now.');
+            }
+        });
+
+        // Experimental 3D export is intentionally separate from the existing 2D download.
+        async function exportTrail3DGeoJSON() {
+            const nowMs = Date.now();
+            const { fromMs, toMs } = getTrailRangeWindow(nowMs);
+            const params = new URLSearchParams({ from: String(fromMs), to: String(toMs) });
+            const response = await fetch(`${HTTP_API}/api/trails/export3d.geojson?${params.toString()}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const blob = await response.blob();
+            const disposition = response.headers.get('content-disposition') || '';
+            const filenameStarMatch = disposition.match(/filename\*\s*=\s*([^;]+)/i);
+            const filenameMatch = disposition.match(/filename\s*=\s*"?([^";]+)"?/i);
+            const fallbackName = `darts_trails_${fromMs}_${toMs}_3d.geojson`;
+            const extractDispositionFilename = () => {
+                if (filenameStarMatch && filenameStarMatch[1]) {
+                    const rawValue = filenameStarMatch[1].trim();
+                    const encodedPart = rawValue.includes("''") ? rawValue.split("''").slice(1).join("''") : rawValue;
+                    const cleaned = encodedPart.replace(/^"(.*)"$/, '$1');
+                    try { return decodeURIComponent(cleaned); } catch (_) { return cleaned; }
+                }
+                if (filenameMatch && filenameMatch[1]) return filenameMatch[1];
+                return '';
+            };
+            const sanitizeDownloadFilename = (name, fallback) => {
+                const raw = String(name || '');
+                const leafName = raw.split('/').pop().split('\\').pop();
+                const safe = leafName.replace(/[\u0000-\u001f\u007f]/g, '').replace(/[<>:"/\\|?*]/g, '_').trim();
+                if (!safe || safe === '.' || safe === '..') return fallback;
+                return safe;
+            };
+            const downloadName = sanitizeDownloadFilename(extractDispositionFilename(), fallbackName);
+            const url = URL.createObjectURL(blob);
+            try {
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = downloadName;
+                a.click();
+            } finally {
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }
+        }
+
+        document.getElementById('btn-export-geojson-3d').addEventListener('click', async () => {
+            try {
+                await exportTrail3DGeoJSON();
+            } catch (err) {
+                console.warn('3D GeoJSON export failed:', err);
+                alert('Unable to export trail 3D GeoJSON right now.');
             }
         });
 
