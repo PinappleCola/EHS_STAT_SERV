@@ -26,6 +26,6 @@ Behavior notes:
 
 - Missing files are silent and do not fail the application.
 - If multiple files share the same two-digit prefix, DARTS warns in the server console and uses the lexicographically first filename deterministically.
-- Playback occurs in the browser-based live map via the existing DARTS HTTP/WebSocket runtime, fetched from `/sounds/XX`.
+- Playback occurs in the browser-based live map via the existing DARTS HTTP/WebSocket runtime, fetched from `http://localhost:8766/sounds/XX` (the fixed `HTTP_API` server, regardless of how the map page is opened).
 - Browsers may block audio until the page receives a user interaction.
 - Use WAV files only. Short clips under five seconds are recommended to keep transfer, memory, and startup costs modest.
