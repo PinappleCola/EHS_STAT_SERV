@@ -109,3 +109,11 @@ All fields are stored in the `aircraft_state` dictionary, emitted over WebSocket
 | Sys Clock | `data_age_heading` | Age of last heading update | s | virtual | `1.2` | `1.2` | `1.2s` |
 | Sys Clock | `data_age_position` | Age of last position update | s | virtual | `0.8` | `0.8` | `0.8s` |
 | ADSBee Beast | `rssi_dbfs` | Received signal strength | dBFS | 8 bits | `-22.4` | `-22.4 dBFS` | `-22.4 dBFS` |
+
+## Static map GeoJSON sources
+
+- `airspace.geojson` contains landmarks, runways, and other non-waypoint geometry.
+- `waypoints_ifr.geojson` and `waypoints_vfr.geojson` contain classified waypoint FeatureCollections. Waypoint features should have `icon: "WAYPOINT"`, `flight_rules` matching their file (`IFR` or `VFR`), and a stable `fix_id`/`canonical_id` when the same fix exists in both datasets.
+- `audit_points.geojson` contains `AUDIT` Point features and retains their stable names because audit radii and colours are keyed by name.
+- `waypoints_unclassified.geojson` is a compatibility holding source for legacy waypoint points with no authoritative IFR/VFR classification. Assign their category from trusted data before moving them into a classified file; do not infer the classification from waypoint name or geometry.
+- The live map loads these collections from `/api/map-data`. The WebSocket carries a map-data revision, not the static GeoJSON on every aircraft update. Use the map refresh control after external file edits.
