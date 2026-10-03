@@ -2286,6 +2286,16 @@ def _read_feature_collection(path):
         geometry = feature.get("geometry")
         if not isinstance(geometry, dict) or geometry.get("type") not in {"Point", "LineString", "Polygon", "MultiPoint", "MultiLineString", "MultiPolygon"}:
             raise ValueError(f"{os.path.basename(path)} contains an unsupported geometry")
+        if geometry["type"] == "Point":
+            coordinates = geometry.get("coordinates")
+            if not isinstance(coordinates, list) or len(coordinates) < 2:
+                raise ValueError(f"{os.path.basename(path)} contains a Point without coordinates")
+            try:
+                lon, lat = float(coordinates[0]), float(coordinates[1])
+            except (TypeError, ValueError):
+                raise ValueError(f"{os.path.basename(path)} contains non-numeric Point coordinates")
+            if not (math.isfinite(lon) and math.isfinite(lat) and -180 <= lon <= 180 and -90 <= lat <= 90):
+                raise ValueError(f"{os.path.basename(path)} contains out-of-range Point coordinates")
         feature.setdefault("properties", {})
         if not isinstance(feature["properties"], dict):
             raise ValueError(f"{os.path.basename(path)} feature properties must be an object")
@@ -2302,6 +2312,7 @@ def _map_source_for_waypoint(feature):
 
 def _ensure_map_feature_ids(sources):
     for source, collection in sources.items():
+        used_ids = set()
         for feature in collection["features"]:
             properties = feature.setdefault("properties", {})
             if not properties.get("feature_id"):
@@ -2309,11 +2320,20 @@ def _ensure_map_feature_ids(sources):
                 geometry = json.dumps(feature.get("geometry", {}), sort_keys=True, separators=(",", ":"))
                 digest = hashlib.sha1(f"{source}|{identity}|{geometry}".encode("utf-8")).hexdigest()[:16]
                 properties["feature_id"] = f"{source}:{digest}"
+            base_feature_id = str(properties["feature_id"])
+            feature_id = base_feature_id
+            duplicate_index = 2
+            while feature_id in used_ids:
+                feature_id = f"{base_feature_id}:{duplicate_index}"
+                duplicate_index += 1
+            properties["feature_id"] = feature_id
+            used_ids.add(feature_id)
             geometry_obj = feature.get("geometry") or {}
             coords = geometry_obj.get("coordinates") or []
-            category = str(properties.get("icon") or properties.get("type") or properties.get("id") or "").upper()
-            if geometry_obj.get("type") == "Point" and category in {"WAYPOINT", "WPT"} and len(coords) >= 2:
+            if source.endswith("_waypoints") and geometry_obj.get("type") == "Point" and len(coords) >= 2:
                 source_label = source.removesuffix("_waypoints")
+                properties["icon"] = "WAYPOINT"
+                properties["flight_rules"] = source_label.upper()
                 fix_id = properties.get("fix_id") or properties.get("canonical_id")
                 if fix_id:
                     properties["scoring_key"] = f"fix:{str(fix_id).strip().upper()}"
@@ -2322,6 +2342,8 @@ def _ensure_map_feature_ids(sources):
                     coord_token = ",".join(f"{float(value):.6f}" for value in coords[:2])
                     score_digest = hashlib.sha1(f"{name}|{coord_token}".encode("utf-8")).hexdigest()[:12]
                     properties["scoring_key"] = f"{source_label}:{name}:{score_digest}"
+            elif source == "audit_points" and geometry_obj.get("type") == "Point":
+                properties["icon"] = "AUDIT"
 
 
 def _write_map_source(source):
@@ -2728,12 +2750,7 @@ with db_lock:
                           SCORING_CALLSIGN TEXT,
                           ALT TEXT,
                           HEADING TEXT,
-                          TAS TEXT,
-                          WAYPOINT_KEY TEXT)''')
-    db_cursor.execute("PRAGMA table_info(WAYPOINT_SCORING)")
-    waypoint_scoring_columns = {row[1] for row in db_cursor.fetchall()}
-    if "WAYPOINT_KEY" not in waypoint_scoring_columns:
-        db_cursor.execute("ALTER TABLE WAYPOINT_SCORING ADD COLUMN WAYPOINT_KEY TEXT")
+                          TAS TEXT)''')
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_waypoint_scoring_time ON WAYPOINT_SCORING(TIME)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_waypoint_scoring_waypoint ON WAYPOINT_SCORING(WAYPOINT_NAME)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_waypoint_scoring_icao ON WAYPOINT_SCORING(SCORING_ICAO)")
@@ -3945,6 +3962,10 @@ def archivist_loop():
                     if reg_updates: db_cursor.executemany("UPDATE aircraft_registry SET latest_callsign=?, airline=?, last_lat=?, last_lon=?, total_spots=? WHERE icao=?", reg_updates)
                     if telemetry_batch: db_cursor.executemany("INSERT INTO telemetry (ts, icao, field, value) VALUES (?, ?, ?, ?)", telemetry_batch)
                     if waypoint_scoring_pending:
+                        db_cursor.execute("PRAGMA table_info(WAYPOINT_SCORING)")
+                        waypoint_scoring_columns = {row[1] for row in db_cursor.fetchall()}
+                        if "WAYPOINT_KEY" not in waypoint_scoring_columns:
+                            db_cursor.execute("ALTER TABLE WAYPOINT_SCORING ADD COLUMN WAYPOINT_KEY TEXT")
                         db_cursor.executemany(
                             "INSERT INTO WAYPOINT_SCORING (TIME, WAYPOINT_NAME, OUTER_OR_INNER, WAYPOINT_TOTAL_POINTS, SCORING_ICAO, SCORING_CALLSIGN, ALT, HEADING, TAS, WAYPOINT_KEY) "
                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

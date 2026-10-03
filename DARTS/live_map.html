@@ -1023,24 +1023,27 @@
         document.getElementById('btn-db').addEventListener('click', () => { populateDbTable(); dbModal.style.display = 'flex'; });
         document.getElementById('btn-close-db').addEventListener('click', () => dbModal.style.display = 'none');
 
-        window.sortTable = function(colIdx) {
-            if (sortCol === colIdx) { sortAsc = !sortAsc; }
-            else { sortCol = colIdx; sortAsc = true; }
-            
-            const entries = getMapFeatureEntries().sort((left, right) => {
+        function sortMapFeatureEntries(entries) {
+            if (sortCol < 0) return entries;
+            return entries.sort((left, right) => {
                 const a = left.feature, b = right.feature;
-                let valA = '', valB = '';
-                const pA = a.properties || {}; const gA = a.geometry || {};
-                const pB = b.properties || {}; const gB = b.geometry || {};
-                
-                if (colIdx === 0) { valA = gA.type || ''; valB = gB.type || ''; }
-                else if (colIdx === 1) { valA = pA.name || ''; valB = pB.name || ''; }
-                else if (colIdx === 2) { valA = left.source + ' ' + (pA.icon || pA.type || ''); valB = right.source + ' ' + (pB.icon || pB.type || ''); }
-                
+                const pA = a.properties || {}, gA = a.geometry || {};
+                const pB = b.properties || {}, gB = b.geometry || {};
+                const value = (entry, properties, geometry) => {
+                    if (sortCol === 0) return geometry.type || '';
+                    if (sortCol === 1) return properties.name || '';
+                    return `${entry.source} ${properties.icon || properties.type || ''}`;
+                };
+                const valA = value(left, pA, gA), valB = value(right, pB, gB);
                 if (valA < valB) return sortAsc ? -1 : 1;
                 if (valA > valB) return sortAsc ? 1 : -1;
                 return 0;
             });
+        }
+
+        window.sortTable = function(colIdx) {
+            if (sortCol === colIdx) { sortAsc = !sortAsc; }
+            else { sortCol = colIdx; sortAsc = true; }
             populateDbTable();
         };
 
@@ -1084,7 +1087,7 @@
             const tbody = document.getElementById('db-tbody');
             tbody.innerHTML = '';
             
-            const entries = getMapFeatureEntries();
+            const entries = sortMapFeatureEntries(getMapFeatureEntries());
             if (entries.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;">No Spatial Data Available in Memory.</td></tr>`;
                 return;
@@ -1117,7 +1120,7 @@
         }
 
         window.maskFeature = function(idx) {
-            const entry = getMapFeatureEntries()[idx];
+            const entry = sortMapFeatureEntries(getMapFeatureEntries())[idx];
             if (!entry) return;
             const feature = entry.feature;
             const nowMasked = !feature.properties.masked;
