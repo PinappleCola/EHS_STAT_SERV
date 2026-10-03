@@ -16,6 +16,7 @@ import threading
 import asyncio
 import websockets
 import binascii
+import hashlib
 import sqlite3
 import queue
 import re
@@ -35,6 +36,13 @@ LIVE_MAP_PATH = os.path.join(BASE_DIR, "live_map.html")
 LIVE_GRID_PATH = os.path.join(BASE_DIR, "live_grid.html")
 SOUND_FILES_DIR = os.path.join(BASE_DIR, "SOUND_FILES")
 SOUND_FILE_PATTERN = re.compile(r"^(?P<sound_id>\d{2})_(?P<label>.+)\.wav$", re.IGNORECASE)
+AIRSPACE_GEOJSON_PATH = os.path.join(BASE_DIR, "airspace.geojson")
+WAYPOINT_GEOJSON_PATHS = {
+    "IFR": os.path.join(BASE_DIR, "waypoints_ifr.geojson"),
+    "VFR": os.path.join(BASE_DIR, "waypoints_vfr.geojson"),
+    "UNCLASSIFIED": os.path.join(BASE_DIR, "waypoints_unclassified.geojson"),
+}
+AUDIT_GEOJSON_PATH = os.path.join(BASE_DIR, "audit_points.geojson")
 
 try:
     import pyModeS as pms
@@ -1661,6 +1669,8 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/fields":
             # Return the complete field registry so frontends can build column pickers
             self._send_json(FIELD_REGISTRY)
+        elif path == "/api/map-data":
+            self._send_json(get_map_data_snapshot())
         elif path in ("/", "/map"):
             self._serve_text_file(LIVE_MAP_PATH, content_type="text/html; charset=utf-8")
         elif path == "/grid":
@@ -2234,34 +2244,163 @@ def resolve_airline(callsign):
     return "----"
 
 # ==========================================
-# --- GEOJSON AIRSPACE MATRIX            ---
+# --- GEOJSON MAP DATA SOURCES           ---
 # ==========================================
-AIRSPACE_GEOJSON = {
-    "type": "FeatureCollection",
-    "features": []
+MAP_DATA_LOCK = threading.RLock()
+MAP_DATA_REVISION = 0
+MAP_GEOJSON = {
+    "airspace": {"type": "FeatureCollection", "features": []},
+    "ifr_waypoints": {"type": "FeatureCollection", "features": []},
+    "vfr_waypoints": {"type": "FeatureCollection", "features": []},
+    "unclassified_waypoints": {"type": "FeatureCollection", "features": []},
+    "audit_points": {"type": "FeatureCollection", "features": []},
+}
+# Kept as an alias for code paths that still refer to airspace during migration.
+AIRSPACE_GEOJSON = MAP_GEOJSON["airspace"]
+MAP_SOURCE_PATHS = {
+    "airspace": AIRSPACE_GEOJSON_PATH,
+    "ifr_waypoints": WAYPOINT_GEOJSON_PATHS["IFR"],
+    "vfr_waypoints": WAYPOINT_GEOJSON_PATHS["VFR"],
+    "unclassified_waypoints": WAYPOINT_GEOJSON_PATHS["UNCLASSIFIED"],
+    "audit_points": AUDIT_GEOJSON_PATH,
 }
 
-def load_airspace():
-    global AIRSPACE_GEOJSON
+
+def _empty_feature_collection():
+    return {"type": "FeatureCollection", "features": []}
+
+
+def _read_feature_collection(path):
+    if not os.path.exists(path):
+        return _empty_feature_collection()
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict) or payload.get("type") != "FeatureCollection":
+        raise ValueError(f"{os.path.basename(path)} must be a GeoJSON FeatureCollection")
+    features = payload.get("features")
+    if not isinstance(features, list):
+        raise ValueError(f"{os.path.basename(path)} must contain a features array")
+    for feature in features:
+        if not isinstance(feature, dict) or feature.get("type") != "Feature":
+            raise ValueError(f"{os.path.basename(path)} contains an invalid feature")
+        geometry = feature.get("geometry")
+        if not isinstance(geometry, dict) or geometry.get("type") not in {"Point", "LineString", "Polygon", "MultiPoint", "MultiLineString", "MultiPolygon"}:
+            raise ValueError(f"{os.path.basename(path)} contains an unsupported geometry")
+        feature.setdefault("properties", {})
+        if not isinstance(feature["properties"], dict):
+            raise ValueError(f"{os.path.basename(path)} feature properties must be an object")
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _map_source_for_waypoint(feature):
+    properties = feature.get("properties") or {}
+    declared = str(properties.get("flight_rules") or properties.get("source") or "").strip().upper()
+    if declared in {"IFR", "VFR"}:
+        return f"{declared.lower()}_waypoints"
+    return "unclassified_waypoints"
+
+
+def _ensure_map_feature_ids(sources):
+    for source, collection in sources.items():
+        for feature in collection["features"]:
+            properties = feature.setdefault("properties", {})
+            if not properties.get("feature_id"):
+                identity = properties.get("id") or properties.get("name") or ""
+                geometry = json.dumps(feature.get("geometry", {}), sort_keys=True, separators=(",", ":"))
+                digest = hashlib.sha1(f"{source}|{identity}|{geometry}".encode("utf-8")).hexdigest()[:16]
+                properties["feature_id"] = f"{source}:{digest}"
+            geometry_obj = feature.get("geometry") or {}
+            coords = geometry_obj.get("coordinates") or []
+            category = str(properties.get("icon") or properties.get("type") or properties.get("id") or "").upper()
+            if geometry_obj.get("type") == "Point" and category in {"WAYPOINT", "WPT"} and len(coords) >= 2:
+                source_label = source.removesuffix("_waypoints")
+                fix_id = properties.get("fix_id") or properties.get("canonical_id")
+                if fix_id:
+                    properties["scoring_key"] = f"fix:{str(fix_id).strip().upper()}"
+                else:
+                    name = str(properties.get("name") or properties.get("id") or "UNNAMED").strip().upper()
+                    coord_token = ",".join(f"{float(value):.6f}" for value in coords[:2])
+                    score_digest = hashlib.sha1(f"{name}|{coord_token}".encode("utf-8")).hexdigest()[:12]
+                    properties["scoring_key"] = f"{source_label}:{name}:{score_digest}"
+
+
+def _write_map_source(source):
+    path = MAP_SOURCE_PATHS[source]
+    temp_path = f"{path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(MAP_GEOJSON[source], handle, indent=4)
+    os.replace(temp_path, path)
+
+
+def load_map_data():
+    """Load all spatial sources and migrate legacy waypoint/audit features safely."""
+    global AIRSPACE_GEOJSON, MAP_DATA_REVISION, MAP_GEOJSON
     iso_time = get_iso_time()
     try:
-        if os.path.exists("airspace.geojson"):
-            with open("airspace.geojson", "r") as f:
-                AIRSPACE_GEOJSON = json.load(f)
-            features_count = len(AIRSPACE_GEOJSON.get("features", []))
-            print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.GREEN}GeoJSON Airspace Loaded: {features_count} geometry features locked in RAM.{ANSI.RESET}")
-        else:
-            print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.YELLOW}WARNING: 'airspace.geojson' not found. Initializing blank FeatureCollection.{ANSI.RESET}")
-            save_airspace()
-    except Exception as e:
-        print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.RED}Error loading 'airspace.geojson': {e}{ANSI.RESET}")
+        loaded = {source: _read_feature_collection(path) for source, path in MAP_SOURCE_PATHS.items()}
+        legacy_airspace = loaded["airspace"]["features"]
+        kept_airspace = []
+        migrated = False
+        for feature in legacy_airspace:
+            properties = feature.get("properties") or {}
+            geometry = feature.get("geometry") or {}
+            category = str(properties.get("icon") or properties.get("type") or properties.get("id") or "").strip().upper()
+            if geometry.get("type") == "Point" and category == "AUDIT":
+                loaded["audit_points"]["features"].append(feature)
+                migrated = True
+            elif geometry.get("type") == "Point" and category in {"WAYPOINT", "WPT"}:
+                target = _map_source_for_waypoint(feature)
+                loaded[target]["features"].append(feature)
+                migrated = True
+            else:
+                kept_airspace.append(feature)
+
+        loaded["airspace"]["features"] = kept_airspace
+        _ensure_map_feature_ids(loaded)
+        with MAP_DATA_LOCK:
+            MAP_GEOJSON = loaded
+            AIRSPACE_GEOJSON = MAP_GEOJSON["airspace"]
+            MAP_DATA_REVISION += 1
+            revision = MAP_DATA_REVISION
+
+        if migrated:
+            with MAP_DATA_LOCK:
+                for source in MAP_SOURCE_PATHS:
+                    _write_map_source(source)
+            print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.YELLOW}Migrated legacy waypoint/audit features; waypoints without IFR/VFR metadata remain unclassified.{ANSI.RESET}")
+        counts = {source: len(collection["features"]) for source, collection in loaded.items()}
+        print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.GREEN}Map GeoJSON sources loaded (revision {revision}): {counts}.{ANSI.RESET}")
+    except Exception as exc:
+        print(f"{ANSI.DIM}[{iso_time}]{ANSI.RESET} {ANSI.RED}Error loading map GeoJSON sources: {exc}{ANSI.RESET}")
+
+
+def save_map_source(source):
+    if source not in MAP_SOURCE_PATHS:
+        raise ValueError(f"Unknown map data source: {source}")
+    with MAP_DATA_LOCK:
+        _write_map_source(source)
+        global MAP_DATA_REVISION
+        MAP_DATA_REVISION += 1
+
 
 def save_airspace():
     try:
-        with open("airspace.geojson", "w") as f:
-            json.dump(AIRSPACE_GEOJSON, f, indent=4)
-    except Exception as e:
-        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}Error saving 'airspace.geojson': {e}{ANSI.RESET}")
+        save_map_source("airspace")
+    except Exception as exc:
+        print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}Error saving 'airspace.geojson': {exc}{ANSI.RESET}")
+
+
+def get_map_data_snapshot():
+    with MAP_DATA_LOCK:
+        return {
+            "revision": MAP_DATA_REVISION,
+            "sources": copy.deepcopy(MAP_GEOJSON),
+        }
+
+
+def load_airspace():
+    """Compatibility wrapper; reload every static spatial source together."""
+    load_map_data()
 
 # --- State Engines & Queues ---
 aircraft_state = {}
@@ -2589,7 +2728,12 @@ with db_lock:
                           SCORING_CALLSIGN TEXT,
                           ALT TEXT,
                           HEADING TEXT,
-                          TAS TEXT)''')
+                          TAS TEXT,
+                          WAYPOINT_KEY TEXT)''')
+    db_cursor.execute("PRAGMA table_info(WAYPOINT_SCORING)")
+    waypoint_scoring_columns = {row[1] for row in db_cursor.fetchall()}
+    if "WAYPOINT_KEY" not in waypoint_scoring_columns:
+        db_cursor.execute("ALTER TABLE WAYPOINT_SCORING ADD COLUMN WAYPOINT_KEY TEXT")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_waypoint_scoring_time ON WAYPOINT_SCORING(TIME)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_waypoint_scoring_waypoint ON WAYPOINT_SCORING(WAYPOINT_NAME)")
     db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_waypoint_scoring_icao ON WAYPOINT_SCORING(SCORING_ICAO)")
@@ -3391,13 +3535,12 @@ def get_audit_points():
     points = []
     with audit_config_lock:
         cfg_snapshot = dict(audit_config_cache)
-    for feature in AIRSPACE_GEOJSON.get("features", []):
+    with MAP_DATA_LOCK:
+        audit_features = copy.deepcopy(MAP_GEOJSON["audit_points"]["features"])
+    for feature in audit_features:
         props = feature.get("properties", {})
         geom = feature.get("geometry", {})
         if geom.get("type") != "Point":
-            continue
-        cat = (props.get("icon") or props.get("type") or "").upper()
-        if cat != "AUDIT":
             continue
         if props.get("masked"):
             continue
@@ -3407,23 +3550,44 @@ def get_audit_points():
         points.append({"name": name, "lat": lat, "lon": lon, **cfg})
     return points
 
+
+def _waypoint_scoring_key(source, properties, coordinates):
+    if properties.get("scoring_key"):
+        return str(properties["scoring_key"])
+    fix_id = properties.get("fix_id") or properties.get("canonical_id")
+    if fix_id:
+        return f"fix:{str(fix_id).strip().upper()}"
+    name = str(properties.get("name") or properties.get("id") or "UNNAMED").strip().upper()
+    coord_token = ",".join(f"{float(value):.6f}" for value in coordinates[:2])
+    digest = hashlib.sha1(f"{name}|{coord_token}".encode("utf-8")).hexdigest()[:12]
+    return f"{source}:{name}:{digest}"
+
+
 def get_scored_waypoints():
     points = []
-    for feature in AIRSPACE_GEOJSON.get("features", []):
-        props = feature.get("properties", {})
-        geom = feature.get("geometry", {})
-        if geom.get("type") != "Point":
-            continue
-        if props.get("masked"):
-            continue
-        category = (props.get("icon") or props.get("type") or "").upper()
-        if category not in {"WAYPOINT", "WPT"}:
-            continue
-        coords = geom.get("coordinates") or []
-        if len(coords) < 2:
-            continue
-        name = props.get("name") or props.get("id") or "UNNAMED"
-        points.append({"name": str(name), "lon": coords[0], "lat": coords[1]})
+    with MAP_DATA_LOCK:
+        sources = copy.deepcopy(MAP_GEOJSON)
+    for source in ("ifr_waypoints", "vfr_waypoints", "unclassified_waypoints"):
+        for feature in sources[source].get("features", []):
+            props = feature.get("properties", {})
+            geom = feature.get("geometry", {})
+            if geom.get("type") != "Point" or props.get("masked"):
+                continue
+            coords = geom.get("coordinates") or []
+            if len(coords) < 2:
+                continue
+            try:
+                lon, lat = float(coords[0]), float(coords[1])
+            except (TypeError, ValueError):
+                continue
+            name = str(props.get("name") or props.get("id") or "UNNAMED")
+            points.append({
+                "key": _waypoint_scoring_key(source, props, coords),
+                "name": name,
+                "source": source,
+                "lon": lon,
+                "lat": lat,
+            })
     return points
 
 def _waypoint_colour_state(rgb):
@@ -3501,7 +3665,8 @@ def get_waypoint_scoring_updates_since(last_version):
         for name, state in waypoint_scoring_state.items():
             if int(state.get("version", 0)) > int(last_version):
                 updates.append({
-                    "name": name,
+                    "key": name,
+                    "name": state.get("name", name),
                     "points": round(float(state.get("points", 0.0)), 3),
                     "colour_state": state.get("colour_state", "rgb(226,232,240)"),
                     "colour_rgb": [int(c) for c in state.get("colour_rgb", [226, 232, 240])],
@@ -3515,11 +3680,14 @@ def snapshot_waypoint_scoring_metrics():
     with waypoint_scoring_metrics_lock:
         return dict(waypoint_scoring_metrics)
 
-def _record_waypoint_scoring_award(waypoint_name, perimeter, aircraft_data, now_ts):
+def _record_waypoint_scoring_award(waypoint, perimeter, aircraft_data, now_ts):
     global waypoint_scoring_version
+    waypoint_key = waypoint["key"]
+    waypoint_name = waypoint["name"]
     with waypoint_scoring_lock:
-        _touch_waypoint_state_locked(waypoint_name, now_ts)
-        dedupe_key = (str(waypoint_name), str(perimeter), str(aircraft_data.get("icao", "----")))
+        state = _touch_waypoint_state_locked(waypoint_key, now_ts)
+        state["name"] = waypoint_name
+        dedupe_key = (str(waypoint_key), str(perimeter), str(aircraft_data.get("icao", "----")))
         recent_at = float(waypoint_scoring_recent_awards.get(dedupe_key, 0.0))
         if now_ts - recent_at < WAYPOINT_SCORING_EVENT_DEDUPE_S:
             with waypoint_scoring_metrics_lock:
@@ -3531,7 +3699,7 @@ def _record_waypoint_scoring_award(waypoint_name, perimeter, aircraft_data, now_
             if waypoint_scoring_recent_awards[key] < cutoff:
                 del waypoint_scoring_recent_awards[key]
 
-        state = waypoint_scoring_state[waypoint_name]
+        state = waypoint_scoring_state[waypoint_key]
         award = float(WAYPOINT_SCORING_CONFIG.get(
             "RAD_IN_CROSS_AWARD" if perimeter == "INNER" else "RAD_OUT_CROSS_AWARD",
             DEFAULT_WAYPOINT_SCORING_CONFIG["RAD_IN_CROSS_AWARD" if perimeter == "INNER" else "RAD_OUT_CROSS_AWARD"]
@@ -3546,7 +3714,7 @@ def _record_waypoint_scoring_award(waypoint_name, perimeter, aircraft_data, now_
         state["band_score"] = band_score
         state["colour_rgb"] = colour_rgb
         state["colour_state"] = colour_state
-        waypoint_scoring_dirty.add(waypoint_name)
+        waypoint_scoring_dirty.add(waypoint_key)
 
     callsign = aircraft_data.get("callsign")
     if callsign in (None, "", "----"):
@@ -3561,6 +3729,7 @@ def _record_waypoint_scoring_award(waypoint_name, perimeter, aircraft_data, now_
         str(aircraft_data.get("alt", "----")),
         str(aircraft_data.get("heading", "----")),
         str(aircraft_data.get("tas", "----")),
+        waypoint_key,
     ))
     return True
 
@@ -3601,11 +3770,12 @@ def run_waypoint_scoring_monitor():
             now_ts = time.time()
             with waypoint_scoring_lock:
                 for waypoint in waypoints:
-                    _touch_waypoint_state_locked(waypoint["name"], now_ts)
+                    state = _touch_waypoint_state_locked(waypoint["key"], now_ts)
+                    state["name"] = waypoint["name"]
             sync_waypoint_decay(now_ts)
 
             for waypoint in waypoints:
-                wp_name = waypoint["name"]
+                wp_name = waypoint["key"]
                 with waypoint_scoring_lock:
                     prev_outer = set(waypoint_scoring_zone_occupants.get((wp_name, "OUTER"), set()))
                     prev_inner = set(waypoint_scoring_zone_occupants.get((wp_name, "INNER"), set()))
@@ -3641,10 +3811,10 @@ def run_waypoint_scoring_monitor():
                     waypoint_scoring_zone_occupants[(wp_name, "INNER")] = current_inner
 
                 for icao in new_outer_entries:
-                    if _record_waypoint_scoring_award(wp_name, "OUTER", ac_snapshot.get(icao, {}), now_ts):
+                    if _record_waypoint_scoring_award(waypoint, "OUTER", ac_snapshot.get(icao, {}), now_ts):
                         crossings_this_cycle += 1
                 for icao in new_inner_entries:
-                    if _record_waypoint_scoring_award(wp_name, "INNER", ac_snapshot.get(icao, {}), now_ts):
+                    if _record_waypoint_scoring_award(waypoint, "INNER", ac_snapshot.get(icao, {}), now_ts):
                         crossings_this_cycle += 1
         except Exception as exc:
             print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[WPT SCORE] Monitor error: {exc}{ANSI.RESET}")
@@ -3776,8 +3946,8 @@ def archivist_loop():
                     if telemetry_batch: db_cursor.executemany("INSERT INTO telemetry (ts, icao, field, value) VALUES (?, ?, ?, ?)", telemetry_batch)
                     if waypoint_scoring_pending:
                         db_cursor.executemany(
-                            "INSERT INTO WAYPOINT_SCORING (TIME, WAYPOINT_NAME, OUTER_OR_INNER, WAYPOINT_TOTAL_POINTS, SCORING_ICAO, SCORING_CALLSIGN, ALT, HEADING, TAS) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            "INSERT INTO WAYPOINT_SCORING (TIME, WAYPOINT_NAME, OUTER_OR_INNER, WAYPOINT_TOTAL_POINTS, SCORING_ICAO, SCORING_CALLSIGN, ALT, HEADING, TAS, WAYPOINT_KEY) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             waypoint_scoring_pending
                         )
                     db_conn.commit()
@@ -4683,7 +4853,7 @@ async def broadcast_state(websocket):
                 _wpt_metrics = snapshot_waypoint_scoring_metrics()
                 out_data = {
                     "airframes": payload,
-                    "airspace": AIRSPACE_GEOJSON,
+                    "map_data_revision": MAP_DATA_REVISION,
                     "meta": { "ledger_count": ledger_count, "waypoint_scoring_metrics": _wpt_metrics },
                     "audit_config": _audit_cfg_snap,
                     "audit_alerts": _audit_alerts_snap,
@@ -4710,29 +4880,57 @@ async def broadcast_state(websocket):
                 if data.get("action") == "add_wpt":
                     wpt = data.get("waypoint")
                     if wpt:
+                        declared_source = str(wpt.get("flight_rules") or wpt.get("source") or "").upper()
+                        source = f"{declared_source.lower()}_waypoints" if declared_source in {"IFR", "VFR"} else "unclassified_waypoints"
                         feature = {
                             "type": "Feature",
                             "geometry": { "type": "Point", "coordinates": [wpt["LONG"], wpt["LAT"]] },
-                            "properties": { "name": wpt["Waypoint_Name"], "icon": wpt["type"], "color": "rgba(56, 189, 248, 0.9)" }
+                            "properties": {
+                                "name": wpt["Waypoint_Name"],
+                                "icon": "WAYPOINT",
+                                "flight_rules": declared_source if declared_source in {"IFR", "VFR"} else "UNCLASSIFIED",
+                                "color": "rgba(56, 189, 248, 0.9)",
+                            }
                         }
-                        AIRSPACE_GEOJSON["features"].append(feature)
-                        save_airspace()
+                        with MAP_DATA_LOCK:
+                            _ensure_map_feature_ids({source: MAP_GEOJSON[source]})
+                            MAP_GEOJSON[source]["features"].append(feature)
+                            _ensure_map_feature_ids({source: {"features": [feature]}})
+                            save_map_source(source)
                         
                 elif data.get("action") == "mask_feature":
+                    source = data.get("source", "airspace")
+                    if source not in MAP_GEOJSON:
+                        continue
+                    feature_id = data.get("feature_id")
                     idx = data.get("index")
                     masked = bool(data.get("masked", True))
-                    if idx is not None and 0 <= idx < len(AIRSPACE_GEOJSON["features"]):
-                        AIRSPACE_GEOJSON["features"][idx].setdefault("properties", {})["masked"] = masked
-                        save_airspace()
+                    with MAP_DATA_LOCK:
+                        features = MAP_GEOJSON[source]["features"]
+                        feature = next((item for item in features if item.get("properties", {}).get("feature_id") == feature_id), None) if feature_id else None
+                        if feature is None and idx is not None and 0 <= idx < len(features):
+                            feature = features[idx]
+                        if feature is not None:
+                            feature.setdefault("properties", {})["masked"] = masked
+                            save_map_source(source)
 
-                elif data.get("action") == "reload_airspace":
-                    load_airspace()
+                elif data.get("action") in {"reload_airspace", "reload_map_data"}:
+                    load_map_data()
 
                 elif data.get("action") == "delete_feature":
+                    source = data.get("source", "airspace")
+                    if source not in MAP_GEOJSON:
+                        continue
+                    feature_id = data.get("feature_id")
                     idx = data.get("index")
-                    if idx is not None and 0 <= idx < len(AIRSPACE_GEOJSON["features"]):
-                        del AIRSPACE_GEOJSON["features"][idx]
-                        save_airspace()
+                    with MAP_DATA_LOCK:
+                        features = MAP_GEOJSON[source]["features"]
+                        feature_index = next((i for i, item in enumerate(features) if item.get("properties", {}).get("feature_id") == feature_id), None) if feature_id else None
+                        if feature_index is None and idx is not None and 0 <= idx < len(features):
+                            feature_index = idx
+                        if feature_index is not None:
+                            del features[feature_index]
+                            save_map_source(source)
         except Exception: pass
 
     await asyncio.gather(send_updates(), receive_updates())

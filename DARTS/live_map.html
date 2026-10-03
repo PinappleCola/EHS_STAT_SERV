@@ -225,8 +225,12 @@
             
             <button id="btn-network" class="btn-action btn-toggle">MAP TOGGLE</button>
             <button id="btn-db" class="btn-action btn-action-alt">ELEMENT MANAGER</button>
-            <button id="btn-elem-toggle" class="btn-action btn-toggle" title="Show/hide all elements from JSON">ELEMENT TOGGLE</button>
-            <button id="btn-elem-refresh" class="btn-action btn-action-alt" title="Force re-import of airspace.geojson">ELEMENT REFRESH</button>
+            <button id="btn-elem-toggle" class="btn-action btn-toggle" title="Show/hide all map elements">ELEMENT TOGGLE</button>
+            <button id="btn-ifr-toggle" class="btn-action btn-toggle">IFR</button>
+            <button id="btn-vfr-toggle" class="btn-action btn-toggle">VFR</button>
+            <button id="btn-airspace-toggle" class="btn-action btn-toggle">AIRSPACE</button>
+            <button id="btn-audit-layer-toggle" class="btn-action btn-toggle">AUDIT LAYER</button>
+            <button id="btn-elem-refresh" class="btn-action btn-action-alt" title="Reload all GeoJSON map sources">ELEMENT REFRESH</button>
             <button id="btn-lock" class="btn-action">SNAP CURRENT LOC</button>
             <button id="btn-clean-snap" class="btn-action">CLEAN SCREENSHOT</button>
             <button id="btn-export-geojson" class="btn-action btn-action-alt">EXPORT GEOJSON</button>
@@ -408,7 +412,17 @@
         let pendingLiveTrailSeq = 0;
         const entityCache = {};
         
-        let airspaceGeoJSON = { type: "FeatureCollection", features: [] };
+        const emptyFeatureCollection = () => ({ type: "FeatureCollection", features: [] });
+        let mapSources = {
+            airspace: emptyFeatureCollection(),
+            ifr_waypoints: emptyFeatureCollection(),
+            vfr_waypoints: emptyFeatureCollection(),
+            unclassified_waypoints: emptyFeatureCollection(),
+            audit_points: emptyFeatureCollection(),
+        };
+        let mapDataRevision = -1;
+        let mapDataRequestInFlight = false;
+        const hiddenMapSources = Object.create(null);
         let waypointScoringByName = {};
         let waypointScoringVersion = 0;
 
@@ -416,6 +430,29 @@
         // --- DUAL RECEIVER MANAGEMENT ---
         // =============================================
         const HTTP_API = 'http://localhost:8766';
+        function getMapFeatureEntries() {
+            return Object.entries(mapSources).flatMap(([source, collection]) =>
+                (collection.features || []).map((feature, index) => ({ source, feature, index }))
+            );
+        }
+        async function loadMapData(expectedRevision = null) {
+            if (mapDataRequestInFlight) return;
+            mapDataRequestInFlight = true;
+            try {
+                const response = await fetch(`${HTTP_API}/api/map-data`);
+                if (!response.ok) throw new Error(`Map data request failed: ${response.status}`);
+                const payload = await response.json();
+                if (expectedRevision !== null && payload.revision < expectedRevision) return;
+                if (!payload.sources || typeof payload.sources !== 'object') throw new Error('Invalid map data response');
+                mapSources = { ...mapSources, ...payload.sources };
+                mapDataRevision = payload.revision;
+                if (document.getElementById('audit-modal').style.display === 'flex') populateAuditTable();
+            } catch (error) {
+                console.warn('Map data load failed:', error);
+            } finally {
+                mapDataRequestInFlight = false;
+            }
+        }
         let currentRxMode = 'A';
         const GROUND_TRAIL_COLOUR = [249, 115, 22];
         const DEFAULT_ALTITUDE_COLOUR_LEVELS = [
@@ -990,14 +1027,15 @@
             if (sortCol === colIdx) { sortAsc = !sortAsc; }
             else { sortCol = colIdx; sortAsc = true; }
             
-            airspaceGeoJSON.features.sort((a, b) => {
+            const entries = getMapFeatureEntries().sort((left, right) => {
+                const a = left.feature, b = right.feature;
                 let valA = '', valB = '';
                 const pA = a.properties || {}; const gA = a.geometry || {};
                 const pB = b.properties || {}; const gB = b.geometry || {};
                 
                 if (colIdx === 0) { valA = gA.type || ''; valB = gB.type || ''; }
                 else if (colIdx === 1) { valA = pA.name || ''; valB = pB.name || ''; }
-                else if (colIdx === 2) { valA = pA.icon || pA.type || ''; valB = pB.icon || pB.type || ''; }
+                else if (colIdx === 2) { valA = left.source + ' ' + (pA.icon || pA.type || ''); valB = right.source + ' ' + (pB.icon || pB.type || ''); }
                 
                 if (valA < valB) return sortAsc ? -1 : 1;
                 if (valA > valB) return sortAsc ? 1 : -1;
@@ -1046,12 +1084,13 @@
             const tbody = document.getElementById('db-tbody');
             tbody.innerHTML = '';
             
-            if (!airspaceGeoJSON.features || airspaceGeoJSON.features.length === 0) {
+            const entries = getMapFeatureEntries();
+            if (entries.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;">No Spatial Data Available in Memory.</td></tr>`;
                 return;
             }
 
-            airspaceGeoJSON.features.forEach((feature, idx) => {
+            entries.forEach(({ source, feature }, idx) => {
                 const props = feature.properties || {};
                 const geom = feature.geometry || {};
                 const isMasked = !!props.masked;
@@ -1068,7 +1107,7 @@
                 tr.innerHTML = `
                     <td><span class="type-badge ${geom.type === 'Point' ? 'type-point' : 'type-line'}">${geom.type.toUpperCase()}</span></td>
                     <td style="font-weight:bold; color:#38bdf8;">${props.name || 'UNNAMED'}</td>
-                    <td>${props.icon || props.type || 'DEFAULT'}</td>
+                    <td>${source.replace('_', ' ').toUpperCase()} · ${props.icon || props.type || 'DEFAULT'}</td>
                     <td style="color:#94a3b8;">${coordStr}</td>
                     <td style="color:${isMasked ? '#f59e0b' : '#4ade80'}; font-weight:bold;">${isMasked ? 'MASKED' : 'ACTIVE'}</td>
                     <td><button style="background:${isMasked ? '#334155' : '#78350f'}; color:${isMasked ? '#e2e8f0' : '#fde68a'}; border:1px solid #475569; padding:2px 8px; cursor:pointer; border-radius:3px; font-weight:bold;" onclick="maskFeature(${idx})">${isMasked ? 'UNMASK' : 'MASK'}</button></td>
@@ -1078,12 +1117,13 @@
         }
 
         window.maskFeature = function(idx) {
-            const feature = airspaceGeoJSON.features[idx];
-            if (!feature) return;
+            const entry = getMapFeatureEntries()[idx];
+            if (!entry) return;
+            const feature = entry.feature;
             const nowMasked = !feature.properties.masked;
             feature.properties.masked = nowMasked;
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ action: "mask_feature", index: idx, masked: nowMasked }));
+                ws.send(JSON.stringify({ action: "mask_feature", source: entry.source, feature_id: feature.properties.feature_id, masked: nowMasked }));
             }
             populateDbTable();
         };
@@ -1095,11 +1135,22 @@
             const btn = document.getElementById('btn-elem-toggle');
             btn.classList.toggle('active', elementsHidden);
         });
+        [
+            ['btn-ifr-toggle', 'ifr_waypoints'],
+            ['btn-vfr-toggle', 'vfr_waypoints'],
+            ['btn-airspace-toggle', 'airspace'],
+            ['btn-audit-layer-toggle', 'audit_points'],
+        ].forEach(([buttonId, source]) => {
+            document.getElementById(buttonId).addEventListener('click', () => {
+                hiddenMapSources[source] = !hiddenMapSources[source];
+                document.getElementById(buttonId).classList.toggle('active', hiddenMapSources[source]);
+            });
+        });
 
-        // --- Element Refresh (force re-import of airspace.geojson from server) ---
+        // --- Element Refresh (reload all GeoJSON sources from server) ---
         document.getElementById('btn-elem-refresh').addEventListener('click', () => {
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ action: "reload_airspace" }));
+                ws.send(JSON.stringify({ action: "reload_map_data" }));
             }
         });
 
@@ -1757,14 +1808,14 @@
                         }
                     });
                     
-                    if (airspaceGeoJSON.features) {
-                        airspaceGeoJSON.features.forEach(f => {
-                            if (f.geometry && f.geometry.type === 'Point') {
-                                const dLat = Math.abs(parseFloat(f.geometry.coordinates[1]) - REF_LAT);
-                                const dLon = Math.abs(parseFloat(f.geometry.coordinates[0]) - REF_LON) * COS_LAT;
-                                if (dLat > maxDelta) maxDelta = dLat;
-                                if (dLon > maxDelta) maxDelta = dLon;
-                            }
+                    if (!elementsHidden) {
+                        getMapFeatureEntries().forEach(({ source, feature }) => {
+                            const coordinates = feature.geometry && feature.geometry.coordinates;
+                            if (hiddenMapSources[source] || feature.geometry?.type !== 'Point' || !coordinates) return;
+                            const dLat = Math.abs(parseFloat(coordinates[1]) - REF_LAT);
+                            const dLon = Math.abs(parseFloat(coordinates[0]) - REF_LON) * COS_LAT;
+                            if (dLat > maxDelta) maxDelta = dLat;
+                            if (dLon > maxDelta) maxDelta = dLon;
                         });
                     }
 
@@ -1822,8 +1873,9 @@
                     if (k.startsWith('LSE_')) delete entityCache[k];
                 });
                 
-                if (airspaceGeoJSON && airspaceGeoJSON.features && !elementsHidden) {
-                    airspaceGeoJSON.features.forEach((feature, idx) => {
+                if (!elementsHidden) {
+                    getMapFeatureEntries().forEach(({ feature, source, index: idx }) => {
+                        if (hiddenMapSources[source]) return;
                         const geom = feature.geometry;
                         const props = feature.properties || {};
                         if (!geom) return;
@@ -1831,7 +1883,7 @@
                         if (props.masked) return;
 
                         // Resolve category and colour
-                        const catRaw = (props.icon || props.type || 'MISC').toUpperCase();
+                        const catRaw = (props.icon || props.type || ((source.endsWith('_waypoints') && props.id) ? props.id : 'MISC')).toUpperCase();
                         const catColour = getElemColour(catRaw);
 
                         if (geom.type === 'LineString') {
@@ -1876,7 +1928,7 @@
                             const pt = getCanvasPoint(geom.coordinates[1], geom.coordinates[0], R_CX, R_CY, ppd);
                             // Map new categories to icon type for rendering
                             const iconType = catRaw;
-                            const wpId = 'WPT_' + (props.name || idx);
+                            const wpId = 'WPT_' + source + '_' + (props.name || idx);
                             
                             entityCache[wpId] = { lat: geom.coordinates[1], lon: geom.coordinates[0], alt: 'GROUND', _latency: null, _isWaypoint: true, _lastPosSeenMs: renderTime };
                             renderHitboxes.push({ id: wpId, x: pt.x, y: pt.y });
@@ -1886,8 +1938,8 @@
                             
                             // Per-category colour overrides any inline props.color
                             let color = isSelected ? '#38bdf8' : catColour;
-                            if (!isSelected && iconType === 'WAYPOINT') {
-                                const pointName = props.name || props.id || 'UNNAMED';
+                            if (!isSelected && (iconType === 'WAYPOINT' || iconType === 'WPT')) {
+                                const pointName = props.scoring_key || `${source}:${props.name || props.id || 'UNNAMED'}`;
                                 const scoreState = waypointScoringByName[pointName];
                                 if (scoreState && typeof scoreState.colour_state === 'string') {
                                     color = scoreState.colour_state;
@@ -1947,7 +1999,7 @@
                 }
 
                 // Draw audit circles around AUDIT-type points
-                drawAuditCircles(rCtx, R_CX, R_CY, ppd);
+                if (!elementsHidden && !hiddenMapSources.audit_points) drawAuditCircles(rCtx, R_CX, R_CY, ppd);
 
                 const centerProj = getCanvasPoint(REF_LAT, REF_LON, R_CX, R_CY, ppd);
                 rCtx.shadowBlur = 10; rCtx.shadowColor = '#f43f5e'; rCtx.fillStyle = '#f43f5e';
@@ -2491,7 +2543,11 @@
 
         // Ingestion loop
         const ws = new WebSocket('ws://localhost:8765');
-        ws.onopen = () => { statusText.innerText = 'ONLINE - STREAMING RAMPED'; statusText.className = 'online'; };
+        ws.onopen = () => {
+            statusText.innerText = 'ONLINE - STREAMING RAMPED';
+            statusText.className = 'online';
+            loadMapData();
+        };
         ws.onclose = () => { statusText.innerText = 'OFFLINE - CONSOLE DETACHED'; statusText.className = 'offline'; };
 
         ws.onmessage = (event) => {
@@ -2501,12 +2557,14 @@
                 perfCounters.lastWsTime = wsReceiveTime;
                 
                 const parsedData = JSON.parse(event.data);
-                if (parsedData.airspace) airspaceGeoJSON = parsedData.airspace;
+                if (typeof parsedData.map_data_revision === 'number' && parsedData.map_data_revision !== mapDataRevision) {
+                    loadMapData(parsedData.map_data_revision);
+                }
                 if (parsedData.audit_config) auditConfig = parsedData.audit_config;
                 if (Array.isArray(parsedData.waypoint_scoring_updates)) {
                     parsedData.waypoint_scoring_updates.forEach((entry) => {
-                        if (!entry || !entry.name) return;
-                        waypointScoringByName[entry.name] = entry;
+                        if (!entry || !(entry.key || entry.name)) return;
+                        waypointScoringByName[entry.key || entry.name] = entry;
                     });
                 }
                 if (typeof parsedData.waypoint_scoring_version === 'number') {
@@ -2863,19 +2921,16 @@
         }
 
         function getAuditPoints() {
-            // Extract AUDIT-type points from the current airspace GeoJSON
-            if (!airspaceGeoJSON || !airspaceGeoJSON.features) return [];
-            return airspaceGeoJSON.features
-                .map((f, idx) => ({ feature: f, idx }))
-                .filter(({ feature }) => {
+            if (!mapSources.audit_points || !mapSources.audit_points.features) return [];
+            return mapSources.audit_points.features
+                .filter((feature) => {
                     const geom = feature.geometry;
                     const props = feature.properties || {};
                     if (!geom || geom.type !== 'Point') return false;
                     if (props.masked) return false;
-                    const cat = (props.icon || props.type || '').toUpperCase();
-                    return cat === 'AUDIT';
+                    return true;
                 })
-                .map(({ feature }) => {
+                .map((feature) => {
                     const props = feature.properties || {};
                     return props.name || props.id || 'UNNAMED';
                 });
@@ -2945,7 +3000,7 @@
 
         function drawAuditCircles(rCtx, R_CX, R_CY, ppd) {
             if (elementsHidden) return;
-            if (!airspaceGeoJSON || !airspaceGeoJSON.features) return;
+            if (hiddenMapSources.audit_points || !mapSources.audit_points || !mapSources.audit_points.features) return;
 
             const activePerimeters = {};
             auditAlerts.forEach(a => {
@@ -2953,14 +3008,11 @@
                 activePerimeters[key] = true;
             });
 
-            airspaceGeoJSON.features.forEach(feature => {
+            mapSources.audit_points.features.forEach(feature => {
                 const geom = feature.geometry;
                 const props = feature.properties || {};
                 if (!geom || geom.type !== 'Point') return;
                 if (props.masked) return;
-                const cat = (props.icon || props.type || '').toUpperCase();
-                if (cat !== 'AUDIT') return;
-
                 const name = props.name || props.id || 'UNNAMED';
                 const cfg = auditConfig[name] || { outer_radius_nm: 5.0, inner_radius_nm: 2.0, colour_r: 255, colour_g: 165, colour_b: 0 };
                 const centLat = geom.coordinates[1];
