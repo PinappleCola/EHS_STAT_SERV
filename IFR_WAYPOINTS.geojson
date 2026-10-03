@@ -1,0 +1,205 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ABARB"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [154.9347, -32.8517]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ABASS"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [150.9433, -34.5833]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ABBEY"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [151.1781, -34.4031]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ABLOK"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [143.4400, -12.7178]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ABTOD"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [135.1333, -32.9950]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ABTOX"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [147.1708, -18.7869]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ABVAS"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [150.0267, -22.9383]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ABVOG"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [144.6544, -37.6725]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ABVOM"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [168.1758, -29.3439]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ABVUV"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [129.4333, -12.5167]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ACKER"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [132.2050, -12.0267]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ACOOL"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [110.0000, -30.0000]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ACTIN"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [138.0036, -33.5036]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ADBER"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [130.9617, -12.3531]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "ADBOK"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [154.2564, -34.2792]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "AGTEL"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [153.6406, -28.1503]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "AGTEV"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [144.9594, -37.5303]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "AGTOD"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [119.7561, -32.9197]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "AGTOR"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [149.1281, -30.7872]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "AGUST"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [131.2042, -13.6286]
+      }
+    }
+  ]
+}
