@@ -16,7 +16,7 @@
     },
     "persistence": {
         "db_path": "data/trails.db",
-        "retention_hours": 24,
+        "retention_hours": 26,
         "sample_interval_seconds": 1,
         "flush_interval_seconds": 5,
         "prune_interval_seconds": 3600,

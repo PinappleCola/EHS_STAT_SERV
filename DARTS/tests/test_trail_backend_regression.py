@@ -4,6 +4,7 @@ import sqlite3
 import threading
 import unittest
 import json
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -47,6 +48,9 @@ class TrailBackendRegressionTests(unittest.TestCase):
             )
             """
         )
+        for column in DARTS.TRAIL_TELEMETRY_COLUMNS:
+            kind = "TEXT" if column in ("tcas_ra", "squawk") else "REAL"
+            DARTS.trail_db_conn.execute(f"ALTER TABLE trail_points ADD COLUMN {column} {kind}")
         DARTS.trail_db_conn.commit()
 
         self.cfg = copy.deepcopy(DARTS.DEFAULT_TRAIL_CONFIG)
@@ -185,7 +189,7 @@ class TrailBackendRegressionTests(unittest.TestCase):
         self.assertEqual(rows[0][10], "gap_break")
         self.assertIsNone(rows[1][10])
 
-    def test_3d_export_preserves_altitudes_and_2d_properties_across_breaks(self):
+    def test_3d_export_metres_and_invalid_altitude_breaks(self):
         icao = "ALT001"
         t0 = 7_000_000
         altitudes = ["-120", "GROUND", None, "", "oops", "NaN", "Infinity", "123.5"]
@@ -212,19 +216,18 @@ class TrailBackendRegressionTests(unittest.TestCase):
         self.assertEqual(three_d["type"], "FeatureCollection")
         self.assertEqual(len(three_d["features"]), 2)
         self.assertEqual(three_d["features"][0]["geometry"]["coordinates"],
-                         [[row[4], row[3], z] for row, z in zip(rows[:8], [-120, 0, 0, 0, 0, 0, 0, 123.5])])
-        for feature_2d, feature_3d in zip(two_d["features"], three_d["features"]):
-            self.assertEqual(feature_3d["geometry"]["type"], "LineString")
-            self.assertEqual([point[:2] for point in feature_3d["geometry"]["coordinates"]],
-                             feature_2d["geometry"]["coordinates"])
-            self.assertEqual({k: v for k, v in feature_3d["properties"].items()
-                              if k not in ("dimensions", "altitude_units")}, feature_2d["properties"])
-            self.assertEqual(feature_3d["properties"]["dimensions"], 3)
-            self.assertEqual(feature_3d["properties"]["altitude_units"], "ft")
-        self.assertEqual(three_d["features"][0]["properties"]["point_altitudes"], altitudes)
-        self.assertEqual(three_d["features"][0]["properties"]["end_break_reason"], "gap_break")
-        self.assertEqual(three_d["features"][1]["properties"]["break_reason"], "gap_break")
-        self.assertEqual([point[2] for point in three_d["features"][1]["geometry"]["coordinates"]], [-45, -45])
+                         [[row[4], row[3], z] for row, z in zip(rows[:2], [-36.6, 0])])
+        self.assertEqual(three_d["features"][0]["properties"]["altitude_ft"], -60)
+        self.assertEqual(three_d["features"][0]["properties"]["start_ts"], t0 // 1000)
+        self.assertIsNone(three_d["features"][0]["properties"]["groundspeed_kt"])
+        self.assertEqual([point[2] for point in three_d["features"][1]["geometry"]["coordinates"]], [-13.7, -13.7])
+        self.assertEqual(three_d["metadata"]["schema"], "darts-3dspat-v1")
+        for feature in three_d["features"]:
+            self.assertFalse(any(isinstance(value, list) for value in feature["properties"].values()))
+            self.assertNotIn("start_time_ms", feature["properties"])
+        # The 2D schema still preserves its original full-trail arrays/raw altitude.
+        self.assertEqual(two_d["features"][0]["properties"]["point_altitudes"], altitudes)
+        self.assertEqual(two_d["features"][0]["properties"]["point_count"], 8)
 
     def test_3d_export_handler_reads_rows_and_sets_download_headers(self):
         class Response:
@@ -238,13 +241,166 @@ class TrailBackendRegressionTests(unittest.TestCase):
         row = (1, "ALT001", 1000, -33.0, 151.0, "-7", 0, "ALT", "RX", "A", None)
         row2 = (2, "ALT001", 2000, -33.0001, 151.0001, "GROUND", 1, "ALT", "RX", "A", None)
         response = Response()
-        with patch.object(DARTS, "query_trail_rows", return_value=[row, row2]) as query:
-            DARTS.DARTSAPIHandler._handle_export_trails_geojson_3d(response, {})
+        with tempfile.TemporaryDirectory() as directory:
+            store = DARTS.Export3DStore(str(Path(directory) / "trails.db"), directory)
+            with patch.object(DARTS, "export3d_store", store), patch.object(DARTS, "query_trail_rows", return_value=[row, row2]) as query:
+                DARTS.DARTSAPIHandler._handle_export_trails_geojson_3d(response, {})
+            payload = json.loads(response.body)
+            saved = Path(directory) / "3DSPAT_SAVES" / payload["metadata"]["filename"]
+            self.assertEqual(json.loads(saved.read_text()), payload)
+            store.close()
         query.assert_called_once_with(1000, 2000, icao="ALT001", apply_backstop=False)
         self.assertEqual(response.kwargs["content_type"], "application/geo+json")
-        self.assertIn("_1000_2000_3d.geojson", response.kwargs["extra_headers"]["Content-Disposition"])
+        self.assertIn('3DSPAT_01JAN70_1000_0000_0000.geojson', response.kwargs["extra_headers"]["Content-Disposition"])
         self.assertEqual(json.loads(response.body)["features"][0]["geometry"]["coordinates"],
-                         [[151.0, -33.0, -7], [151.0001, -33.0001, 0]])
+                         [[151.0, -33.0, -2.1], [151.0001, -33.0001, 0]])
+
+    def test_stationary_altitude_tcas_squawk_and_ground_changes_are_recorded(self):
+        now = 8_000_000
+        snapshot = self._snapshot("STATE1", -33, 151, now)
+        self._persist(DARTS.build_trail_records(snapshot, now, self.cfg))
+        for field, value in (("alt", "30100"), ("tcas_ra", "RA ALERT"), ("squawk", "0070"), ("air_ground", "GROUND")):
+            now += 1000
+            data = snapshot["STATE1"]
+            data["_lat_update_time"] = now / 1000
+            data[field] = value
+            data[f"_{field}_update_time"] = now / 1000
+            records = DARTS.build_trail_records(snapshot, now, self.cfg)
+            self.assertEqual(len(records), 1, field)
+            self._persist(records)
+        self.assertEqual(len(DARTS.query_trail_rows(8_000_000, now)), 5)
+
+    def test_telemetry_numeric_freshness_and_unobserved_tcas(self):
+        now = 9_000_000
+        data = self._snapshot("FRESH1", -33, 151, now)["FRESH1"]
+        data.update(speed="123.5", track="90", heading="180", vert_rate="-640",
+                    roll="NaN", tcas_ra="CLEAN", squawk="0070")
+        for field in ("speed", "track", "heading", "vert_rate", "roll", "squawk"):
+            data[f"_{field}_update_time"] = now / 1000 - 1
+        record = DARTS.build_trail_records({"FRESH1": data}, now, self.cfg)[0]
+        telemetry = dict(zip(DARTS.TRAIL_TELEMETRY_COLUMNS, record[11:]))
+        self.assertEqual(telemetry["groundspeed_kt"], 123.5)
+        self.assertEqual(telemetry["vert_rate_fpm"], -640)
+        self.assertEqual(telemetry["squawk"], "0070")
+        self.assertIsNone(telemetry["tcas_ra"])
+        self.assertIsNone(telemetry["roll_deg"])
+        data["_track_update_time"] = now / 1000 - 9
+        data["_heading_update_time"] = now / 1000 - 13
+        data["_speed_update_time"] = now / 1000 - 13
+        stale = dict(zip(DARTS.TRAIL_TELEMETRY_COLUMNS, DARTS._trail_telemetry(data, now)))
+        self.assertIsNone(stale["track_deg_true"])
+        self.assertIsNone(stale["heading_deg_mag"])
+        self.assertIsNone(stale["groundspeed_kt"])
+
+    def test_update_aircraft_tracks_actual_observations_and_snapshot_timestamps(self):
+        with patch.object(DARTS, "aircraft_state", {}), patch.object(DARTS, "queue_telemetry_delta"), patch.object(DARTS, "trigger_sound"), patch.object(DARTS.time, "time", return_value=100):
+            DARTS.update_aircraft("OBS001", "speed", 0)
+            initial = DARTS.snapshot_trail_aircraft_state()["OBS001"]
+            self.assertEqual(initial["_speed_update_time"], 100)
+            self.assertEqual(initial["_tcas_ra_update_time"], 0)
+            DARTS.update_aircraft("OBS001", "tcas_ra", "CLEAN")
+            observed = DARTS.snapshot_trail_aircraft_state()["OBS001"]
+            self.assertEqual(observed["_tcas_ra_update_time"], 100)
+            telemetry = dict(zip(DARTS.TRAIL_TELEMETRY_COLUMNS, DARTS._trail_telemetry(observed, 100000)))
+            self.assertEqual(telemetry["groundspeed_kt"], 0)
+            self.assertEqual(telemetry["tcas_ra"], "CLEAN")
+
+    def test_store_migration_leaves_historical_telemetry_null(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = str(Path(directory) / "legacy.db")
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE trail_points (id INTEGER PRIMARY KEY, icao TEXT, ts_ms INTEGER, lat REAL, lon REAL, altitude TEXT, on_ground INTEGER, callsign TEXT, source_label TEXT, receiver_id TEXT, marker_type TEXT)")
+            conn.execute("INSERT INTO trail_points VALUES (1,'OLD001',1000,-33,151,'1200',0,'OLD','A','A',NULL)")
+            conn.commit()
+            conn.close()
+            old_store = DARTS.export3d_store
+            memory_conn = DARTS.trail_db_conn
+            try:
+                with patch.object(DARTS, "get_trail_db_path", return_value=db_path), patch.object(DARTS, "BASE_DIR", directory):
+                    DARTS.init_trail_store()
+                    rows = DARTS.query_trail_rows(0, 2000, apply_backstop=False)
+                    self.assertEqual(rows[0][11:], (None,) * len(DARTS.TRAIL_TELEMETRY_COLUMNS))
+                    self.assertEqual(rows[0][5], "1200")
+                    DARTS.trail_db_conn.close()
+                    DARTS.export3d_store.close()
+                    DARTS.init_trail_store()
+                    self.assertEqual(len(DARTS.query_trail_rows(0, 2000)), 1)
+            finally:
+                DARTS.trail_db_conn.close()
+                DARTS.export3d_store.close()
+                DARTS.trail_db_conn = memory_conn
+                DARTS.export3d_store = old_store
+
+    def test_runtime_auto_config_defaults_and_environment(self):
+        with patch.object(DARTS.os.path, "exists", return_value=False), patch.dict(DARTS.os.environ, {}, clear=True):
+            config = DARTS.load_runtime_config()
+        self.assertEqual(config["3DGEO_AUTO_EXPORT_ENABLE"], 1)
+        self.assertEqual(config["3DGEO_AUTO_EXPORT_DAILY_TIME"], "2400")
+        with patch.dict(DARTS.os.environ, {"EHS_3DGEO_AUTO_EXPORT_ENABLE": "0", "EHS_3DGEO_AUTO_EXPORT_DAILY_TIME": "2211"}):
+            config = DARTS.load_runtime_config()
+        self.assertEqual(config["3DGEO_AUTO_EXPORT_ENABLE"], 0)
+        self.assertEqual(config["3DGEO_AUTO_EXPORT_DAILY_TIME"], "2211")
+
+    def test_pruning_protects_25_hour_auto_window(self):
+        now = 100_000_000
+        ts = now - 25 * 3600 * 1000
+        self._persist([("KEEP01", ts, -33, 151, "100", 0, None, "A", "A", None, "keep")])
+        cfg = copy.deepcopy(self.cfg)
+        cfg["persistence"]["retention_hours"] = 24
+        with patch.object(DARTS, "get_trail_config_snapshot", return_value=cfg), patch.dict(DARTS.RUNTIME_CONFIG, {"3DGEO_AUTO_EXPORT_ENABLE": 1}):
+            DARTS.prune_trail_records(now)
+        self.assertEqual(len(DARTS.query_trail_rows(ts, now)), 1)
+
+    def test_pruning_cannot_delete_pending_auto_window_after_sleep(self):
+        now = 200_000_000
+        ts = now - 30 * 3600 * 1000
+        self._persist([("KEEP02", ts, -33, 151, "100", 0, None, "A", "A", None, "keep2")])
+        with patch.object(DARTS, "auto_export_pending_from_ms", ts), patch.dict(DARTS.RUNTIME_CONFIG, {"3DGEO_AUTO_EXPORT_ENABLE": 1}):
+            DARTS.prune_trail_records(now)
+        self.assertEqual(len(DARTS.query_trail_rows(ts, now)), 1)
+
+    def test_same_timestamp_altitude_change_has_distinct_event_key(self):
+        now = 10_000_000
+        snapshot = self._snapshot("SAME01", -33, 151, now)
+        self._persist(DARTS.build_trail_records(snapshot, now, self.cfg))
+        snapshot["SAME01"]["alt"] = "30100"
+        self._persist(DARTS.build_trail_records(snapshot, now, self.cfg))
+        self.assertEqual(len(DARTS.query_trail_rows(now, now, apply_backstop=False)), 2)
+
+    def test_decoder_preserves_zero_kinematic_values(self):
+        decoded = {"icao": "ZERO01", "altitude": 0, "groundspeed": 0,
+                   "true_airspeed": 0, "track": 0, "magnetic_heading": 0}
+        with patch.object(DARTS.pipeline, "decode", return_value=decoded), patch.object(DARTS, "handle_entry_gate"), patch.object(DARTS, "update_aircraft") as update:
+            DARTS.process_frame(bytes([0x33]) + bytes(20))
+        updates = {(call.args[1], call.args[2]) for call in update.call_args_list}
+        for field in ("alt", "speed", "tas", "track", "heading"):
+            self.assertIn((field, 0), updates)
+
+    def test_auto_export_flushes_boundary_observations_before_query(self):
+        first = 11_000_000
+        records = DARTS.build_trail_records(self._snapshot("BUFFER", -33, 151, first), first, self.cfg)
+        records += DARTS.build_trail_records(self._snapshot("BUFFER", -33.0001, 151.0001, first + 1000), first + 1000, self.cfg)
+        self.assertEqual(DARTS.query_trail_rows(first, first + 1000), [])
+        with tempfile.TemporaryDirectory() as directory:
+            store = DARTS.Export3DStore(str(Path(directory) / "exports.db"), directory)
+            try:
+                with patch.object(DARTS, "export3d_store", store), patch.object(DARTS, "trail_pending_records", records):
+                    payload, filename = DARTS.export_trails_3d(first, first + 1000, is_auto=True)
+                    self.assertEqual(len(payload["features"]), 1)
+                    self.assertTrue(filename.startswith("AUTO_3DSPAT_"))
+                    self.assertEqual(records, [])
+            finally:
+                store.close()
+
+    def test_recorder_error_truncates_shared_buffer_in_place(self):
+        records = [("pending",)] * 6
+        cfg = copy.deepcopy(self.cfg)
+        cfg["persistence"]["batch_size"] = 1
+        with patch.object(DARTS, "trail_pending_records", records), patch.object(DARTS, "get_trail_config_snapshot", return_value=cfg), patch.object(DARTS, "snapshot_trail_aircraft_state", return_value={}), patch.object(DARTS, "persist_trail_records", side_effect=RuntimeError("write failure")), patch.object(DARTS.time, "sleep", side_effect=StopIteration):
+            with self.assertRaises(StopIteration):
+                DARTS.run_trail_recorder_loop()
+            self.assertIs(DARTS.trail_pending_records, records)
+            self.assertEqual(len(records), 4)
 
 
 if __name__ == "__main__":

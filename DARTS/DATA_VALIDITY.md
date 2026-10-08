@@ -19,11 +19,11 @@ These fields are the safest foundation for the app and should generally be treat
 | `alt` | High | Core altitude field from ADS-B / Mode S decodes. | Grid, trail export, alerts. |
 | `speed` | High | Groundspeed derived from velocity messages. | Map motion, trail logic, separation tools. |
 | `track` | High | True track from velocity decode. | Movement direction, map heading logic. |
-| `heading` | High | Magnetic heading from decode. | Secondary motion display, arbitration input. |
+| `heading` | Decoder-dependent | Magnetic heading confidence depends on register inference and decoder validation. | Secondary motion display, arbitration input. |
 | `lat` | High | CPR-derived latitude. | Map position, audit zones, trails. |
 | `lon` | High | CPR-derived longitude. | Map position, audit zones, trails. |
 | `squawk` | High | Standard transponder squawk field. | Emergency detection, labels, filters. |
-| `tcas_ra` | High | Explicit TCAS RA decoding with state summary. | Safety UI, alarms, sound triggers. |
+| `tcas_ra` | Decoder-dependent | Confidence depends on decoder validation; initial `CLEAN` is not an observation. | Safety UI, alarms, sound triggers; not operational truth. |
 | `rssi_dbfs` | Medium-High | Receiver-derived signal metric. | Debugging, link quality, antenna health. |
 
 ## 2) Medium-confidence fields
@@ -33,6 +33,8 @@ These are valuable and should stay in the app, but they are partially derived, a
 | Key | Validity | Why it is medium-confidence | Suggested use |
 |---|---|---|---|
 | `display_heading` | Medium-High | Arbitrated from track/heading/selected heading with freshness and hysteresis. | Default heading display, map orientation. |
+| `roll` / `roll_deg` | Medium | Decoder-derived BDS 5,0 with heuristic register inference. | 3D export and expert visualisation. |
+| `vert_rate` / `vert_rate_fpm`, `vert_rate_baro` / `vert_rate_baro_fpm`, `vert_rate_inertial` / `vert_rate_inertial_fpm` | Medium | Decoder-derived BDS 6,0 (or ADS-B velocity); confidence depends on heuristic register inference. | Climb/descent visualisation, not safety-critical decisions. |
 | `display_heading_source` | Medium-High | Describes arbitration outcome, not a raw broadcast fact. | Diagnostics, UI transparency. |
 | `selected_heading` | Medium | Comes from selected-state / integrity decoding. Good, but not universal. | Optional integrity views. |
 | `selected_alt_source` | Medium | Inferred selected altitude origin. | Advanced cockpit-style views. |
@@ -57,6 +59,12 @@ These are valuable and should stay in the app, but they are partially derived, a
 | `air_ground` | Medium | Useful but can depend on multiple interpretations and transitions. | State column, logic, labels. |
 
 ## 3) Low-confidence / experimental fields
+
+Verify BDS 5,0 / 6,0 signed-field decoding against protocol references and
+known messages, particularly **sign-magnitude versus two's complement**.
+Heading and TCAS confidence depends on decoder validation; freshness gating
+does not establish correctness. 3D elevation is converted barometric pressure
+altitude, not ellipsoidal height.
 
 These should remain visible for experimentation, but the app should avoid depending on them for hard decisions without fallback logic.
 

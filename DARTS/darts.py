@@ -24,9 +24,20 @@ import os
 import http.server
 import uuid
 from urllib.parse import urlparse, parse_qs
+try:
+    from trail_export3d import TRAIL_TELEMETRY_COLUMNS, Export3DStore, build_geojson3d, parse_daily_time, run_daily_exports, next_scheduled_run, previous_scheduled_run
+except ImportError:
+    from DARTS.trail_export3d import TRAIL_TELEMETRY_COLUMNS, Export3DStore, build_geojson3d, parse_daily_time, run_daily_exports, next_scheduled_run, previous_scheduled_run
 
 APP_VERSION = "v57"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TRACK_FRESHNESS_S = 8.0
+HEADING_FRESHNESS_S = 12.0
+TRAIL_TELEMETRY_FIELDS = (
+    "speed", "track", "heading", "vert_rate", "vert_rate_baro",
+    "vert_rate_inertial", "roll", "tas", "ias", "mach", "tcas_ra",
+    "squawk", "rssi_dbfs",
+)
 REPO_ROOT = os.path.dirname(BASE_DIR)
 CONFIG_PATH = os.path.join(BASE_DIR, "runtime_config.json")
 ALTITUDE_COLOURS_PATH = os.path.join(BASE_DIR, "altitude_colours.json")
@@ -66,6 +77,9 @@ def load_runtime_config():
         "rx_mode": "A",
         "receiver_a": {},
         "receiver_b": {},
+        "3DGEO_AUTO_EXPORT_ENABLE": 1,
+        "3DGEO_AUTO_EXPORT_DAILY_TIME": "2400",
+        "3DGEO_AUTO_EXPORT_TIMEZONE": "Australia/Sydney",
     }
 
     try:
@@ -83,6 +97,14 @@ def load_runtime_config():
     config["ws_port"] = int(os.getenv("EHS_WS_PORT", config["ws_port"]))
     config["http_port"] = int(os.getenv("EHS_HTTP_PORT", config["http_port"]))
     config["receiver_id"] = os.getenv("EHS_RECEIVER_ID", config["receiver_id"])
+    enabled = os.getenv("EHS_3DGEO_AUTO_EXPORT_ENABLE", config["3DGEO_AUTO_EXPORT_ENABLE"])
+    config["3DGEO_AUTO_EXPORT_ENABLE"] = int(str(enabled).lower() in ("1", "true", "yes", "on"))
+    daily_time = os.getenv("EHS_3DGEO_AUTO_EXPORT_DAILY_TIME", config["3DGEO_AUTO_EXPORT_DAILY_TIME"])
+    hour, minute = parse_daily_time(daily_time)
+    config["3DGEO_AUTO_EXPORT_DAILY_TIME"] = "2400" if (hour, minute) == (0, 0) else f"{hour:02d}{minute:02d}"
+    if config["3DGEO_AUTO_EXPORT_TIMEZONE"] != "Australia/Sydney":
+        print("WARNING: 3D exports use Australia/Sydney; ignoring unsupported timezone")
+    config["3DGEO_AUTO_EXPORT_TIMEZONE"] = "Australia/Sydney"
 
     # Backward-compat: if receiver_a not explicitly set, inherit legacy port/baud/receiver_id
     if not config["receiver_a"].get("port"):
@@ -158,7 +180,7 @@ DEFAULT_TRAIL_CONFIG = {
     },
     "persistence": {
         "db_path": "data/trails.db",
-        "retention_hours": 24.0,
+        "retention_hours": 26.0,
         "sample_interval_seconds": 1.0,
         "flush_interval_seconds": 5.0,
         "prune_interval_seconds": 3600.0,
@@ -1606,7 +1628,7 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
         rows = query_trail_rows(from_ms, to_ms, icao=icao)
         compact_rows = [
             [icao_row, int(ts_ms), lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type]
-            for _row_id, icao_row, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type in rows
+            for _row_id, icao_row, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type in (row[:11] for row in rows)
         ]
         self._send_json({
             "from": from_ms,
@@ -1643,12 +1665,13 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=400)
             return
 
-        payload = build_geojson3d_from_trail_rows(
-            query_trail_rows(from_ms, to_ms, icao=icao, apply_backstop=False),
-            apply_backstop=True,
-        )
+        try:
+            payload, filename = export_trails_3d(from_ms, to_ms, icao=icao)
+        except Exception as exc:
+            print(f"ERROR: manual 3D export failed: {exc}")
+            self._send_json({"error": "3D export failed; see server log"}, status=500)
+            return
         trail_cfg = get_trail_config_snapshot()
-        filename = f'{trail_cfg["export"]["filename_prefix"]}_{from_ms}_{to_ms}_3d.geojson'
         self._send_bytes(
             json.dumps(payload).encode("utf-8"),
             content_type="application/geo+json",
@@ -2815,6 +2838,10 @@ with audit_db_lock:
 # ==========================================
 load_trail_config()
 trail_db_conn = None
+export3d_store = None
+auto_export_pending_from_ms = None
+trail_pending_records = []
+trail_record_buffer_lock = threading.Lock()
 trail_db_lock = threading.Lock()
 trail_runtime_state = {}
 trail_runtime_state_lock = threading.Lock()
@@ -2827,7 +2854,7 @@ def get_trail_db_path():
 
 
 def init_trail_store():
-    global trail_db_conn
+    global trail_db_conn, export3d_store
     trail_db_path = get_trail_db_path()
     trail_db_dir = os.path.dirname(trail_db_path)
     if trail_db_dir:
@@ -2854,6 +2881,10 @@ def init_trail_store():
         if "event_key" not in existing_columns:
             c.execute("ALTER TABLE trail_points ADD COLUMN event_key TEXT")
             existing_columns.append("event_key")
+        for column in TRAIL_TELEMETRY_COLUMNS:
+            if column not in existing_columns:
+                column_type = "TEXT" if column in ("tcas_ra", "squawk") else "REAL"
+                c.execute(f"ALTER TABLE trail_points ADD COLUMN {column} {column_type}")
         if "event_key" in existing_columns:
             c.execute(
                 "UPDATE trail_points SET event_key = "
@@ -2867,6 +2898,7 @@ def init_trail_store():
         c.execute("CREATE INDEX IF NOT EXISTS idx_trail_points_marker ON trail_points(marker_type)")
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_trail_points_event_key ON trail_points(event_key)")
         trail_db_conn.commit()
+    export3d_store = Export3DStore(trail_db_path, BASE_DIR)
 
 
 def persist_trail_records(records):
@@ -2875,9 +2907,10 @@ def persist_trail_records(records):
     with trail_db_lock:
         try:
             trail_db_conn.executemany(
-                "INSERT OR IGNORE INTO trail_points (icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type, event_key) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                records,
+                "INSERT OR IGNORE INTO trail_points (icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type, event_key, "
+                + ", ".join(TRAIL_TELEMETRY_COLUMNS) + ") VALUES ("
+                + ", ".join("?" for _ in range(11 + len(TRAIL_TELEMETRY_COLUMNS))) + ")",
+                [tuple(row) + (None,) * (11 + len(TRAIL_TELEMETRY_COLUMNS) - len(row)) for row in records],
             )
             trail_db_conn.commit()
         except Exception:
@@ -2890,7 +2923,11 @@ def prune_trail_records(now_ms=None):
     if now_ms is None:
         now_ms = int(time.time() * 1000)
     retention_ms = int(cfg["persistence"]["retention_hours"] * 3600 * 1000)
+    if RUNTIME_CONFIG["3DGEO_AUTO_EXPORT_ENABLE"]:
+        retention_ms = max(retention_ms, 26 * 3600 * 1000)
     cutoff_ms = now_ms - retention_ms
+    if RUNTIME_CONFIG["3DGEO_AUTO_EXPORT_ENABLE"] and auto_export_pending_from_ms is not None:
+        cutoff_ms = min(cutoff_ms, auto_export_pending_from_ms)
     with trail_db_lock:
         trail_db_conn.execute("DELETE FROM trail_points WHERE ts_ms < ?", (cutoff_ms,))
         trail_db_conn.commit()
@@ -2957,10 +2994,13 @@ def _trail_callsign_or_none(value):
     return str(value)
 
 
-def make_trail_event_key(icao, ts_ms, lat, lon, marker_type):
+def make_trail_event_key(icao, ts_ms, lat, lon, marker_type, observation=None):
     lat_key = "" if lat is None else f"{float(lat):.6f}"
     lon_key = "" if lon is None else f"{float(lon):.6f}"
-    return f"{str(icao).upper()}:{int(ts_ms)}:{marker_type or 'point'}:{lat_key}:{lon_key}"
+    key = f"{str(icao).upper()}:{int(ts_ms)}:{marker_type or 'point'}:{lat_key}:{lon_key}"
+    if observation is not None:
+        key += ":" + hashlib.sha256(json.dumps(observation, sort_keys=True).encode("utf-8")).hexdigest()
+    return key
 
 
 def _load_last_trail_point_from_store(icao):
@@ -2969,7 +3009,7 @@ def _load_last_trail_point_from_store(icao):
         if conn is None:
             return None
         row = conn.execute(
-            "SELECT ts_ms, lat, lon FROM trail_points "
+            "SELECT ts_ms, lat, lon, altitude, on_ground, tcas_ra, squawk FROM trail_points "
             "WHERE icao = ? AND marker_type IS NULL AND lat IS NOT NULL AND lon IS NOT NULL "
             "ORDER BY ts_ms DESC, id DESC LIMIT 1",
             (str(icao).upper(),),
@@ -2977,7 +3017,9 @@ def _load_last_trail_point_from_store(icao):
     if not row:
         return None
     return {
-        "last_point": {"lat": float(row[1]), "lon": float(row[2])},
+        "last_point": {"lat": float(row[1]), "lon": float(row[2]),
+                       "altitude": "GROUND" if row[3] == "GROUND" else _trail_number(row[3]),
+                       "on_ground": row[4], "tcas_ra": row[5], "squawk": row[6]},
         "last_point_ts_ms": int(row[0]),
         "last_observation_ts_ms": int(row[0]),
     }
@@ -3007,7 +3049,32 @@ def snapshot_trail_aircraft_state():
                 "last_seen": data.get("last_seen", 0),
                 "_lat_update_time": data.get("_lat_update_time", 0),
             }
+            for field in TRAIL_TELEMETRY_FIELDS:
+                snapshot[icao][field] = data.get(field)
+                snapshot[icao][f"_{field}_update_time"] = data.get(f"_{field}_update_time", 0)
     return snapshot
+
+
+def _trail_number(value):
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _trail_telemetry(data, now_ms):
+    values = []
+    now = now_ms / 1000.0
+    for field in TRAIL_TELEMETRY_FIELDS:
+        timestamp = _trail_number(data.get(f"_{field}_update_time"))
+        limit = TRACK_FRESHNESS_S if field == "track" else HEADING_FRESHNESS_S
+        fresh = timestamp is not None and timestamp > 0 and 0 <= now - timestamp <= limit
+        value = data.get(field) if fresh else None
+        values.append(_trail_callsign_or_none(value) if field in ("tcas_ra", "squawk") else _trail_number(value))
+    position_time = _trail_number(data.get("_lat_update_time"))
+    values.append(max(0.0, now - position_time) if position_time is not None else None)
+    return tuple(values)
 
 
 def build_trail_records(snapshot, now_ms, trail_cfg):
@@ -3030,7 +3097,12 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
             continue
 
         altitude = data.get("alt")
+        altitude_value = "GROUND" if altitude == "GROUND" else _trail_number(altitude)
+        altitude = None if altitude_value is None else str(altitude)
         on_ground = _trail_on_ground_flag(data)
+        telemetry = _trail_telemetry(data, now_ms)
+        point_state = {"lat": lat, "lon": lon, "altitude": altitude_value, "on_ground": on_ground,
+                       "tcas_ra": telemetry[10], "squawk": telemetry[11]}
         callsign = _trail_callsign_or_none(data.get("callsign"))
         needs_bootstrap_lookup = False
         with trail_runtime_state_lock:
@@ -3064,7 +3136,7 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
                 recorder_state["last_point_ts_ms"] = int(bootstrap_state["last_point_ts_ms"])
                 recorder_state["last_observation_ts_ms"] = int(bootstrap_state["last_observation_ts_ms"])
             previous_point = recorder_state.get("last_point")
-            is_duplicate_point = bool(previous_point and previous_point["lat"] == lat and previous_point["lon"] == lon)
+            is_duplicate_point = bool(previous_point and all(previous_point.get(key) == value for key, value in point_state.items()))
 
             delta_ms = 0
             marker_type = None
@@ -3081,14 +3153,14 @@ def build_trail_records(snapshot, now_ms, trail_cfg):
                     recorder_state["intervals"] = recorder_state["intervals"][-max_interval_count:]
 
             if marker_type:
-                records.append((icao, now_ms, None, None, None, None, callsign, source_label, receiver_id, marker_type, make_trail_event_key(icao, now_ms, None, None, marker_type)))
+                records.append((icao, now_ms, None, None, None, None, callsign, source_label, receiver_id, marker_type, make_trail_event_key(icao, now_ms, None, None, marker_type)) + (None,) * len(TRAIL_TELEMETRY_COLUMNS))
             if is_duplicate_point:
                 recorder_state["last_observation_ts_ms"] = now_ms
                 recorder_state["last_activity_ms"] = now_ms
                 continue
-            records.append((icao, now_ms, lat, lon, None if altitude in (None, "") else str(altitude), on_ground, callsign, source_label, receiver_id, None, make_trail_event_key(icao, now_ms, lat, lon, None)))
+            records.append((icao, now_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, None, make_trail_event_key(icao, now_ms, lat, lon, None, point_state)) + telemetry)
 
-            recorder_state["last_point"] = {"lat": lat, "lon": lon}
+            recorder_state["last_point"] = point_state
             recorder_state["last_point_ts_ms"] = now_ms
             recorder_state["last_observation_ts_ms"] = now_ms
             recorder_state["last_activity_ms"] = now_ms
@@ -3102,7 +3174,7 @@ def _trail_row_marker_rank(marker_type):
 
 def _trail_sort_rows(rows):
     def _sort_key(row):
-        row_id, icao, ts_ms, _lat, _lon, _altitude, _on_ground, _callsign, _source_label, _receiver_id, marker_type = row
+        row_id, icao, ts_ms, _lat, _lon, _altitude, _on_ground, _callsign, _source_label, _receiver_id, marker_type = row[:11]
         row_id_sort = int(row_id) if isinstance(row_id, int) else -1
         return (str(icao), int(ts_ms), _trail_row_marker_rank(marker_type), row_id_sort)
     return sorted(rows, key=_sort_key)
@@ -3129,7 +3201,7 @@ def apply_trail_break_backstop(rows, trail_cfg=None):
         query_state["last_observation_ts_ms"] = None
 
     for row in ordered_rows:
-        _row_id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type = row
+        _row_id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type = row[:11]
         ts_value = int(ts_ms)
         if current_icao is not None and icao != current_icao:
             query_state["intervals"] = []
@@ -3174,7 +3246,8 @@ def apply_trail_break_backstop(rows, trail_cfg=None):
 
 def query_trail_rows(from_ms, to_ms, icao=None, apply_backstop=True):
     sql = (
-        "SELECT id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type "
+        "SELECT id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type, "
+        + ", ".join(TRAIL_TELEMETRY_COLUMNS) + " "
         "FROM trail_points WHERE ts_ms >= ? AND ts_ms <= ?"
     )
     params = [int(from_ms), int(to_ms)]
@@ -3233,7 +3306,7 @@ def build_geojson_from_trail_rows(rows, apply_backstop=False):
         segment_points = []
         segment_meta = {}
 
-    for _row_id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type in rows:
+    for _row_id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type in (row[:11] for row in rows):
         if current_icao is not None and icao != current_icao:
             flush_segment()
             pending_break_reason = None
@@ -3269,119 +3342,73 @@ def build_geojson_from_trail_rows(rows, apply_backstop=False):
 
 
 def build_geojson3d_from_trail_rows(rows, apply_backstop=False):
-    # Experimental export: keep the 2D builder independent and preserve raw barometric feet.
     if apply_backstop:
         rows = apply_trail_break_backstop(rows)
-    features = []
-    current_icao = None
-    segment_points = []
-    segment_meta = {}
-    pending_break_reason = None
+    return build_geojson3d(rows)
 
-    def altitude_z(raw_altitude):
+
+def export_trails_3d(from_ms, to_ms, icao=None, is_auto=False):
+    def query_flushed_rows(start, end, **kwargs):
+        with trail_record_buffer_lock:
+            if trail_pending_records:
+                persist_trail_records(trail_pending_records)
+                trail_pending_records.clear()
+        return query_trail_rows(start, end, **kwargs)
+
+    return export3d_store.export(
+        from_ms, to_ms, query_flushed_rows, build_geojson3d_from_trail_rows,
+        is_auto=is_auto, icao=icao,
+    )
+
+
+def run_auto_export_loop():
+    global auto_export_pending_from_ms
+    daily_time = RUNTIME_CONFIG["3DGEO_AUTO_EXPORT_DAILY_TIME"]
+    next_run = next_scheduled_run(datetime.datetime.now(datetime.timezone.utc), daily_time)
+    auto_export_pending_from_ms = int(previous_scheduled_run(next_run, daily_time).timestamp() * 1000)
+
+    def export_window(start, end):
+        global auto_export_pending_from_ms
         try:
-            value = float(raw_altitude)
-        except (TypeError, ValueError, OverflowError):
-            return 0
-        return value if math.isfinite(value) else 0
+            return export_trails_3d(start, end, is_auto=True)
+        finally:
+            auto_export_pending_from_ms = end
 
-    def flush_segment(end_break_reason=None):
-        nonlocal segment_points, segment_meta
-        if len(segment_points) >= 2:
-            start_time = segment_points[0]["ts_ms"]
-            end_time = segment_points[-1]["ts_ms"]
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": [[pt["lon"], pt["lat"], altitude_z(pt["altitude"])] for pt in segment_points],
-                },
-                "properties": {
-                    "icao": segment_meta.get("icao"),
-                    "callsign": segment_meta.get("callsign"),
-                    "source_label": segment_meta.get("source_label"),
-                    "receiver_id": segment_meta.get("receiver_id"),
-                    "start_time_ms": start_time,
-                    "end_time_ms": end_time,
-                    "start_time": _ms_to_rfc3339(start_time),
-                    "end_time": _ms_to_rfc3339(end_time),
-                    "point_count": len(segment_points),
-                    "point_times_ms": [pt["ts_ms"] for pt in segment_points],
-                    "point_altitudes": [pt["altitude"] for pt in segment_points],
-                    "point_on_ground": [pt["on_ground"] for pt in segment_points],
-                    "break_reason": segment_meta.get("break_reason"),
-                    "end_break_reason": end_break_reason,
-                    "dimensions": 3,
-                    "altitude_units": "ft",
-                },
-            })
-        segment_points = []
-        segment_meta = {}
-
-    for _row_id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type in rows:
-        if current_icao is not None and icao != current_icao:
-            flush_segment()
-            pending_break_reason = None
-        current_icao = icao
-        if marker_type:
-            flush_segment(marker_type)
-            pending_break_reason = marker_type
-            continue
-        if lat is None or lon is None:
-            continue
-        if not segment_points:
-            segment_meta = {
-                "icao": icao,
-                "callsign": callsign,
-                "source_label": source_label,
-                "receiver_id": receiver_id,
-                "break_reason": pending_break_reason,
-            }
-            pending_break_reason = None
-        segment_points.append({
-            "ts_ms": int(ts_ms),
-            "lat": float(lat),
-            "lon": float(lon),
-            "altitude": altitude,
-            "on_ground": on_ground,
-        })
-
-    flush_segment()
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-    }
+    run_daily_exports(export_window, daily_time)
 
 
 def run_trail_recorder_loop():
-    pending_records = []
+    pending_records = trail_pending_records
     last_flush_at = time.time()
     last_prune_at = 0.0
     while True:
         cycle_started = time.time()
         trail_cfg = get_trail_config_snapshot()
-        now_ms = int(cycle_started * 1000)
         try:
-            pending_records.extend(build_trail_records(snapshot_trail_aircraft_state(), now_ms, trail_cfg))
-            if pending_records and (
-                (cycle_started - last_flush_at) >= trail_cfg["persistence"]["flush_interval_seconds"]
-                or len(pending_records) >= trail_cfg["persistence"]["batch_size"]
-            ):
-                persist_trail_records(pending_records)
-                pending_records = []
-                last_flush_at = cycle_started
-
-            if (cycle_started - last_prune_at) >= trail_cfg["persistence"]["prune_interval_seconds"]:
-                if pending_records:
+            with trail_record_buffer_lock:
+                cycle_started = time.time()
+                now_ms = int(cycle_started * 1000)
+                pending_records.extend(build_trail_records(snapshot_trail_aircraft_state(), now_ms, trail_cfg))
+                if pending_records and (
+                    (cycle_started - last_flush_at) >= trail_cfg["persistence"]["flush_interval_seconds"]
+                    or len(pending_records) >= trail_cfg["persistence"]["batch_size"]
+                ):
                     persist_trail_records(pending_records)
-                    pending_records = []
+                    pending_records.clear()
                     last_flush_at = cycle_started
-                prune_trail_records(now_ms)
-                last_prune_at = cycle_started
+
+                if (cycle_started - last_prune_at) >= trail_cfg["persistence"]["prune_interval_seconds"]:
+                    if pending_records:
+                        persist_trail_records(pending_records)
+                        pending_records.clear()
+                        last_flush_at = cycle_started
+                    prune_trail_records(now_ms)
+                    last_prune_at = cycle_started
         except Exception as exc:
             max_buffer = max(1, int(trail_cfg["persistence"]["batch_size"])) * 4
-            if len(pending_records) > max_buffer:
-                pending_records = pending_records[-max_buffer:]
+            with trail_record_buffer_lock:
+                if len(pending_records) > max_buffer:
+                    del pending_records[:-max_buffer]
             print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[TRAIL] Recorder error: {exc}{ANSI.RESET}")
 
         sleep_for = max(0.05, trail_cfg["persistence"]["sample_interval_seconds"] - (time.time() - cycle_started))
@@ -4207,7 +4234,7 @@ def update_aircraft(icao, key, value):
         aircraft_state[icao]["last_seen"] = now
         
         # Track update timestamps for heading arbitration
-        if key in ("track", "heading", "selected_heading"):
+        if key in TRAIL_TELEMETRY_FIELDS or key == "selected_heading":
             aircraft_state[icao][f"_{key}_update_time"] = now
         if key == "lat":
             aircraft_state[icao]["_lat_update_time"] = now
@@ -4273,7 +4300,7 @@ def process_frame(frame):
                 
                 callsign = decoded.get("callsign") or decoded.get("cs")
                 if callsign is not None: update_aircraft(icao, "callsign", str(callsign).strip())
-                alt = decoded.get("altitude") or decoded.get("alt")
+                alt = next((decoded[key] for key in ("altitude", "alt") if decoded.get(key) is not None), None)
                 if alt is not None: update_aircraft(icao, "alt", alt)
                 if alt == "GROUND":
                     update_aircraft(icao, "air_ground", "GROUND")
@@ -4282,13 +4309,13 @@ def process_frame(frame):
                 elif decoded.get("on_ground") is False or decoded.get("onground") is False:
                     update_aircraft(icao, "air_ground", "AIR")
                 if decoded.get("squawk") is not None: update_aircraft(icao, "squawk", decoded["squawk"])
-                speed = decoded.get("groundspeed") or decoded.get("gs")
+                speed = next((decoded[key] for key in ("groundspeed", "gs") if decoded.get(key) is not None), None)
                 if speed is not None: update_aircraft(icao, "speed", speed)
-                tas = decoded.get("true_airspeed") or decoded.get("tas")
+                tas = next((decoded[key] for key in ("true_airspeed", "tas") if decoded.get(key) is not None), None)
                 if tas is not None: update_aircraft(icao, "tas", tas)
-                track = decoded.get("track") or decoded.get("true_track") or decoded.get("trk")
+                track = next((decoded[key] for key in ("track", "true_track", "trk") if decoded.get(key) is not None), None)
                 if track is not None: update_aircraft(icao, "track", round(float(track), 2))
-                heading = decoded.get("magnetic_heading") or decoded.get("heading") or decoded.get("hdg")
+                heading = next((decoded[key] for key in ("magnetic_heading", "heading", "hdg") if decoded.get(key) is not None), None)
                 if heading is not None: update_aircraft(icao, "heading", round(float(heading), 2))
                 if decoded.get("roll") is not None: update_aircraft(icao, "roll", round(float(decoded["roll"]), 2))
                 
@@ -4763,8 +4790,6 @@ def compute_display_heading(data, now):
     Hysteresis: reject jump > 45° in < HYSTERESIS_WINDOW_S unless supported by track_rate.
     """
     # --- Tuning constants ---
-    TRACK_FRESHNESS_S = 8.0
-    HEADING_FRESHNESS_S = 12.0
     SEL_HDG_FRESHNESS_S = 30.0
     HYSTERESIS_WINDOW_S = 2.0
     MAX_NORMAL_TURN_RATE = 6.0  # degrees/second (standard rate turn ~3°/s, allow 2x)
@@ -4993,6 +5018,8 @@ if __name__ == "__main__":
     threading.Thread(target=run_reaper_loop, daemon=True).start()
     threading.Thread(target=archivist_loop, daemon=True).start()
     threading.Thread(target=run_trail_recorder_loop, daemon=True).start()
+    if RUNTIME_CONFIG["3DGEO_AUTO_EXPORT_ENABLE"]:
+        threading.Thread(target=run_auto_export_loop, daemon=True).start()
     threading.Thread(target=run_http_server, daemon=True).start()
     threading.Thread(target=run_audit_monitor, daemon=True).start()
     threading.Thread(target=run_waypoint_scoring_monitor, daemon=True).start()
