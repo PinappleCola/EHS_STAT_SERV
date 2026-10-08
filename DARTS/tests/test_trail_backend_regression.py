@@ -376,6 +376,32 @@ class TrailBackendRegressionTests(unittest.TestCase):
         for field in ("alt", "speed", "tas", "track", "heading"):
             self.assertIn((field, 0), updates)
 
+    def test_auto_export_flushes_boundary_observations_before_query(self):
+        first = 11_000_000
+        records = DARTS.build_trail_records(self._snapshot("BUFFER", -33, 151, first), first, self.cfg)
+        records += DARTS.build_trail_records(self._snapshot("BUFFER", -33.0001, 151.0001, first + 1000), first + 1000, self.cfg)
+        self.assertEqual(DARTS.query_trail_rows(first, first + 1000), [])
+        with tempfile.TemporaryDirectory() as directory:
+            store = DARTS.Export3DStore(str(Path(directory) / "exports.db"), directory)
+            try:
+                with patch.object(DARTS, "export3d_store", store), patch.object(DARTS, "trail_pending_records", records):
+                    payload, filename = DARTS.export_trails_3d(first, first + 1000, is_auto=True)
+                    self.assertEqual(len(payload["features"]), 1)
+                    self.assertTrue(filename.startswith("AUTO_3DSPAT_"))
+                    self.assertEqual(records, [])
+            finally:
+                store.close()
+
+    def test_recorder_error_truncates_shared_buffer_in_place(self):
+        records = [("pending",)] * 6
+        cfg = copy.deepcopy(self.cfg)
+        cfg["persistence"]["batch_size"] = 1
+        with patch.object(DARTS, "trail_pending_records", records), patch.object(DARTS, "get_trail_config_snapshot", return_value=cfg), patch.object(DARTS, "snapshot_trail_aircraft_state", return_value={}), patch.object(DARTS, "persist_trail_records", side_effect=RuntimeError("write failure")), patch.object(DARTS.time, "sleep", side_effect=StopIteration):
+            with self.assertRaises(StopIteration):
+                DARTS.run_trail_recorder_loop()
+            self.assertIs(DARTS.trail_pending_records, records)
+            self.assertEqual(len(records), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2840,6 +2840,8 @@ load_trail_config()
 trail_db_conn = None
 export3d_store = None
 auto_export_pending_from_ms = None
+trail_pending_records = []
+trail_record_buffer_lock = threading.Lock()
 trail_db_lock = threading.Lock()
 trail_runtime_state = {}
 trail_runtime_state_lock = threading.Lock()
@@ -3346,8 +3348,15 @@ def build_geojson3d_from_trail_rows(rows, apply_backstop=False):
 
 
 def export_trails_3d(from_ms, to_ms, icao=None, is_auto=False):
+    def query_flushed_rows(start, end, **kwargs):
+        with trail_record_buffer_lock:
+            if trail_pending_records:
+                persist_trail_records(trail_pending_records)
+                trail_pending_records.clear()
+        return query_trail_rows(start, end, **kwargs)
+
     return export3d_store.export(
-        from_ms, to_ms, query_trail_rows, build_geojson3d_from_trail_rows,
+        from_ms, to_ms, query_flushed_rows, build_geojson3d_from_trail_rows,
         is_auto=is_auto, icao=icao,
     )
 
@@ -3369,34 +3378,37 @@ def run_auto_export_loop():
 
 
 def run_trail_recorder_loop():
-    pending_records = []
+    pending_records = trail_pending_records
     last_flush_at = time.time()
     last_prune_at = 0.0
     while True:
         cycle_started = time.time()
         trail_cfg = get_trail_config_snapshot()
-        now_ms = int(cycle_started * 1000)
         try:
-            pending_records.extend(build_trail_records(snapshot_trail_aircraft_state(), now_ms, trail_cfg))
-            if pending_records and (
-                (cycle_started - last_flush_at) >= trail_cfg["persistence"]["flush_interval_seconds"]
-                or len(pending_records) >= trail_cfg["persistence"]["batch_size"]
-            ):
-                persist_trail_records(pending_records)
-                pending_records = []
-                last_flush_at = cycle_started
-
-            if (cycle_started - last_prune_at) >= trail_cfg["persistence"]["prune_interval_seconds"]:
-                if pending_records:
+            with trail_record_buffer_lock:
+                cycle_started = time.time()
+                now_ms = int(cycle_started * 1000)
+                pending_records.extend(build_trail_records(snapshot_trail_aircraft_state(), now_ms, trail_cfg))
+                if pending_records and (
+                    (cycle_started - last_flush_at) >= trail_cfg["persistence"]["flush_interval_seconds"]
+                    or len(pending_records) >= trail_cfg["persistence"]["batch_size"]
+                ):
                     persist_trail_records(pending_records)
-                    pending_records = []
+                    pending_records.clear()
                     last_flush_at = cycle_started
-                prune_trail_records(now_ms)
-                last_prune_at = cycle_started
+
+                if (cycle_started - last_prune_at) >= trail_cfg["persistence"]["prune_interval_seconds"]:
+                    if pending_records:
+                        persist_trail_records(pending_records)
+                        pending_records.clear()
+                        last_flush_at = cycle_started
+                    prune_trail_records(now_ms)
+                    last_prune_at = cycle_started
         except Exception as exc:
             max_buffer = max(1, int(trail_cfg["persistence"]["batch_size"])) * 4
-            if len(pending_records) > max_buffer:
-                pending_records = pending_records[-max_buffer:]
+            with trail_record_buffer_lock:
+                if len(pending_records) > max_buffer:
+                    del pending_records[:-max_buffer]
             print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.RED}[TRAIL] Recorder error: {exc}{ANSI.RESET}")
 
         sleep_for = max(0.05, trail_cfg["persistence"]["sample_interval_seconds"] - (time.time() - cycle_started))
