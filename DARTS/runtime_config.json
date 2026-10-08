@@ -5,6 +5,9 @@
     "ws_port": 8765,
     "receiver_id": "ADSBEE-01",
     "rx_mode": "A",
+    "3DGEO_AUTO_EXPORT_ENABLE": 1,
+    "3DGEO_AUTO_EXPORT_DAILY_TIME": "2400",
+    "3DGEO_AUTO_EXPORT_TIMEZONE": "Australia/Sydney",
     "receiver_a": {
         "port": "COM5",
         "baud": 115200,

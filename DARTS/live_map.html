@@ -1536,7 +1536,7 @@
             }
         });
 
-        // Experimental 3D export is intentionally separate from the existing 2D download.
+        // 3D export is intentionally separate from the existing 2D download.
         async function exportTrail3DGeoJSON() {
             const nowMs = Date.now();
             const { fromMs, toMs } = getTrailRangeWindow(nowMs);
@@ -1547,7 +1547,16 @@
             const disposition = response.headers.get('content-disposition') || '';
             const filenameStarMatch = disposition.match(/filename\*\s*=\s*([^;]+)/i);
             const filenameMatch = disposition.match(/filename\s*=\s*"?([^";]+)"?/i);
-            const fallbackName = `darts_trails_${fromMs}_${toMs}_3d.geojson`;
+            const exportMetadata = JSON.parse(await blob.text()).metadata || {};
+            const localParts = new Intl.DateTimeFormat('en-AU', {
+                timeZone: 'Australia/Sydney', day: '2-digit', month: '2-digit',
+                year: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+            }).formatToParts(new Date(fromMs));
+            const part = type => localParts.find(item => item.type === type).value;
+            const month = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'][Number(part('month')) - 1];
+            const minutes = String(Math.min(9999, Math.max(0, Math.floor((toMs - fromMs) / 60000)))).padStart(4, '0');
+            const fallbackName = exportMetadata.filename ||
+                `3DSPAT_${part('day')}${month}${part('year')}_${part('hour')}${part('minute')}_${minutes}_0000.geojson`;
             const extractDispositionFilename = () => {
                 if (filenameStarMatch && filenameStarMatch[1]) {
                     const rawValue = filenameStarMatch[1].trim();

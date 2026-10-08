@@ -4,3 +4,5 @@ __pycache__/
 DARTS/*.db-wal
 DARTS/*.db-shm
 DARTS/data/
+DARTS/3DSPAT_SAVES/
+DARTS/AUTO_3DSPAT_SAVES/
