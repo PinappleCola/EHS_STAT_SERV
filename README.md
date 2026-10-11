@@ -138,6 +138,20 @@ start-sample historical telemetry, never current live-state backfills. Track
 expires after 8 seconds; heading and other telemetry expire after 12 seconds.
 Unobserved TCAS (including the initial UI default `CLEAN`), stale values, invalid
 numbers, and fields absent in older rows export as `null`. Squawk remains text.
+The v2 properties omit all three `vert_rate_*` fields; stored telemetry is
+unchanged. `roll_deg` is rounded to whole integer degrees (or `null`).
+Longitude, latitude, and feet altitudes retain full precision; the existing
+pressure-altitude conversion to 0.1 m is unchanged.
+
+Exports read database rows in batches, spool the snapshot to temporary disk
+storage, and serialize features incrementally to an atomic `.part` file.
+HTTP downloads stream that completed file. Server console logs show the window,
+auto flag, queried row count, progress every 10,000 features (aircraft, bytes,
+elapsed time), and completion or failure. The manual download logs bytes received
+in the browser console and uses `Content-Disposition` for the filename without
+re-parsing the GeoJSON. The browser still holds the final download blob.
+Nightly failures are logged with a traceback and the exception type/detail in
+`export_log.error`.
 
 Filenames follow `3DSPAT_DDMMMYY_HHMM_MMMM_XXXX.geojson`, for example
 `3DSPAT_08OCT26_1329_0397_00F4.geojson`. Date/time are the **first sample in
@@ -183,9 +197,9 @@ Pruning also protects the pending automatic window until its export attempt
 finishes, including after delayed wakes.
 
 In Kepler.gl, enable 3D/elevation, colour by `altitude_ft`, size the stroke by
-`groundspeed_kt` (or a derived `abs(vert_rate_fpm)`), filter on `tcas_active`,
+`groundspeed_kt`, filter on `tcas_active`,
 and use epoch-seconds `start_ts` for the time filter. Metadata identifies
-schema `darts-3dspat-v1`, units, UTC generation/window times, filename and serial.
+schema `darts-3dspat-v2`, units, UTC generation/window times, filename and serial.
 Decoder-derived values are for visualisation, not safety-critical decisions;
 see `DARTS/DATA_VALIDITY.md`.
 
