@@ -4,6 +4,7 @@ import sqlite3
 import threading
 import unittest
 import json
+import io
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -221,7 +222,9 @@ class TrailBackendRegressionTests(unittest.TestCase):
         self.assertEqual(three_d["features"][0]["properties"]["start_ts"], t0 // 1000)
         self.assertIsNone(three_d["features"][0]["properties"]["groundspeed_kt"])
         self.assertEqual([point[2] for point in three_d["features"][1]["geometry"]["coordinates"]], [-13.7, -13.7])
-        self.assertEqual(three_d["metadata"]["schema"], "darts-3dspat-v1")
+        self.assertEqual(three_d["metadata"]["schema"], "darts-3dspat-v2")
+        streamed = DARTS.stream_geojson3d_from_trail_rows(iter(rows), apply_backstop=True)
+        self.assertEqual(list(streamed["features"]), three_d["features"])
         for feature in three_d["features"]:
             self.assertFalse(any(isinstance(value, list) for value in feature["properties"].values()))
             self.assertNotIn("start_time_ms", feature["properties"])
@@ -231,28 +234,38 @@ class TrailBackendRegressionTests(unittest.TestCase):
 
     def test_3d_export_handler_reads_rows_and_sets_download_headers(self):
         class Response:
+            def __init__(self):
+                self.wfile = io.BytesIO()
+                self.headers = {}
+
             def _parse_trail_range(self, query):
                 return 1000, 2000, "ALT001"
 
-            def _send_bytes(self, body, **kwargs):
-                self.body = body
-                self.kwargs = kwargs
+            def send_response(self, status):
+                self.status = status
+
+            def send_header(self, key, value):
+                self.headers[key] = value
+
+            def end_headers(self):
+                pass
 
         row = (1, "ALT001", 1000, -33.0, 151.0, "-7", 0, "ALT", "RX", "A", None)
         row2 = (2, "ALT001", 2000, -33.0001, 151.0001, "GROUND", 1, "ALT", "RX", "A", None)
         response = Response()
         with tempfile.TemporaryDirectory() as directory:
             store = DARTS.Export3DStore(str(Path(directory) / "trails.db"), directory)
-            with patch.object(DARTS, "export3d_store", store), patch.object(DARTS, "query_trail_rows", return_value=[row, row2]) as query:
+            with patch.object(DARTS, "export3d_store", store), patch.object(DARTS, "iter_trail_rows", return_value=iter([row, row2])) as query:
                 DARTS.DARTSAPIHandler._handle_export_trails_geojson_3d(response, {})
-            payload = json.loads(response.body)
+            payload = json.loads(response.wfile.getvalue())
             saved = Path(directory) / "3DSPAT_SAVES" / payload["metadata"]["filename"]
             self.assertEqual(json.loads(saved.read_text()), payload)
             store.close()
         query.assert_called_once_with(1000, 2000, icao="ALT001", apply_backstop=False)
-        self.assertEqual(response.kwargs["content_type"], "application/geo+json")
-        self.assertIn('3DSPAT_01JAN70_1000_0000_0000.geojson', response.kwargs["extra_headers"]["Content-Disposition"])
-        self.assertEqual(json.loads(response.body)["features"][0]["geometry"]["coordinates"],
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers["Content-Type"], "application/geo+json")
+        self.assertIn('3DSPAT_01JAN70_1000_0000_0000.geojson', response.headers["Content-Disposition"])
+        self.assertEqual(json.loads(response.wfile.getvalue())["features"][0]["geometry"]["coordinates"],
                          [[151.0, -33.0, -2.1], [151.0001, -33.0001, 0]])
 
     def test_stationary_altitude_tcas_squawk_and_ground_changes_are_recorded(self):
@@ -385,7 +398,8 @@ class TrailBackendRegressionTests(unittest.TestCase):
             store = DARTS.Export3DStore(str(Path(directory) / "exports.db"), directory)
             try:
                 with patch.object(DARTS, "export3d_store", store), patch.object(DARTS, "trail_pending_records", records):
-                    payload, filename = DARTS.export_trails_3d(first, first + 1000, is_auto=True)
+                    path, filename = DARTS.export_trails_3d(first, first + 1000, is_auto=True)
+                    payload = json.loads(path.read_text(encoding="utf-8"))
                     self.assertEqual(len(payload["features"]), 1)
                     self.assertTrue(filename.startswith("AUTO_3DSPAT_"))
                     self.assertEqual(records, [])

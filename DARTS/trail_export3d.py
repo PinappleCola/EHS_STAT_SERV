@@ -11,6 +11,8 @@ import math
 import os
 import sqlite3
 import threading
+import tempfile
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -40,8 +42,7 @@ _UNITS = {
     "altitude_ft": "ft", "altitude_start_ft": "ft", "altitude_end_ft": "ft",
     "start_ts": "unix_s", "duration_s": "s",
     "groundspeed_kt": "kt", "track_deg_true": "deg_true",
-    "heading_deg_mag": "deg_mag", "vert_rate_fpm": "ft/min",
-    "vert_rate_baro_fpm": "ft/min", "vert_rate_inertial_fpm": "ft/min",
+    "heading_deg_mag": "deg_mag",
     "roll_deg": "deg", "tas_kt": "kt", "ias_kt": "kt", "mach": "Mach",
     "tcas_ra": "text", "squawk": "code", "rssi_dbfs": "dBFS",
     "position_age_s": "s",
@@ -80,24 +81,41 @@ def _is_observation(row):
             and -90 <= lat <= 90 and -180 <= lon <= 180)
 
 
-def build_geojson3d(rows):
-    """Build one two-coordinate feature per adjacent valid sample pair.
+def stream_geojson3d(rows):
+    """Stream a collection from aircraft/time-ordered rows.
 
     Markers reset adjacency even when they share a timestamp with a sample.
     Missing airborne altitude (or invalid coordinates) breaks rather than
     inventing a sea-level point. Properties belong to the start sample.
     """
-    rows = sorted(rows, key=lambda r: (
-        str(r[1]), int(r[2]), 0 if r[10] else 1, r[0] or 0))
-    features = []
+    metadata = {
+        "schema": "darts-3dspat-v2",
+        "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "units": dict(_UNITS), "timezone": "Australia/Sydney",
+        "serial": None, "auto": False, "filename": None,
+        "feature_count": 0,
+        "data_first_ms": None, "data_last_ms": None,
+        "window_from": None, "window_to": None,
+    }
+    return {"type": "FeatureCollection",
+            "features": _iter_features(rows, metadata), "metadata": metadata}
+
+
+def _iter_features(rows, metadata):
+    """Consume aircraft/time-ordered rows, retaining only adjacency state."""
     previous = None
     aircraft = None
     seen = set()
+    seen_timestamp = None
     segment_index = 0
     trail_id = None
     first_ms = None
     last_ms = None
     for row in rows:
+        timestamp_key = (row[1], int(row[2]))
+        if timestamp_key != seen_timestamp:
+            seen.clear()
+            seen_timestamp = timestamp_key
         sample = dict(zip(_BASE_COLUMNS + TRAIL_TELEMETRY_COLUMNS, row))
         for column in TRAIL_TELEMETRY_COLUMNS:
             sample.setdefault(column, None)
@@ -142,7 +160,10 @@ def build_geojson3d(rows):
                     lon, lat, altitude):
                 previous = sample
                 continue
-            properties = {column: previous[column] for column in TRAIL_TELEMETRY_COLUMNS}
+            properties = {column: previous[column] for column in TRAIL_TELEMETRY_COLUMNS
+                          if not column.startswith("vert_rate_")}
+            properties["roll_deg"] = (
+                None if previous["roll_deg"] is None else round(previous["roll_deg"]))
             start_ms, end_ms = previous["ts_ms"], sample["ts_ms"]
             properties.update({
                 "icao": aircraft, "callsign": _text(previous["callsign"]),
@@ -159,7 +180,8 @@ def build_geojson3d(rows):
                 "source_label": _text(previous["source_label"]),
                 "receiver_id": _text(previous["receiver_id"]),
             })
-            features.append({
+            metadata["feature_count"] += 1
+            yield {
                 "type": "Feature", "id": f"{aircraft}:{start_ms}:{segment_index}",
                 "geometry": {
                     "type": "LineString",
@@ -169,22 +191,23 @@ def build_geojson3d(rows):
                     ],
                 },
                 "properties": properties,
-            })
+            }
             segment_index += 1
         previous = sample
-    return {
-        "type": "FeatureCollection", "features": features,
-        "metadata": {
-            "schema": "darts-3dspat-v1",
-            "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            "units": dict(_UNITS), "timezone": "Australia/Sydney",
-            "serial": None, "auto": False, "filename": None,
-            "feature_count": len(features),
-            "data_first_ms": first_ms, "data_last_ms": last_ms,
-            "window_from": None if first_ms is None else _iso_ms(first_ms),
-            "window_to": None if last_ms is None else _iso_ms(last_ms),
-        },
-    }
+    metadata.update({
+        "data_first_ms": first_ms, "data_last_ms": last_ms,
+        "window_from": None if first_ms is None else _iso_ms(first_ms),
+        "window_to": None if last_ms is None else _iso_ms(last_ms),
+    })
+
+
+def build_geojson3d(rows):
+    """Compatibility builder for callers needing an in-memory collection."""
+    rows = sorted(rows, key=lambda r: (
+        str(r[1]), int(r[2]), 0 if r[10] else 1, r[0] or 0))
+    payload = stream_geojson3d(rows)
+    payload["features"] = list(payload["features"])
+    return payload
 
 
 def format_export_filename(first_ms, last_ms, serial, is_auto=False):
@@ -297,6 +320,7 @@ class Export3DStore:
                  first_ms, last_ms, error, log_id))
 
     def export(self, from_ms, to_ms, query_rows, build_payload, is_auto=False, icao=None):
+        """Save incrementally and return (path, filename), or an empty auto payload."""
         from_ms, to_ms = int(from_ms), int(to_ms)
         log_id, serial = self._reserve(from_ms, to_ms, icao, is_auto)
         filename = None
@@ -305,48 +329,88 @@ class Export3DStore:
         destination = None
         first_ms = last_ms = None
         aircraft_count = 0
+        started = time.monotonic()
+        bytes_written = 0
+        LOGGER.info("3D export starting: window=%s..%s auto=%s", from_ms, to_ms, is_auto)
         try:
             if to_ms < from_ms:
                 raise ValueError("export window ends before it starts")
-            rows = list(query_rows(from_ms, to_ms, icao=icao, apply_backstop=False))
-            observations = [r for r in rows if _is_observation(r)]
-            if observations:
-                times = [int(r[2]) for r in observations]
-                first_ms, last_ms = min(times), max(times)
-                aircraft_count = len({r[1] for r in observations})
-            payload = build_payload(rows, apply_backstop=True)
-            count = len(payload["features"])
-            metadata = payload.setdefault("metadata", {})
-            metadata.update({
-                "serial": None if serial is None else f"{serial:04X}", "auto": bool(is_auto),
-                "filename": None, "feature_count": count,
-                "aircraft_count": aircraft_count,
-                "window_from": _iso_ms(from_ms), "window_to": _iso_ms(to_ms),
-                "data_first_ms": first_ms, "data_last_ms": last_ms,
-            })
-            if is_auto and not observations:
-                self._finish(log_id, "empty", count=0)
-                return payload, None
-            if serial is None:
-                serial = self._reserve_auto_serial(log_id)
-            filename = format_export_filename(
-                from_ms if first_ms is None else first_ms,
-                from_ms if last_ms is None else last_ms, serial, is_auto)
-            metadata.update({"serial": f"{serial:04X}", "filename": filename})
-            folder = self.base_dir / ("AUTO_3DSPAT_SAVES" if is_auto else "3DSPAT_SAVES")
-            os.makedirs(str(folder), exist_ok=True)
-            destination = folder / filename
-            temporary = folder / f".{filename}.{uuid.uuid4().hex}.part"
-            with temporary.open("x", encoding="utf-8") as stream:
-                json.dump(payload, stream, allow_nan=False)
-                stream.flush()
-                os.fsync(stream.fileno())
+            # Spool the query snapshot to disk so filename totals are known before
+            # streaming features, without retaining a full day's rows in RAM.
+            with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as rows_file:
+                aircraft_seen = set()
+                row_count = 0
+                for row in query_rows(from_ms, to_ms, icao=icao, apply_backstop=False):
+                    rows_file.write(json.dumps(row) + "\n")
+                    row_count += 1
+                    if _is_observation(row):
+                        timestamp = int(row[2])
+                        first_ms = timestamp if first_ms is None else min(first_ms, timestamp)
+                        last_ms = timestamp if last_ms is None else max(last_ms, timestamp)
+                        aircraft_seen.add(row[1])
+                aircraft_count = len(aircraft_seen)
+                LOGGER.info("3D export queried %d rows, %d aircraft", row_count, aircraft_count)
+                rows_file.seek(0)
+                payload = build_payload(
+                    (tuple(json.loads(line)) for line in rows_file), apply_backstop=True)
+                metadata = payload.setdefault("metadata", {})
+                if is_auto and first_ms is None:
+                    payload["features"] = []
+                    metadata.update({
+                        "serial": None, "auto": True, "filename": None,
+                        "feature_count": 0, "aircraft_count": 0,
+                        "window_from": _iso_ms(from_ms), "window_to": _iso_ms(to_ms),
+                        "data_first_ms": None, "data_last_ms": None,
+                    })
+                    self._finish(log_id, "empty", count=0)
+                    LOGGER.info("3D export complete: empty auto window, %.1fs",
+                                time.monotonic() - started)
+                    return payload, None
+                if serial is None:
+                    serial = self._reserve_auto_serial(log_id)
+                filename = format_export_filename(
+                    from_ms if first_ms is None else first_ms,
+                    from_ms if last_ms is None else last_ms, serial, is_auto)
+                folder = self.base_dir / ("AUTO_3DSPAT_SAVES" if is_auto else "3DSPAT_SAVES")
+                os.makedirs(str(folder), exist_ok=True)
+                destination = folder / filename
+                temporary = folder / f".{filename}.{uuid.uuid4().hex}.part"
+                count = 0
+                emitted_aircraft = set()
+                with temporary.open("xb") as stream:
+                    def write(text):
+                        nonlocal bytes_written
+                        data = text.encode("utf-8")
+                        stream.write(data)
+                        bytes_written += len(data)
+
+                    write('{"type":"FeatureCollection","features":[')
+                    for feature in payload["features"]:
+                        write(("," if count else "") + json.dumps(feature, allow_nan=False))
+                        count += 1
+                        emitted_aircraft.add(feature["properties"]["icao"])
+                        if count % 10000 == 0:
+                            LOGGER.info("3D export progress: %d features, %d aircraft, "
+                                        "%d bytes, %.1fs", count, len(emitted_aircraft),
+                                        bytes_written, time.monotonic() - started)
+                    metadata.update({
+                        "serial": f"{serial:04X}", "auto": bool(is_auto),
+                        "filename": filename, "feature_count": count,
+                        "aircraft_count": aircraft_count,
+                        "window_from": _iso_ms(from_ms), "window_to": _iso_ms(to_ms),
+                        "data_first_ms": first_ms, "data_last_ms": last_ms,
+                    })
+                    write('],"metadata":' + json.dumps(metadata, allow_nan=False) + "}")
+                    stream.flush()
+                    os.fsync(stream.fileno())
             os.replace(str(temporary), str(destination))
             temporary = None
-            self._finish(log_id, "ok" if observations else "empty", filename, count,
+            self._finish(log_id, "ok" if first_ms is not None else "empty", filename, count,
                          path=str(destination), first_ms=first_ms, last_ms=last_ms,
                          aircraft_count=aircraft_count)
-            return payload, filename
+            LOGGER.info("3D export complete: %s, %d features, %d aircraft, %d bytes, %.1fs",
+                        filename, count, aircraft_count, bytes_written, time.monotonic() - started)
+            return destination, filename
         except Exception as exc:
             LOGGER.exception("3D trail export failed")
             self._finish(log_id, "error", filename, count, f"{type(exc).__name__}: {exc}",

@@ -1,10 +1,10 @@
 import importlib.util
+import io
 import json
-import shutil
 import sqlite3
+import tempfile
 import threading
 import unittest
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer
@@ -43,7 +43,11 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(first["properties"]["groundspeed_kt"], 200)
         self.assertEqual(second["properties"]["groundspeed_kt"], 240)
         for column in EXPORT.TRAIL_TELEMETRY_COLUMNS:
-            self.assertIn(column, first["properties"])
+            if column.startswith("vert_rate_"):
+                self.assertNotIn(column, first["properties"])
+                self.assertNotIn(column, payload["metadata"]["units"])
+            else:
+                self.assertIn(column, first["properties"])
         self.assertEqual(first["properties"]["squawk"], "0123")
         self.assertFalse(first["properties"]["tcas_active"])
         self.assertEqual(first["properties"]["start_ts"], 1)
@@ -58,7 +62,7 @@ class BuilderTests(unittest.TestCase):
             "altitude_ft", "altitude_start_ft", "altitude_end_ft",
             "tcas_active", "emergency", "on_ground", "segment_index", "trail_id",
             "source_label", "receiver_id",
-        } | set(EXPORT.TRAIL_TELEMETRY_COLUMNS)
+        } | {c for c in EXPORT.TRAIL_TELEMETRY_COLUMNS if not c.startswith("vert_rate_")}
         self.assertEqual(set(first["properties"]), expected)
         self.assertEqual(first["properties"]["segment_index"], 0)
         self.assertEqual(second["properties"]["segment_index"], 1)
@@ -66,7 +70,7 @@ class BuilderTests(unittest.TestCase):
         self.assertTrue(all(not isinstance(v, (list, dict)) for v in first["properties"].values()))
         self.assertEqual(payload["metadata"]["units"]["altitude_ft"], "ft")
         self.assertEqual(payload["metadata"]["units"]["z"], "m (pressure altitude converted)")
-        self.assertEqual(payload["metadata"]["schema"], "darts-3dspat-v1")
+        self.assertEqual(payload["metadata"]["schema"], "darts-3dspat-v2")
         self.assertIsNone(payload["metadata"]["serial"])
         self.assertFalse(payload["metadata"]["auto"])
         self.assertIsNone(payload["metadata"]["filename"])
@@ -86,7 +90,38 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(len(payload["features"]), 2)
         self.assertEqual([f["properties"]["icao"] for f in payload["features"]], ["ABC123", "DEF456"])
         self.assertTrue(all(payload["features"][0]["properties"][c] is None
-                            for c in EXPORT.TRAIL_TELEMETRY_COLUMNS))
+                            for c in EXPORT.TRAIL_TELEMETRY_COLUMNS
+                            if not c.startswith("vert_rate_")))
+
+    def test_streamed_features_match_builder_with_precision_and_integer_roll(self):
+        samples = [
+            row(1, 1000, altitude=10000.123456789, lat=-33.123456789123,
+                lon=151.123456789123, telemetry=True),
+            row(2, 2000, altitude=10100.987654321, lat=-33.123456789124,
+                lon=151.123456789124, telemetry=True),
+            row(3, 3000, telemetry=True),
+        ]
+        first = list(samples[0])
+        first[17] = -3.47218
+        samples[0] = tuple(first)
+        second = list(samples[1])
+        second[17] = None
+        samples[1] = tuple(second)
+        streamed = EXPORT.stream_geojson3d(iter(samples))
+        self.assertFalse(isinstance(streamed["features"], list))
+        features = list(streamed["features"])
+        expected = EXPORT.build_geojson3d(samples)
+        self.assertEqual(features, expected["features"])
+        self.assertEqual(streamed["metadata"]["feature_count"], 2)
+        properties = features[0]["properties"]
+        self.assertEqual(properties["roll_deg"], -3)
+        self.assertIsInstance(properties["roll_deg"], int)
+        self.assertIsNone(features[1]["properties"]["roll_deg"])
+        self.assertEqual(features[0]["geometry"]["coordinates"][0], [
+            samples[0][4], samples[0][3], round(samples[0][5] * 0.3048, 1)])
+        self.assertEqual(properties["altitude_start_ft"], samples[0][5])
+        self.assertEqual(properties["altitude_end_ft"], samples[1][5])
+        self.assertEqual(properties["altitude_ft"], (samples[0][5] + samples[1][5]) / 2)
 
     def test_distinct_altitude_or_coordinate_not_deduplicated(self):
         payload = EXPORT.build_geojson3d([
@@ -195,8 +230,8 @@ class FilenameTests(unittest.TestCase):
 
 class StoreTests(unittest.TestCase):
     def setUp(self):
-        self.directory = Path(__file__).resolve().parent / (".export3d-tests-" + uuid.uuid4().hex)
-        self.directory.mkdir()
+        self.temp_directory = tempfile.TemporaryDirectory()
+        self.directory = Path(self.temp_directory.name)
         self.database = self.directory / "db" / "trails.sqlite"
         self.base = self.directory / "nested"
         self.output = self.base / "3DSPAT_SAVES"
@@ -206,7 +241,13 @@ class StoreTests(unittest.TestCase):
 
     def tearDown(self):
         self.store.close()
-        shutil.rmtree(self.directory)
+        self.temp_directory.cleanup()
+
+    def export_payload(self, *args, **kwargs):
+        result, filename = self.store.export(*args, **kwargs)
+        if isinstance(result, Path):
+            result = json.loads(result.read_text(encoding="utf-8"))
+        return result, filename
 
     def logs(self):
         with sqlite3.connect(self.database) as connection:
@@ -214,9 +255,11 @@ class StoreTests(unittest.TestCase):
             return [dict(r) for r in connection.execute("SELECT * FROM export_log ORDER BY id")]
 
     def test_saved_json_query_builder_contract_and_metadata(self):
-        payload, filename = self.store.export(1000, 2000, self.query, self.builder, icao="ABC123")
+        payload, filename = self.export_payload(1000, 2000, self.query, self.builder, icao="ABC123")
         self.query.assert_called_once_with(1000, 2000, icao="ABC123", apply_backstop=False)
-        self.builder.assert_called_once_with(self.query.return_value, apply_backstop=True)
+        self.builder.assert_called_once()
+        self.assertEqual(self.builder.call_args.kwargs, {"apply_backstop": True})
+        self.assertFalse(isinstance(self.builder.call_args.args[0], list))
         self.assertEqual(json.loads((self.output / filename).read_text()), payload)
         self.assertEqual(payload["metadata"]["serial"], "0000")
         self.assertFalse(payload["metadata"]["auto"])
@@ -243,19 +286,19 @@ class StoreTests(unittest.TestCase):
         with sqlite3.connect(self.database) as connection:
             connection.execute("DELETE FROM export_log")
         self.store = EXPORT.Export3DStore(self.database, self.base)
-        payload, _ = self.store.export(1000, 2000, self.query, self.builder)
+        payload, _ = self.export_payload(1000, 2000, self.query, self.builder)
         self.assertEqual(payload["metadata"]["serial"], "0001")
 
     def test_serial_wraps_after_ffff(self):
         with sqlite3.connect(self.database) as connection:
             connection.execute("UPDATE export_serial SET next_serial = 65535")
-        first, _ = self.store.export(1000, 2000, self.query, self.builder)
-        second, _ = self.store.export(1000, 2000, self.query, self.builder)
+        first, _ = self.export_payload(1000, 2000, self.query, self.builder)
+        second, _ = self.export_payload(1000, 2000, self.query, self.builder)
         self.assertEqual([first["metadata"]["serial"], second["metadata"]["serial"]], ["FFFF", "0000"])
 
     def test_empty_auto_no_serial_no_file_manual_empty_saves(self):
         self.query.return_value = []
-        payload, filename = self.store.export(1000, 2000, self.query, self.builder, is_auto=True)
+        payload, filename = self.export_payload(1000, 2000, self.query, self.builder, is_auto=True)
         self.assertIsNone(filename)
         self.assertIsNone(payload["metadata"]["serial"])
         self.assertEqual(list(self.output.iterdir()), [])
@@ -265,12 +308,12 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.logs()[0]["serial_hex"], "")
         self.assertEqual(self.logs()[0]["filename"], "")
         self.assertEqual(self.logs()[0]["path"], "")
-        payload, filename = self.store.export(1000, 2000, self.query, self.builder)
+        payload, filename = self.export_payload(1000, 2000, self.query, self.builder)
         self.assertEqual(payload["metadata"]["serial"], "0000")
         self.assertTrue((self.output / filename).exists())
 
     def test_populated_auto_saves_and_consumes_serial(self):
-        payload, filename = self.store.export(1000, 2000, self.query, self.builder, is_auto=True)
+        payload, filename = self.export_payload(1000, 2000, self.query, self.builder, is_auto=True)
         self.assertEqual(payload["metadata"]["serial"], "0000")
         self.assertTrue(payload["metadata"]["auto"])
         self.assertNotIn("is_auto", payload["metadata"])
@@ -291,7 +334,7 @@ class StoreTests(unittest.TestCase):
 
     def test_singleton_auto_observation_saves_even_without_altitude_or_feature(self):
         self.query.return_value = [row(1, 123456, altitude=None)]
-        payload, filename = self.store.export(
+        payload, filename = self.export_payload(
             0, 3600000, self.query, self.builder, is_auto=True)
         self.assertEqual(payload["features"], [])
         self.assertEqual(payload["metadata"]["serial"], "0000")
@@ -305,7 +348,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(log["data_last_ms"], 123456)
         self.assertEqual(log["serial"], 0)
         self.query.return_value = [row(2, 1000), row(3, 2000)]
-        payload, _ = self.store.export(0, 3600000, self.query, self.builder)
+        payload, _ = self.export_payload(0, 3600000, self.query, self.builder)
         self.assertEqual(payload["metadata"]["serial"], "0001")
 
     def test_first_last_data_rows_include_isolated_unknown_altitude_exclude_markers(self):
@@ -314,7 +357,7 @@ class StoreTests(unittest.TestCase):
             row(4, 240000, altitude=None), row(5, 300000, marker="gap_break"),
             row(6, 0, marker="jump_break"), row(7, 360000, lat=None),
         ]
-        payload, filename = self.store.export(0, 3600000, self.query, self.builder)
+        payload, filename = self.export_payload(0, 3600000, self.query, self.builder)
         self.assertEqual(len(payload["features"]), 1)
         self.assertEqual(filename, EXPORT.format_export_filename(60000, 240000, 0))
         self.assertEqual(self.logs()[0]["data_first_ms"], 60000)
@@ -334,7 +377,7 @@ class StoreTests(unittest.TestCase):
         from_ms, to_ms = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
         self.query.return_value = [
             row(1, from_ms, lon=151.1), row(2, to_ms, lon=151.2)]
-        payload, filename = self.store.export(
+        payload, filename = self.export_payload(
             from_ms, to_ms, self.query, self.builder, is_auto=True)
         self.assertEqual(to_ms - from_ms, 25 * 3600000)
         self.query.assert_called_once_with(
@@ -394,6 +437,61 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(list(self.output.iterdir()), [])
         self.assertEqual(self.logs()[0]["status"], "error")
 
+    def test_streamed_save_valid_json_incremental_features_and_progress(self):
+        samples = [row(i, i * 1000, telemetry=True) for i in range(1, 10003)]
+        self.query.return_value = iter(samples)
+        def builder(rows, apply_backstop):
+            payload = EXPORT.stream_geojson3d(rows)
+            features = payload["features"]
+            def checked_features():
+                for feature in features:
+                    self.assertEqual(len(list(self.output.glob(".*.part"))), 1)
+                    yield feature
+            payload["features"] = checked_features()
+            return payload
+        with self.assertLogs(EXPORT.LOGGER, level="INFO") as captured:
+            path, filename = self.store.export(
+                1000, 10002000, self.query, builder)
+        self.assertEqual(path, self.output / filename)
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["features"], EXPORT.build_geojson3d(samples)["features"])
+        self.assertEqual(saved["metadata"]["feature_count"], 10001)
+        self.assertEqual(self.logs()[0]["feature_count"], 10001)
+        messages = "\n".join(captured.output)
+        self.assertIn("queried 10002 rows", messages)
+        self.assertIn("10000 features", messages)
+        self.assertIn("bytes", messages)
+        self.assertIn("complete", messages)
+
+    def test_mid_stream_memory_error_is_audited_and_partial_removed(self):
+        def builder(rows, apply_backstop):
+            payload = EXPORT.stream_geojson3d(rows)
+            features = payload["features"]
+            def failing_features():
+                yield next(features)
+                raise MemoryError("stream failure")
+            payload["features"] = failing_features()
+            return payload
+        with self.assertLogs(EXPORT.LOGGER, level="ERROR"), self.assertRaises(MemoryError):
+            self.store.export(1000, 2000, self.query, builder, is_auto=True)
+        log = self.logs()[0]
+        self.assertEqual(log["status"], "error")
+        self.assertEqual(log["feature_count"], 1)
+        self.assertEqual(log["error"], "MemoryError: stream failure")
+        self.assertEqual(list((self.base / "AUTO_3DSPAT_SAVES").iterdir()), [])
+
+    def test_streamed_feature_nan_is_rejected(self):
+        def builder(rows, apply_backstop):
+            payload = EXPORT.stream_geojson3d(rows)
+            feature = next(payload["features"])
+            feature["properties"]["bad"] = float("nan")
+            payload["features"] = iter([feature])
+            return payload
+        with self.assertLogs(EXPORT.LOGGER, level="ERROR"), self.assertRaises(ValueError):
+            self.store.export(1000, 2000, self.query, builder)
+        self.assertEqual(list(self.output.iterdir()), [])
+        self.assertIn("ValueError", self.logs()[0]["error"])
+
     def test_audit_schema_exact_required_columns_and_constraints(self):
         expected = {
             "id", "serial", "serial_hex", "filename", "path", "is_auto", "created_at_utc",
@@ -411,9 +509,10 @@ class StoreTests(unittest.TestCase):
         try:
             def perform(index):
                 store = self.store if index % 2 else other
-                payload, filename = store.export(
+                path, filename = store.export(
                     1000, 2000, lambda *a, **kw: [row(1, 1000), row(2, 2000)],
                     lambda rows, **kw: EXPORT.build_geojson3d(rows), is_auto=bool(index % 3))
+                payload = json.loads(path.read_text(encoding="utf-8"))
                 return int(payload["metadata"]["serial"], 16), filename
             with ThreadPoolExecutor(max_workers=8) as executor:
                 results = list(executor.map(perform, range(24)))
@@ -542,8 +641,8 @@ class ManualHTTPSmokeTests(unittest.TestCase):
             "darts_under_export_http_smoke", Path(__file__).resolve().parents[1] / "darts.py")
         darts = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(darts)
-        directory = Path(__file__).resolve().parent / (".export3d-http-" + uuid.uuid4().hex)
-        directory.mkdir()
+        temp_directory = tempfile.TemporaryDirectory()
+        directory = Path(temp_directory.name)
         server = None
         thread = None
         try:
@@ -568,11 +667,14 @@ class ManualHTTPSmokeTests(unittest.TestCase):
                     disposition = response.headers["Content-Disposition"]
                     self.assertEqual(response.status, 200)
                     self.assertEqual(response.headers["Content-Type"], "application/geo+json")
+                    self.assertEqual(int(response.headers["Content-Length"]), len(body))
+                    self.assertEqual(response.headers["Access-Control-Expose-Headers"],
+                                     "Content-Disposition")
                 payload = json.loads(body)
                 filename = payload["metadata"]["filename"]
                 self.assertIn(f'filename="{filename}"', disposition)
                 self.assertEqual((directory / "3DSPAT_SAVES" / filename).read_bytes(), body)
-                self.assertEqual(payload["metadata"]["schema"], "darts-3dspat-v1")
+                self.assertEqual(payload["metadata"]["schema"], "darts-3dspat-v2")
                 self.assertEqual(len(payload["features"]), 1)
                 self.assertEqual(payload["features"][0]["properties"]["callsign"], "TÉST123")
                 self.assertEqual(payload["features"][0]["geometry"]["coordinates"][0][2], 3048)
@@ -589,7 +691,33 @@ class ManualHTTPSmokeTests(unittest.TestCase):
                 darts.export3d_store.close()
             if darts.trail_db_conn is not None:
                 darts.trail_db_conn.close()
-            shutil.rmtree(directory)
+            temp_directory.cleanup()
+
+    def test_http_handler_writes_bounded_chunks_without_reserializing(self):
+        spec = importlib.util.spec_from_file_location(
+            "darts_under_export_chunks", Path(__file__).resolve().parents[1] / "darts.py")
+        darts = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(darts)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "export.geojson"
+            payload = EXPORT.build_geojson3d([row(i, i * 1000) for i in range(1, 200)])
+            body = json.dumps(payload, allow_nan=False).encode("utf-8")
+            self.assertGreater(len(body), 64 * 1024)
+            path.write_bytes(body)
+            handler = darts.DARTSAPIHandler.__new__(darts.DARTSAPIHandler)
+            handler._parse_trail_range = Mock(return_value=(1000, 200000, None))
+            handler.send_response = Mock()
+            handler.send_header = Mock()
+            handler.end_headers = Mock()
+            handler._send_bytes = Mock(side_effect=AssertionError("not streaming"))
+            handler.wfile = Mock(wraps=io.BytesIO())
+            with patch.object(darts, "export_trails_3d", return_value=(path, path.name)):
+                handler._handle_export_trails_geojson_3d({})
+            chunks = [call.args[0] for call in handler.wfile.write.call_args_list]
+            self.assertEqual(b"".join(chunks), body)
+            self.assertTrue(all(len(chunk) <= 64 * 1024 for chunk in chunks))
+            handler.send_header.assert_any_call("Content-Disposition",
+                                                'attachment; filename="export.geojson"')
 
 
 if __name__ == "__main__":

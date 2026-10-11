@@ -10,6 +10,7 @@ import serial
 import time
 import datetime
 import json
+import logging
 import math
 import copy
 import threading
@@ -25,9 +26,9 @@ import http.server
 import uuid
 from urllib.parse import urlparse, parse_qs
 try:
-    from trail_export3d import TRAIL_TELEMETRY_COLUMNS, Export3DStore, build_geojson3d, parse_daily_time, run_daily_exports, next_scheduled_run, previous_scheduled_run
+    from trail_export3d import TRAIL_TELEMETRY_COLUMNS, Export3DStore, build_geojson3d, stream_geojson3d, parse_daily_time, run_daily_exports, next_scheduled_run, previous_scheduled_run
 except ImportError:
-    from DARTS.trail_export3d import TRAIL_TELEMETRY_COLUMNS, Export3DStore, build_geojson3d, parse_daily_time, run_daily_exports, next_scheduled_run, previous_scheduled_run
+    from DARTS.trail_export3d import TRAIL_TELEMETRY_COLUMNS, Export3DStore, build_geojson3d, stream_geojson3d, parse_daily_time, run_daily_exports, next_scheduled_run, previous_scheduled_run
 
 APP_VERSION = "v57"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1666,19 +1667,29 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             return
 
         try:
-            payload, filename = export_trails_3d(from_ms, to_ms, icao=icao)
+            path, filename = export_trails_3d(from_ms, to_ms, icao=icao)
         except Exception as exc:
             print(f"ERROR: manual 3D export failed: {exc}")
             self._send_json({"error": "3D export failed; see server log"}, status=500)
             return
         trail_cfg = get_trail_config_snapshot()
-        self._send_bytes(
-            json.dumps(payload).encode("utf-8"),
-            content_type="application/geo+json",
-            extra_headers={
-                "Content-Disposition": f'{trail_cfg["export"]["content_disposition"]}; filename="{filename}"'
-            },
-        )
+        with open(path, "rb") as stream:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/geo+json")
+            self.send_header("Content-Length", str(os.fstat(stream.fileno()).st_size))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+            self.send_header("Content-Disposition",
+                             f'{trail_cfg["export"]["content_disposition"]}; filename="{filename}"')
+            self.end_headers()
+            try:
+                while True:
+                    chunk = stream.read(64 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                print(f"ERROR: manual 3D export download disconnected: {filename}")
 
     def do_OPTIONS(self):
         self.send_response(200)
@@ -3183,10 +3194,12 @@ def _trail_sort_rows(rows):
 def apply_trail_break_backstop(rows, trail_cfg=None):
     if not rows:
         return []
+    return list(iter_trail_break_backstop(_trail_sort_rows(rows), trail_cfg))
+
+
+def iter_trail_break_backstop(ordered_rows, trail_cfg=None):
     cfg = _normalize_trail_config(trail_cfg) if trail_cfg is not None else get_trail_config_snapshot()
     max_interval_count = cfg["adaptive_gap"]["history_size"]
-    ordered_rows = _trail_sort_rows(rows)
-    output = []
     current_icao = None
     query_state = {
         "last_point": None,
@@ -3209,12 +3222,12 @@ def apply_trail_break_backstop(rows, trail_cfg=None):
         current_icao = icao
 
         if marker_type:
-            output.append(row)
+            yield row
             _reset_state()
             continue
 
         if lat is None or lon is None:
-            output.append(row)
+            yield row
             continue
 
         lat_value = float(lat)
@@ -3233,18 +3246,15 @@ def apply_trail_break_backstop(rows, trail_cfg=None):
                 query_state["intervals"] = query_state["intervals"][-max_interval_count:]
 
         if break_type:
-            output.append((None, icao, ts_value, None, None, None, None, callsign, source_label, receiver_id, break_type))
+            yield (None, icao, ts_value, None, None, None, None, callsign, source_label, receiver_id, break_type)
             _reset_state()
 
-        output.append(row)
+        yield row
         query_state["last_point"] = {"lat": lat_value, "lon": lon_value}
         query_state["last_point_ts_ms"] = ts_value
         query_state["last_observation_ts_ms"] = ts_value
 
-    return output
-
-
-def query_trail_rows(from_ms, to_ms, icao=None, apply_backstop=True):
+def iter_trail_rows(from_ms, to_ms, icao=None, apply_backstop=True):
     sql = (
         "SELECT id, icao, ts_ms, lat, lon, altitude, on_ground, callsign, source_label, receiver_id, marker_type, "
         + ", ".join(TRAIL_TELEMETRY_COLUMNS) + " "
@@ -3256,10 +3266,27 @@ def query_trail_rows(from_ms, to_ms, icao=None, apply_backstop=True):
         params.append(str(icao).upper())
     sql += " ORDER BY icao ASC, ts_ms ASC, CASE WHEN marker_type IS NULL THEN 1 ELSE 0 END ASC, id ASC"
     with trail_db_lock:
-        rows = trail_db_conn.execute(sql, params).fetchall()
+        cursor = trail_db_conn.execute(sql, params)
+    def batches():
+        try:
+            while True:
+                with trail_db_lock:
+                    batch = cursor.fetchmany(1000)
+                if not batch:
+                    break
+                yield from batch
+        finally:
+            with trail_db_lock:
+                cursor.close()
+
     if not apply_backstop:
-        return rows
-    return apply_trail_break_backstop(rows)
+        yield from batches()
+    else:
+        yield from iter_trail_break_backstop(batches())
+
+
+def query_trail_rows(from_ms, to_ms, icao=None, apply_backstop=True):
+    return list(iter_trail_rows(from_ms, to_ms, icao, apply_backstop))
 
 
 def _ms_to_rfc3339(ms):
@@ -3347,16 +3374,22 @@ def build_geojson3d_from_trail_rows(rows, apply_backstop=False):
     return build_geojson3d(rows)
 
 
+def stream_geojson3d_from_trail_rows(rows, apply_backstop=False):
+    if apply_backstop:
+        rows = iter_trail_break_backstop(rows)
+    return stream_geojson3d(rows)
+
+
 def export_trails_3d(from_ms, to_ms, icao=None, is_auto=False):
     def query_flushed_rows(start, end, **kwargs):
         with trail_record_buffer_lock:
             if trail_pending_records:
                 persist_trail_records(trail_pending_records)
                 trail_pending_records.clear()
-        return query_trail_rows(start, end, **kwargs)
+        return iter_trail_rows(start, end, **kwargs)
 
     return export3d_store.export(
-        from_ms, to_ms, query_flushed_rows, build_geojson3d_from_trail_rows,
+        from_ms, to_ms, query_flushed_rows, stream_geojson3d_from_trail_rows,
         is_auto=is_auto, icao=icao,
     )
 
@@ -4996,6 +5029,7 @@ async def main():
         await asyncio.Future()
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     # On Windows, Python 3.8+ defaults to ProactorEventLoop which can cause
     # issues with some socket/websockets patterns. Force the Selector loop for
     # compatibility with the websockets library.
