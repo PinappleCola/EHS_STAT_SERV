@@ -98,7 +98,7 @@
         }
 
         ['label', 'icon'].forEach((id) => document.getElementById(id).addEventListener('change', saveSettings));
-        Object.keys(DEFAULT_COLORS).forEach((id) => document.getElementById(id).addEventListener('input', saveSettings));
+        Object.keys(DEFAULT_COLORS).forEach((id) => document.getElementById(id).addEventListener('change', saveSettings));
         document.getElementById('dartsUrl').addEventListener('change', saveGlobalSettings);
         document.getElementById('reset').addEventListener('click', () => {
             settings = {};
