@@ -83,4 +83,23 @@ assert.strictEqual(element('btn-network').className, 'btn-action btn-toggle');
 remote('unknown');
 assert.strictEqual(element('btn-network').className, 'btn-action btn-toggle');
 
+const liveGrid = fs.readFileSync(path.join(__dirname, '..', 'live_grid.html'), 'utf8');
+const gridStart = liveGrid.indexOf('    ws.onmessage = (event) => {');
+const gridEnd = liveGrid.indexOf('\n    };', gridStart) + '\n    };'.length;
+assert.ok(gridStart >= 0 && gridEnd > gridStart);
+const gridUpdates = [];
+const gridContext = {
+    ws: {}, console, ledgerCountVal: { innerText: '42' },
+    updateTable: (airframes) => gridUpdates.push(airframes),
+};
+vm.runInNewContext(liveGrid.slice(gridStart, gridEnd), gridContext);
+for (const command of ['toggle_map', 'toggle_ifr', 'toggle_vfr']) {
+    gridContext.ws.onmessage({ data: JSON.stringify({ type: 'ui_command', command }) });
+}
+assert.strictEqual(gridUpdates.length, 0, 'UI commands must not clear grid rows');
+assert.strictEqual(gridContext.ledgerCountVal.innerText, '42');
+gridContext.ws.onmessage({ data: JSON.stringify({ airframes: aircraft }) });
+assert.strictEqual(gridUpdates.length, 1);
+assert.strictEqual(gridUpdates[0][0].icao, 'ABC123');
+
 console.log('ui_commands_regression: OK');
