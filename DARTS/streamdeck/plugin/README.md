@@ -54,23 +54,51 @@ The plugin is plain Node.js with no npm dependencies, so there is nothing to bui
 Requirements: **Stream Deck app 7.1 or newer** (it ships the Node.js 24 runtime the
 plugin uses), on the **same computer** as DARTS.
 
-1. Quit the Stream Deck app.
-2. Copy the whole `com.pinapplecola.darts.sdPlugin` folder into the Stream Deck
-   plugins folder:
+The canonical plugin UUID is **`com.pineapplecola.darts`**. Its folder name,
+manifest UUID and MAP / IFR / VFR action UUIDs must match; do not rename the
+folder or edit its contents.
+
+1. **Fully quit Stream Deck** (Windows: tray icon → Quit; macOS: Stream Deck →
+   Quit). Closing its window is not enough.
+2. For a clean reinstall, remove any previous DARTS plugin folders from the
+   Plugins directory below. Do not merge this download with an edited copy.
+3. Copy **`DARTS/streamdeck/plugin/com.pineapplecola.darts.sdPlugin/`** from the
+   downloaded repository. Copy the **`com.pineapplecola.darts.sdPlugin` folder
+   itself**, not its parent `plugin` folder, into:
    - Windows: `%APPDATA%\Elgato\StreamDeck\Plugins\`
    - macOS: `~/Library/Application Support/com.elgato.StreamDeck/Plugins/`
-3. Start the Stream Deck app. A **DARTS** category appears in the actions list
+4. Verify that `manifest.json` is directly inside the installed `.sdPlugin`
+   folder, with no extra nesting:
+
+   ```text
+   Plugins/
+   └── com.pineapplecola.darts.sdPlugin/
+      ├── manifest.json
+      ├── bin/
+      │   ├── plugin.js
+      │   └── state.js
+      ├── ui/
+      │   └── settings.html
+      └── imgs/
+   ```
+
+   The installed manifest must be at exactly:
+   - Windows: `%APPDATA%\Elgato\StreamDeck\Plugins\com.pineapplecola.darts.sdPlugin\manifest.json`
+   - macOS: `~/Library/Application Support/com.elgato.StreamDeck/Plugins/com.pineapplecola.darts.sdPlugin/manifest.json`
+5. **Restart the Stream Deck app.** A **DARTS** category appears in the actions list
    with **MAP toggle**, **IFR waypoints** and **VFR waypoints**.
-4. Drag each action onto a key.
+6. Drag each action onto a key. When replacing a differently named plugin,
+   remove its old key actions and add these new actions; the new UUID does not
+   inherit the old plugin's settings.
 
 Developers with the Elgato CLI (`npm i -g @elgato/cli`) can instead run
-`streamdeck link com.pinapplecola.darts.sdPlugin` from this folder, or
-`streamdeck pack com.pinapplecola.darts.sdPlugin` to make a double-click
+`streamdeck link com.pineapplecola.darts.sdPlugin` from this folder, or
+`streamdeck pack com.pineapplecola.darts.sdPlugin` to make a double-click
 installable `.streamDeckPlugin` file.
 
-To update: quit Stream Deck, replace the folder, start Stream Deck again. Your
-per-key settings are stored by the Stream Deck app, not in this folder, so they
-are kept.
+To update this canonical plugin: fully quit Stream Deck, replace the folder,
+and restart Stream Deck. Settings for the same UUID are stored by the app and
+are kept. No `npm install`, build step or `package.json` is needed.
 
 ## Use
 
@@ -107,6 +135,9 @@ Tests: `node DARTS/tests/streamdeck_plugin_regression.test.js`.
 
 ## Troubleshooting
 
+- **DARTS does not appear in the actions list** — check Stream Deck is 7.1+,
+  verify the exact installed manifest path above, then fully quit and restart
+  the app. Re-copy the clean folder if files were hand-edited.
 - **All keys `OFFLINE`** — DARTS isn't running, or the DARTS API setting/port is
   wrong. Check `curl http://localhost:8766/api/ui-state`.
 - **All keys `NO MAP`** — open (or refresh) `http://localhost:8766/map`. An old

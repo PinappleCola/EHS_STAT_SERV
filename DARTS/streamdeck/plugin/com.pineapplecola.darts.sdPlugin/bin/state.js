@@ -10,9 +10,9 @@ const CONTROLS = {
 };
 
 const ACTIONS = {
-    'com.pinapplecola.darts.map': 'map',
-    'com.pinapplecola.darts.ifr': 'ifr',
-    'com.pinapplecola.darts.vfr': 'vfr',
+    'com.pineapplecola.darts.map': 'map',
+    'com.pineapplecola.darts.ifr': 'ifr',
+    'com.pineapplecola.darts.vfr': 'vfr',
 };
 
 const CONNECTION_STATES = new Set(['connected', 'offline', 'no_map', 'stale']);

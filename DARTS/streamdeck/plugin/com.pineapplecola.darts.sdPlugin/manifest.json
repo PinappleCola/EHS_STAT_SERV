@@ -1,11 +1,10 @@
 {
   "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
-  "UUID": "com.pinapplecola.darts",
+  "UUID": "com.pineapplecola.darts",
   "Name": "DARTS Live Map",
   "Version": "0.1.0.0",
-  "Author": "PinappleCola",
+  "Author": "PineappleCola",
   "Description": "Coloured live-state MAP / IFR / VFR toggle keys for the DARTS live map.",
-  "URL": "https://github.com/PinappleCola/EHS_STAT_SERV",
   "Icon": "imgs/plugin",
   "Category": "DARTS",
   "CategoryIcon": "imgs/category",
@@ -24,7 +23,7 @@
   ],
   "Actions": [
     {
-      "UUID": "com.pinapplecola.darts.map",
+      "UUID": "com.pineapplecola.darts.map",
       "Name": "MAP toggle",
       "Tooltip": "Toggle the live map basemap (MAP TOGGLE). Green = on, red = off.",
       "Icon": "imgs/action",
@@ -34,7 +33,7 @@
       "States": [{ "Image": "imgs/key", "ShowTitle": false }]
     },
     {
-      "UUID": "com.pinapplecola.darts.ifr",
+      "UUID": "com.pineapplecola.darts.ifr",
       "Name": "IFR waypoints",
       "Tooltip": "Toggle IFR waypoints on the live map. Green = visible, red = hidden.",
       "Icon": "imgs/action",
@@ -44,7 +43,7 @@
       "States": [{ "Image": "imgs/key", "ShowTitle": false }]
     },
     {
-      "UUID": "com.pinapplecola.darts.vfr",
+      "UUID": "com.pineapplecola.darts.vfr",
       "Name": "VFR waypoints",
       "Tooltip": "Toggle VFR waypoints on the live map. Green = visible, red = hidden.",
       "Icon": "imgs/action",
