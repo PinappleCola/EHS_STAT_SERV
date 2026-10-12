@@ -39,6 +39,27 @@ class UICommandTests(unittest.IsolatedAsyncioTestCase):
         await self.ws_server.wait_closed()
         DARTS.WS_LOOP = None
         self.assertFalse(DARTS.WS_CLIENTS)
+        self.assertFalse(DARTS.UI_MAP_REPORTS)
+
+    async def get_state(self):
+        def request():
+            conn = http.client.HTTPConnection("127.0.0.1", self.http_server.server_port, timeout=5)
+            try:
+                conn.request("GET", "/api/ui-state")
+                response = conn.getresponse()
+                return response.status, json.loads(response.read())
+            finally:
+                conn.close()
+        return await asyncio.to_thread(request)
+
+    async def wait_for_state(self, predicate):
+        for _ in range(100):
+            status, state = await self.get_state()
+            self.assertEqual(status, 200)
+            if predicate(state):
+                return state
+            await asyncio.sleep(0.02)
+        self.fail(f"ui state condition not met: {state}")
 
     async def post(self, body):
         def request():
@@ -90,6 +111,78 @@ class UICommandTests(unittest.IsolatedAsyncioTestCase):
         status, response = await self.post('{"command":"toggle_ifr"}')
         self.assertEqual(status, 503)
         self.assertIn("error", response)
+
+    async def test_request_id_is_forwarded_and_echoed(self):
+        async with websockets.connect(self.ws_url) as client:
+            await asyncio.wait_for(client.recv(), 3)
+            status, response = await self.post(json.dumps({"command": "toggle_vfr", "request_id": "sd-1:abc_2.x-y"}))
+            self.assertEqual(status, 200)
+            self.assertEqual(response, {"ok": True, "command": "toggle_vfr", "request_id": "sd-1:abc_2.x-y"})
+            while True:
+                message = json.loads(await asyncio.wait_for(client.recv(), 3))
+                if message.get("type") == "ui_command":
+                    break
+            self.assertEqual(message, {"type": "ui_command", "command": "toggle_vfr", "request_id": "sd-1:abc_2.x-y"})
+
+    async def test_invalid_request_id_is_rejected_without_broadcast(self):
+        with mock.patch.object(DARTS, "broadcast_ui_command") as broadcast:
+            for request_id in ("", "x" * 65, "bad id", 5, ["a"], "<svg>"):
+                with self.subTest(request_id=request_id):
+                    status, response = await self.post(json.dumps({"command": "toggle_ifr", "request_id": request_id}))
+                    self.assertEqual(status, 400)
+                    self.assertIn("error", response)
+            broadcast.assert_not_called()
+
+    async def test_ui_state_reports_controlling_map(self):
+        status, state = await self.get_state()
+        self.assertEqual(status, 200)
+        self.assertEqual(state["connectionState"], "no_map")
+        self.assertIsNone(state["ifrEnabled"])
+        self.assertEqual(state["mapClients"], 0)
+
+        def report(map_on, ifr_on, vfr_on, request_id=None):
+            return json.dumps({"action": "ui_state", "request_id": request_id,
+                               "state": {"mapEnabled": map_on, "ifrEnabled": ifr_on, "vfrEnabled": vfr_on}})
+
+        async with websockets.connect(self.ws_url) as first:
+            await first.send(json.dumps({"action": "ui_state", "state": {"mapEnabled": "yes"}}))
+            await first.send(report(True, False, True, "req-1"))
+            state = await self.wait_for_state(lambda s: s["connectionState"] == "connected")
+            self.assertEqual((state["mapEnabled"], state["ifrEnabled"], state["vfrEnabled"]), (True, False, True))
+            self.assertEqual(state["lastRequestId"], "req-1")
+            revision = state["revision"]
+
+            async with websockets.connect(self.ws_url) as second:
+                await second.send(report(False, True, False))
+                state = await self.wait_for_state(lambda s: s["mapClients"] == 2)
+                self.assertEqual((state["mapEnabled"], state["ifrEnabled"]), (True, False))
+                self.assertEqual(state["revision"], revision)
+            state = await self.wait_for_state(lambda s: s["mapClients"] == 1)
+            self.assertEqual(state["ifrEnabled"], False)
+
+            async with websockets.connect(self.ws_url) as second:
+                await second.send(report(False, True, False))
+                await self.wait_for_state(lambda s: s["mapClients"] == 2)
+                await first.close()
+                state = await self.wait_for_state(lambda s: s["mapClients"] == 1)
+                self.assertEqual((state["mapEnabled"], state["ifrEnabled"], state["vfrEnabled"]), (False, True, False))
+                self.assertIsNone(state["lastRequestId"])
+                self.assertGreater(state["revision"], revision)
+        await self.wait_for_state(lambda s: s["connectionState"] == "no_map")
+
+    def test_ui_state_goes_stale_without_heartbeat(self):
+        key = object()
+        try:
+            self.assertTrue(DARTS.record_ui_state(key, {"mapEnabled": False, "ifrEnabled": True, "vfrEnabled": True}, "bad id", now=100.0))
+            fresh = DARTS.get_ui_state_snapshot(now=100.0 + DARTS.UI_STATE_STALE_SEC)
+            self.assertEqual(fresh["connectionState"], "connected")
+            self.assertIsNone(fresh["lastRequestId"])
+            stale = DARTS.get_ui_state_snapshot(now=100.0 + DARTS.UI_STATE_STALE_SEC + 0.5)
+            self.assertEqual(stale["connectionState"], "stale")
+            self.assertEqual(stale["ifrEnabled"], True)
+            self.assertFalse(DARTS.record_ui_state(key, None))
+        finally:
+            DARTS.forget_ui_state(key)
 
 
 if __name__ == "__main__":

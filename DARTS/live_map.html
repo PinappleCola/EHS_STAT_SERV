@@ -1141,6 +1141,7 @@
         function toggleMapSource(buttonId, source) {
             hiddenMapSources[source] = !hiddenMapSources[source];
             document.getElementById(buttonId).classList.toggle('active', hiddenMapSources[source]);
+            reportUiState();
         }
         [
             ['btn-ifr-toggle', 'ifr_waypoints'],
@@ -1206,8 +1207,24 @@
                 panX = -(center.lng - REF_LON) * COS_LAT * ppd;
                 panY = (center.lat - REF_LAT) * ppd;
             }
+            reportUiState();
         }
         document.getElementById('btn-network').addEventListener('click', toggleMap);
+
+        // --- Stream Deck state reporting: this map is authoritative for MAP/IFR/VFR ---
+        let uiCommandRequestId = null;
+        function reportUiState() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({
+                action: 'ui_state',
+                request_id: uiCommandRequestId,
+                state: {
+                    mapEnabled: networkMode === 'ONLINE',
+                    ifrEnabled: !hiddenMapSources.ifr_waypoints,
+                    vfrEnabled: !hiddenMapSources.vfr_waypoints,
+                },
+            }));
+        }
 
         const tileLayerFactories = {}; let currentTileLayers = []; let basemapSwitchSeq = 0;
         if (typeof L !== 'undefined' && leafMap) {
@@ -2588,8 +2605,10 @@
             statusText.innerText = 'ONLINE - STREAMING RAMPED';
             statusText.className = 'online';
             loadMapData();
+            reportUiState();
         };
         ws.onclose = () => { statusText.innerText = 'OFFLINE - CONSOLE DETACHED'; statusText.className = 'offline'; };
+        setInterval(reportUiState, 2000);
 
         ws.onmessage = (event) => {
             try {
@@ -2599,6 +2618,7 @@
                 
                 const parsedData = JSON.parse(event.data);
                 if (parsedData.type === 'ui_command') {
+                    uiCommandRequestId = typeof parsedData.request_id === 'string' ? parsedData.request_id : null;
                     switch (parsedData.command) {
                         case 'toggle_map': toggleMap(); break;
                         case 'toggle_ifr': toggleMapSource('btn-ifr-toggle', 'ifr_waypoints'); break;
@@ -3149,4 +3169,4 @@
 
     </script>
 </body>
-</html>
+</html>
