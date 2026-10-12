@@ -1528,6 +1528,15 @@ WS_PORT = RUNTIME_CONFIG["ws_port"]
 HTTP_PORT = RUNTIME_CONFIG["http_port"]
 WS_LOOP = None
 WS_CLIENTS = set()
+UI_COMMANDS = ("toggle_map", "toggle_ifr", "toggle_vfr")
+UI_STATE_KEYS = ("mapEnabled", "ifrEnabled", "vfrEnabled")
+UI_STATE_STALE_SEC = 6.0
+UI_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+# Live-map toggle state reported by browser map tabs (keyed by WebSocket).
+# The earliest-reporting connected map is the controlling map for Stream Deck.
+UI_STATE_LOCK = threading.Lock()
+UI_MAP_REPORTS = {}
+UI_STATE = {"seq": 0, "revision": 0, "signature": None}
 RECEIVER_ID = RUNTIME_CONFIG["receiver_id"]
 RX_MODE = RUNTIME_CONFIG["rx_mode"]
 RECEIVER_A_CONFIG = RUNTIME_CONFIG["receiver_a"]
@@ -1767,6 +1776,8 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             cfg = get_trail_config_snapshot()
             cfg["persistence"]["db_path"] = get_trail_db_path()
             self._send_json(cfg)
+        elif path == "/api/ui-state":
+            self._send_json(get_ui_state_snapshot())
         else:
             self._send_json({"error": "Not found"}, status=404)
 
@@ -1783,14 +1794,18 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             command = data.get("command") if isinstance(data, dict) else None
-            if command not in ("toggle_map", "toggle_ifr", "toggle_vfr"):
+            if command not in UI_COMMANDS:
                 self._send_json({"error": "command must be toggle_map, toggle_ifr, or toggle_vfr"}, status=400)
+                return
+            request_id = data.get("request_id")
+            if request_id is not None and not is_valid_ui_request_id(request_id):
+                self._send_json({"error": "request_id must be 1-64 characters of A-Z, a-z, 0-9, _ . : -"}, status=400)
                 return
             loop = WS_LOOP
             if loop is None or not loop.is_running():
                 self._send_json({"error": "WebSocket server unavailable"}, status=503)
                 return
-            send = broadcast_ui_command(command)
+            send = broadcast_ui_command(command, request_id)
             try:
                 future = asyncio.run_coroutine_threadsafe(send, loop)
             except RuntimeError:
@@ -1803,7 +1818,10 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                 future.cancel()
                 self._send_json({"error": "UI command delivery timed out"}, status=503)
                 return
-            self._send_json({"ok": True, "command": command})
+            response = {"ok": True, "command": command}
+            if request_id is not None:
+                response["request_id"] = request_id
+            self._send_json(response)
         elif path == "/api/audit-config":
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -4915,8 +4933,80 @@ def compute_display_heading(data, now):
     return round(best_val, 2)
 
 
-async def broadcast_ui_command(command):
-    payload = json.dumps({"type": "ui_command", "command": command})
+def is_valid_ui_request_id(request_id):
+    return isinstance(request_id, str) and bool(UI_REQUEST_ID_RE.match(request_id))
+
+
+def _ui_controller_report_locked():
+    if not UI_MAP_REPORTS:
+        return None
+    return min(UI_MAP_REPORTS.values(), key=lambda report: report["seq"])
+
+
+def _bump_ui_revision_locked():
+    report = _ui_controller_report_locked()
+    signature = None
+    if report is not None:
+        signature = (report["seq"], tuple(report["state"][k] for k in UI_STATE_KEYS), report["request_id"])
+    if signature != UI_STATE["signature"]:
+        UI_STATE["signature"] = signature
+        UI_STATE["revision"] += 1
+
+
+def record_ui_state(client_key, state, request_id=None, now=None):
+    """Store a live-map toggle state report. Returns False for malformed reports."""
+    if not isinstance(state, dict) or not all(isinstance(state.get(k), bool) for k in UI_STATE_KEYS):
+        return False
+    if request_id is not None and not is_valid_ui_request_id(request_id):
+        request_id = None
+    now = time.time() if now is None else now
+    with UI_STATE_LOCK:
+        report = UI_MAP_REPORTS.get(client_key)
+        if report is None:
+            UI_STATE["seq"] += 1
+            report = UI_MAP_REPORTS[client_key] = {"seq": UI_STATE["seq"]}
+        report["state"] = {k: state[k] for k in UI_STATE_KEYS}
+        report["request_id"] = request_id
+        report["updated_at"] = now
+        _bump_ui_revision_locked()
+    return True
+
+
+def forget_ui_state(client_key):
+    with UI_STATE_LOCK:
+        if UI_MAP_REPORTS.pop(client_key, None) is not None:
+            _bump_ui_revision_locked()
+
+
+def get_ui_state_snapshot(now=None):
+    now = time.time() if now is None else now
+    with UI_STATE_LOCK:
+        report = _ui_controller_report_locked()
+        snapshot = {
+            "connectionState": "no_map",
+            "mapEnabled": None,
+            "ifrEnabled": None,
+            "vfrEnabled": None,
+            "lastRequestId": None,
+            "stateAgeMs": None,
+            "revision": UI_STATE["revision"],
+            "mapClients": len(UI_MAP_REPORTS),
+            "staleAfterMs": int(UI_STATE_STALE_SEC * 1000),
+        }
+        if report is not None:
+            age = max(0.0, now - report["updated_at"])
+            snapshot.update(report["state"])
+            snapshot["lastRequestId"] = report["request_id"]
+            snapshot["stateAgeMs"] = int(age * 1000)
+            snapshot["connectionState"] = "stale" if age > UI_STATE_STALE_SEC else "connected"
+    return snapshot
+
+
+async def broadcast_ui_command(command, request_id=None):
+    message = {"type": "ui_command", "command": command}
+    if request_id is not None:
+        message["request_id"] = request_id
+    payload = json.dumps(message)
     await asyncio.gather(
         *(client.send(payload) for client in tuple(WS_CLIENTS)),
         return_exceptions=True,
@@ -5036,6 +5126,9 @@ async def broadcast_state(websocket):
                             feature.setdefault("properties", {})["masked"] = masked
                             save_map_source(source)
 
+                elif data.get("action") == "ui_state":
+                    record_ui_state(websocket, data.get("state"), data.get("request_id"))
+
                 elif data.get("action") in {"reload_airspace", "reload_map_data"}:
                     load_map_data()
 
@@ -5060,6 +5153,7 @@ async def broadcast_state(websocket):
         await asyncio.gather(send_updates(), receive_updates())
     finally:
         WS_CLIENTS.discard(websocket)
+        forget_ui_state(websocket)
 
 
 async def main():

@@ -34,6 +34,15 @@ error, make sure DARTS is running and that the port matches your config.
 
 Create a `streamdeck/` folder somewhere convenient and drop the scripts below in it.
 
+### Want coloured live-state keys instead? (MAP / IFR / VFR)
+
+The batch files can't show anything on the key face. The **DARTS Stream Deck
+plugin** in [`streamdeck/plugin/`](streamdeck/plugin/README.md) replaces keys
+13–15 with keys that turn **green (on)**, **red (off)**, **amber (waiting)** or
+**grey (offline / no map)** based on the state the open live map reports. See its
+README for install steps (copy the `.sdPlugin` folder into the Stream Deck plugins
+folder; requires Stream Deck 7.1+).
+
 ---
 
 ## 2. Suggested 15-key layout
@@ -213,10 +222,27 @@ All relative to `http://localhost:8766` (the fixed HTTP API server).
 | GET | `/api/trails/export3d.geojson` | 3D trail export (Kepler.gl GeoJSON) |
 | POST | `/api/rx-config` | Set `rx_mode` (`A`/`B`/`DUAL`) and/or `restart` (`A`/`B`/`BOTH`) |
 | POST | `/api/ui-command` | Toggle the open live map: `{"command":"toggle_map"}`, `{"command":"toggle_ifr"}`, or `{"command":"toggle_vfr"}` |
+| GET | `/api/ui-state` | MAP / IFR / VFR state reported by the controlling live map (used by the Stream Deck plugin) |
 
 `/api/ui-command` returns `{"ok": true, "command": "<command>"}` on success.
 Missing/invalid commands or malformed JSON return HTTP 400 with `{"error":"..."}`.
 If the WebSocket server is unavailable or delivery times out, it returns HTTP 503.
+An optional `"request_id"` (1–64 characters of `A-Z a-z 0-9 _ . : -`) is echoed in
+the response, forwarded to the map, and reported back by the map in
+`/api/ui-state` `lastRequestId` once applied — this is how the plugin confirms a press.
+
+`/api/ui-state` example:
+
+```json
+{"connectionState": "connected", "mapEnabled": false, "ifrEnabled": true, "vfrEnabled": true,
+ "lastRequestId": "sd-…", "stateAgeMs": 840, "revision": 7, "mapClients": 1, "staleAfterMs": 6000}
+```
+
+`connectionState` is `connected`, `no_map` (no live map page open; state fields are
+`null`) or `stale` (the map hasn't reported for more than 6 s). The live map reports
+over its existing WebSocket (`{"action":"ui_state", ...}`) on connect, after every
+toggle, and every 2 s. With several map tabs open, the earliest-connected tab is the
+controlling map whose state is reported.
 
 ---
 
@@ -233,5 +259,6 @@ If the WebSocket server is unavailable or delivery times out, it returns HTTP 50
   that as out of scope for this quickstart.
 - Trail exports accept optional `from`, `to` (epoch ms) and `icao` query
   parameters; omitting them exports the default maximum window.
-- Batch/URL keys cannot show live data on the Stream Deck key face; that needs a
-  separate Elgato SDK plugin and is not part of these scripts.
+- Batch/URL keys cannot show live data on the Stream Deck key face; use the
+  [DARTS Stream Deck plugin](streamdeck/plugin/README.md) for live MAP / IFR / VFR
+  key colours.

@@ -83,6 +83,28 @@ assert.strictEqual(element('btn-network').className, 'btn-action btn-toggle');
 remote('unknown');
 assert.strictEqual(element('btn-network').className, 'btn-action btn-toggle');
 
+// The map reports its authoritative MAP/IFR/VFR state (and echoes request IDs).
+const reports = [];
+context.ws.readyState = 1;
+context.ws.send = (message) => reports.push(JSON.parse(message));
+context.ws.onmessage({ data: JSON.stringify({ type: 'ui_command', command: 'toggle_ifr', request_id: 'sd-42' }) });
+assert.deepStrictEqual(reports.pop(), {
+    action: 'ui_state', request_id: 'sd-42',
+    state: { mapEnabled: false, ifrEnabled: false, vfrEnabled: true },
+});
+element('btn-network').click();
+assert.deepStrictEqual(reports.pop().state, { mapEnabled: true, ifrEnabled: false, vfrEnabled: true });
+element('btn-vfr-toggle').click();
+assert.deepStrictEqual(reports.pop().state, { mapEnabled: true, ifrEnabled: false, vfrEnabled: false });
+remote('toggle_map');
+assert.deepStrictEqual(reports.pop(), {
+    action: 'ui_state', request_id: null,
+    state: { mapEnabled: false, ifrEnabled: false, vfrEnabled: false },
+});
+context.ws.readyState = 3;
+element('btn-ifr-toggle').click();
+assert.strictEqual(reports.length, 0, 'closed sockets must not be written');
+
 const liveGrid = fs.readFileSync(path.join(__dirname, '..', 'live_grid.html'), 'utf8');
 const gridStart = liveGrid.indexOf('    ws.onmessage = (event) => {');
 const gridEnd = liveGrid.indexOf('\n    };', gridStart) + '\n    };'.length;

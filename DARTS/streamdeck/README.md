@@ -7,6 +7,9 @@ Ready-to-use `.bat` files for driving DARTS from an Elgato Stream Deck on
 See `../STREAMDECK.md` for the full guide, key layout, and Raspberry Pi / Linux
 equivalents.
 
+> For **coloured live-state** MAP / IFR / VFR keys (green = on, red = off), use the
+> Stream Deck plugin in [`plugin/`](plugin/README.md) instead of keys 13–15.
+
 ## How to use
 
 1. Make sure DARTS is running (`DARTS/run.bat`).
