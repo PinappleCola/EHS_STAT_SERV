@@ -1,6 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { isBuiltin } = require('module');
 
 const pluginDir = path.join(__dirname, '..', 'streamdeck', 'plugin', 'com.pineapplecola.darts.sdPlugin');
 const manifest = require(path.join(pluginDir, 'manifest.json'));
@@ -16,6 +17,7 @@ assert.deepStrictEqual(manifest.Actions.map((a) => a.UUID).sort(), [
     'com.pineapplecola.darts.ifr', 'com.pineapplecola.darts.map', 'com.pineapplecola.darts.vfr',
 ]);
 assert.strictEqual(manifest.CodePath, 'bin/plugin.js');
+assert.strictEqual(manifest.PropertyInspectorPath, 'ui/settings.html');
 assert.strictEqual(manifest.Nodejs.Version, '24');
 assert.strictEqual(manifest.Software.MinimumVersion, '7.1');
 for (const resource of [manifest.CodePath, manifest.PropertyInspectorPath, 'bin/state.js']) {
@@ -28,6 +30,24 @@ for (const image of [manifest.Icon, manifest.CategoryIcon,
     }
 }
 const inspectorHtml = fs.readFileSync(path.join(pluginDir, manifest.PropertyInspectorPath), 'utf8');
+for (const name of ['ui', 'imgs', 'bin']) {
+    assert.ok(!fs.existsSync(path.join(path.dirname(pluginDir), name)), `${name} must not be split outside the plugin`);
+}
+for (const name of fs.readdirSync(path.join(pluginDir, 'bin'))) {
+    if (!name.endsWith('.js')) continue;
+    const source = fs.readFileSync(path.join(pluginDir, 'bin', name), 'utf8');
+    for (const [, dependency] of source.matchAll(/require\(['"]([^'"]+)['"]\)/g)) {
+        if (isBuiltin(dependency)) continue;
+        assert.ok(dependency.startsWith('./'), `${name}: external runtime dependency ${dependency}`);
+        const resolved = require.resolve(path.join(pluginDir, 'bin', dependency));
+        assert.ok(resolved.startsWith(`${pluginDir}${path.sep}`), `${dependency} must be inside the plugin`);
+    }
+}
+for (const [, resource] of inspectorHtml.matchAll(/(?:src|href)=["']([^"']+)["']/g)) {
+    const resolved = path.resolve(pluginDir, 'ui', resource);
+    assert.ok(resolved.startsWith(`${pluginDir}${path.sep}`), `UI resource must be local: ${resource}`);
+    assert.ok(fs.statSync(resolved).isFile(), resource);
+}
 for (const action of manifest.Actions) assert.ok(inspectorHtml.includes(`'${action.UUID}'`));
 assert.deepStrictEqual(manifest.Actions.map((a) => a.UUID).sort(), Object.keys(state.ACTIONS).sort());
 for (const action of manifest.Actions) assert.ok(action.UUID.startsWith(`${manifest.UUID}.`));
