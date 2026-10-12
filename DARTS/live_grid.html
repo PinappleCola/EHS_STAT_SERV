@@ -1017,6 +1017,7 @@
     ws.onmessage = (event) => {
         try {
             const parsedData = JSON.parse(event.data);
+            if (parsedData.type === 'ui_command') return;
 
             let aircraftList = [];
             if (Array.isArray(parsedData)) {
