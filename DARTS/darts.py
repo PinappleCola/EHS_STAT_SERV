@@ -15,6 +15,7 @@ import math
 import copy
 import threading
 import asyncio
+import concurrent.futures
 import websockets
 import binascii
 import hashlib
@@ -1525,6 +1526,8 @@ BAUD = RUNTIME_CONFIG["baud"]
 WS_HOST = RUNTIME_CONFIG["ws_host"]
 WS_PORT = RUNTIME_CONFIG["ws_port"]
 HTTP_PORT = RUNTIME_CONFIG["http_port"]
+WS_LOOP = None
+WS_CLIENTS = set()
 RECEIVER_ID = RUNTIME_CONFIG["receiver_id"]
 RX_MODE = RUNTIME_CONFIG["rx_mode"]
 RECEIVER_A_CONFIG = RUNTIME_CONFIG["receiver_a"]
@@ -1769,7 +1772,39 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         path, _query = self._parse_request_target()
-        if path == "/api/audit-config":
+        if path == "/api/ui-command":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                if length < 0:
+                    raise ValueError("Invalid Content-Length")
+                data = json.loads(self.rfile.read(length).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                self._send_json({"error": "Invalid JSON"}, status=400)
+                return
+
+            command = data.get("command") if isinstance(data, dict) else None
+            if command not in ("toggle_map", "toggle_ifr", "toggle_vfr"):
+                self._send_json({"error": "command must be toggle_map, toggle_ifr, or toggle_vfr"}, status=400)
+                return
+            loop = WS_LOOP
+            if loop is None or not loop.is_running():
+                self._send_json({"error": "WebSocket server unavailable"}, status=503)
+                return
+            send = broadcast_ui_command(command)
+            try:
+                future = asyncio.run_coroutine_threadsafe(send, loop)
+            except RuntimeError:
+                send.close()
+                self._send_json({"error": "WebSocket server unavailable"}, status=503)
+                return
+            try:
+                future.result(timeout=2)
+            except concurrent.futures.TimeoutError:
+                future.cancel()
+                self._send_json({"error": "UI command delivery timed out"}, status=503)
+                return
+            self._send_json({"ok": True, "command": command})
+        elif path == "/api/audit-config":
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
@@ -4880,6 +4915,14 @@ def compute_display_heading(data, now):
     return round(best_val, 2)
 
 
+async def broadcast_ui_command(command):
+    payload = json.dumps({"type": "ui_command", "command": command})
+    await asyncio.gather(
+        *(client.send(payload) for client in tuple(WS_CLIENTS)),
+        return_exceptions=True,
+    )
+
+
 async def broadcast_state(websocket):
     global ledger_count
     
@@ -5012,10 +5055,15 @@ async def broadcast_state(websocket):
                             save_map_source(source)
         except Exception: pass
 
-    await asyncio.gather(send_updates(), receive_updates())
+    WS_CLIENTS.add(websocket)
+    try:
+        await asyncio.gather(send_updates(), receive_updates())
+    finally:
+        WS_CLIENTS.discard(websocket)
 
 
 async def main():
+    global WS_LOOP
     if RX_MODE == "DUAL":
         rx_desc = f"DUAL ({RECEIVER_A_CONFIG.get('port','?')} + {RECEIVER_B_CONFIG.get('port','?')})"
     elif RX_MODE == "B":
@@ -5026,7 +5074,11 @@ async def main():
     print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.GREEN}Tactical Matrix Core {APP_VERSION} online on ws://{WS_HOST}:{WS_PORT}{ANSI.RESET}")
     print(f"{ANSI.DIM}[{get_iso_time()}]{ANSI.RESET} {ANSI.CYAN}DARTS API online on http://localhost:{HTTP_PORT} (fields + grid config){ANSI.RESET}")
     async with websockets.serve(broadcast_state, WS_HOST, WS_PORT):
-        await asyncio.Future()
+        WS_LOOP = asyncio.get_running_loop()
+        try:
+            await asyncio.Future()
+        finally:
+            WS_LOOP = None
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")

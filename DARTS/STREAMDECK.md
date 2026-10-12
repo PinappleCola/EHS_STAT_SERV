@@ -52,11 +52,11 @@ Create a `streamdeck/` folder somewhere convenient and drop the scripts below in
 | 10 | Switch to **DUAL** | `/api/rx-config` `{"rx_mode":"DUAL","restart":"BOTH"}` | POST |
 | 11 | Restart receiver **A** | `/api/rx-config` `{"restart":"A"}` | POST |
 | 12 | Restart receiver **B** | `/api/rx-config` `{"restart":"B"}` | POST |
-| 13 | Reserved | — | — |
-| 14 | Reserved | — | — |
-| 15 | Reserved | — | — |
+| 13 | Toggle basemap (MAP TOGGLE) | `/api/ui-command` `{"command":"toggle_map"}` | POST |
+| 14 | Toggle IFR waypoints | `/api/ui-command` `{"command":"toggle_ifr"}` | POST |
+| 15 | Toggle VFR waypoints | `/api/ui-command` `{"command":"toggle_vfr"}` | POST |
 
-> The POST keys read the current receiver config and change only `rx_mode` /
+> The receiver POST keys (8–12) read the current receiver config and change only `rx_mode` /
 > `restart`. If you run a single receiver, keys 9 and 12 can be left unused.
 
 ---
@@ -132,6 +132,28 @@ echo.
 
 > On Windows `.bat`, inner quotes in the JSON body must be escaped with `\"`.
 
+### Live map toggles (keys 13–15)
+
+Ready-to-use files are in `streamdeck/key13_toggle_map.bat`,
+`streamdeck/key14_toggle_ifr.bat`, and `streamdeck/key15_toggle_vfr.bat`.
+Point a **System → Open** action at each file.
+
+```bat
+@echo off
+set "BASE=http://localhost:8766"
+curl -s -X POST "%BASE%/api/ui-command" -H "Content-Type: application/json" -d "{\"command\":\"toggle_map\"}"
+echo.
+timeout /t 2 >nul
+```
+
+Use `toggle_ifr` or `toggle_vfr` for the other two keys.
+On Pi/Linux, use `curl -s -X POST http://localhost:8766/api/ui-command -H "Content-Type: application/json" -d '{"command":"toggle_ifr"}'`.
+
+**The live map page must be open in a browser**: these layers render client-side.
+The command toggles each connected map's current state, exactly like clicking its
+ribbon button, including label/active styling. With no map client connected, the
+command is accepted but has no visible effect. Commands are not saved for later.
+
 ---
 
 ## 4. Raspberry Pi 5 / Linux (`.sh`) scripts
@@ -190,6 +212,11 @@ All relative to `http://localhost:8766` (the fixed HTTP API server).
 | GET | `/api/trails/export.geojson` | 2D trail export (GeoJSON) |
 | GET | `/api/trails/export3d.geojson` | 3D trail export (Kepler.gl GeoJSON) |
 | POST | `/api/rx-config` | Set `rx_mode` (`A`/`B`/`DUAL`) and/or `restart` (`A`/`B`/`BOTH`) |
+| POST | `/api/ui-command` | Toggle the open live map: `{"command":"toggle_map"}`, `{"command":"toggle_ifr"}`, or `{"command":"toggle_vfr"}` |
+
+`/api/ui-command` returns `{"ok": true, "command": "<command>"}` on success.
+Missing/invalid commands or malformed JSON return HTTP 400 with `{"error":"..."}`.
+If the WebSocket server is unavailable or delivery times out, it returns HTTP 503.
 
 ---
 
@@ -206,3 +233,5 @@ All relative to `http://localhost:8766` (the fixed HTTP API server).
   that as out of scope for this quickstart.
 - Trail exports accept optional `from`, `to` (epoch ms) and `icao` query
   parameters; omitting them exports the default maximum window.
+- Batch/URL keys cannot show live data on the Stream Deck key face; that needs a
+  separate Elgato SDK plugin and is not part of these scripts.

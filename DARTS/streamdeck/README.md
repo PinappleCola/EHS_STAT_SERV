@@ -33,6 +33,14 @@ equivalents.
 | `key10_mode_dual.bat` | control | Switches to DUAL mode (restarts both receivers) |
 | `key11_restart_a.bat` | control | Restarts receiver A without changing mode |
 | `key12_restart_b.bat` | control | Restarts receiver B without changing mode |
+| `key13_toggle_map.bat` | map control | Toggles basemap tiles (MAP TOGGLE / ONLINE ⇄ OFF-GRID) |
+| `key14_toggle_ifr.bat` | map control | Toggles IFR waypoints |
+| `key15_toggle_vfr.bat` | map control | Toggles VFR waypoints |
+
+**Keep the live map page open in a browser** for keys 13–15: the layers render
+client-side. Commands toggle every connected live map via WebSocket, just like
+clicking its ribbon buttons. With no map client connected, the API accepts the
+command but it has no visible effect; commands are not saved for later.
 
 ## Changing the port
 

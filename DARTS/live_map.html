@@ -1138,6 +1138,10 @@
             const btn = document.getElementById('btn-elem-toggle');
             btn.classList.toggle('active', elementsHidden);
         });
+        function toggleMapSource(buttonId, source) {
+            hiddenMapSources[source] = !hiddenMapSources[source];
+            document.getElementById(buttonId).classList.toggle('active', hiddenMapSources[source]);
+        }
         [
             ['btn-ifr-toggle', 'ifr_waypoints'],
             ['btn-vfr-toggle', 'vfr_waypoints'],
@@ -1145,8 +1149,7 @@
             ['btn-audit-layer-toggle', 'audit_points'],
         ].forEach(([buttonId, source]) => {
             document.getElementById(buttonId).addEventListener('click', () => {
-                hiddenMapSources[source] = !hiddenMapSources[source];
-                document.getElementById(buttonId).classList.toggle('active', hiddenMapSources[source]);
+                toggleMapSource(buttonId, source);
             });
         });
 
@@ -1167,7 +1170,7 @@
         if (typeof L !== 'undefined') {
             leafMap = L.map('map-container', { zoomControl: false, attributionControl: true, zoomSnap: 0, zoomAnimation: false }).setView([REF_LAT, REF_LON], 10);
         }
-        document.getElementById('btn-network').addEventListener('click', () => {
+        function toggleMap() {
             if (networkMode === 'OFF-GRID') {
                 networkMode = 'ONLINE';
                 document.getElementById('btn-network').innerText = 'MAP TOGGLE';
@@ -1203,7 +1206,8 @@
                 panX = -(center.lng - REF_LON) * COS_LAT * ppd;
                 panY = (center.lat - REF_LAT) * ppd;
             }
-        });
+        }
+        document.getElementById('btn-network').addEventListener('click', toggleMap);
 
         const tileLayerFactories = {}; let currentTileLayers = []; let basemapSwitchSeq = 0;
         if (typeof L !== 'undefined' && leafMap) {
@@ -2594,6 +2598,14 @@
                 perfCounters.lastWsTime = wsReceiveTime;
                 
                 const parsedData = JSON.parse(event.data);
+                if (parsedData.type === 'ui_command') {
+                    switch (parsedData.command) {
+                        case 'toggle_map': toggleMap(); break;
+                        case 'toggle_ifr': toggleMapSource('btn-ifr-toggle', 'ifr_waypoints'); break;
+                        case 'toggle_vfr': toggleMapSource('btn-vfr-toggle', 'vfr_waypoints'); break;
+                    }
+                    return;
+                }
                 if (typeof parsedData.map_data_revision === 'number' && parsedData.map_data_revision !== mapDataRevision) {
                     loadMapData(parsedData.map_data_revision);
                 }
