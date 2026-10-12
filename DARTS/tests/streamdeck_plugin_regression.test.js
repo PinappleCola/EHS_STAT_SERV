@@ -1,13 +1,34 @@
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 
-const pluginDir = path.join(__dirname, '..', 'streamdeck', 'plugin', 'com.pinapplecola.darts.sdPlugin');
+const pluginDir = path.join(__dirname, '..', 'streamdeck', 'plugin', 'com.pineapplecola.darts.sdPlugin');
 const manifest = require(path.join(pluginDir, 'manifest.json'));
 const state = require(path.join(pluginDir, 'bin', 'state.js'));
 const { DartsPlugin, normalizeBaseUrl, parseArgs } = require(path.join(pluginDir, 'bin', 'plugin.js'));
 
 // --- Manifest exposes exactly the MAP / IFR / VFR actions the plugin handles ---
+assert.strictEqual(manifest.UUID, 'com.pineapplecola.darts');
+assert.strictEqual(path.basename(pluginDir), `${manifest.UUID}.sdPlugin`);
+assert.deepStrictEqual(fs.readdirSync(path.dirname(pluginDir)).filter((name) => name.endsWith('.sdPlugin')),
+    ['com.pineapplecola.darts.sdPlugin']);
+assert.deepStrictEqual(manifest.Actions.map((a) => a.UUID).sort(), [
+    'com.pineapplecola.darts.ifr', 'com.pineapplecola.darts.map', 'com.pineapplecola.darts.vfr',
+]);
 assert.strictEqual(manifest.CodePath, 'bin/plugin.js');
+assert.strictEqual(manifest.Nodejs.Version, '24');
+assert.strictEqual(manifest.Software.MinimumVersion, '7.1');
+for (const resource of [manifest.CodePath, manifest.PropertyInspectorPath, 'bin/state.js']) {
+    assert.ok(fs.statSync(path.join(pluginDir, resource)).isFile(), resource);
+}
+for (const image of [manifest.Icon, manifest.CategoryIcon,
+    ...manifest.Actions.flatMap((a) => [a.Icon, ...a.States.map((s) => s.Image)])]) {
+    for (const suffix of ['.png', '@2x.png']) {
+        assert.ok(fs.statSync(path.join(pluginDir, `${image}${suffix}`)).isFile(), `${image}${suffix}`);
+    }
+}
+const inspectorHtml = fs.readFileSync(path.join(pluginDir, manifest.PropertyInspectorPath), 'utf8');
+for (const action of manifest.Actions) assert.ok(inspectorHtml.includes(`'${action.UUID}'`));
 assert.deepStrictEqual(manifest.Actions.map((a) => a.UUID).sort(), Object.keys(state.ACTIONS).sort());
 for (const action of manifest.Actions) assert.ok(action.UUID.startsWith(`${manifest.UUID}.`));
 
@@ -126,8 +147,9 @@ async function runPluginScenario() {
     const statusOf = (context) => /font-size="22">([^<]*)<\/text>/.exec(lastImage(context))[1];
 
     plugin.start();
-    plugin.handleDeckMessage({ event: 'willAppear', action: 'com.pinapplecola.darts.map', context: 'k-map', payload: { settings: {} } });
-    plugin.handleDeckMessage({ event: 'willAppear', action: 'com.pinapplecola.darts.ifr', context: 'k-ifr', payload: { settings: { icon: 'C:/none.png' } } });
+    plugin.handleDeckMessage({ event: 'willAppear', action: 'com.pineapplecola.darts.map', context: 'k-map', payload: { settings: {} } });
+    plugin.handleDeckMessage({ event: 'willAppear', action: 'com.pineapplecola.darts.ifr', context: 'k-ifr', payload: { settings: { icon: 'C:/none.png' } } });
+    plugin.handleDeckMessage({ event: 'willAppear', action: 'com.pineapplecola.darts.vfr', context: 'k-vfr', payload: { settings: {} } });
     plugin.handleDeckMessage({ event: 'willAppear', action: 'com.example.other', context: 'k-other', payload: {} });
     assert.strictEqual(statusOf('k-ifr'), 'OFFLINE', 'keys start offline until DARTS answers');
     assert.ok(sent.some((m) => m.event === 'logMessage' && m.payload.message.includes('icon override not loaded')));
@@ -135,11 +157,12 @@ async function runPluginScenario() {
     timers.length = 0;
     assert.strictEqual(statusOf('k-map'), 'ON');
     assert.strictEqual(statusOf('k-ifr'), 'OFF');
+    assert.strictEqual(statusOf('k-vfr'), 'ON');
     assert.ok(!sent.some((m) => m.context === 'k-other'));
 
     // Press IFR: command carries a request ID; key goes amber until the map confirms.
     const imagesBefore = sent.filter((m) => m.event === 'setImage').length;
-    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pinapplecola.darts.ifr', context: 'k-ifr', payload: {} });
+    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pineapplecola.darts.ifr', context: 'k-ifr', payload: {} });
     assert.strictEqual(darts.commands.length, 1);
     assert.strictEqual(darts.commands[0].command, 'toggle_ifr');
     assert.match(darts.commands[0].request_id, /^sd-uuid-\d+$/);
@@ -157,8 +180,17 @@ async function runPluginScenario() {
     await runTimers();
     assert.strictEqual(statusOf('k-map'), 'OFF');
 
+    // VFR uses the same confirmed-state command flow under its canonical UUID.
+    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pineapplecola.darts.vfr', context: 'k-vfr', payload: {} });
+    const vfrCommand = darts.commands[darts.commands.length - 1];
+    assert.strictEqual(vfrCommand.command, 'toggle_vfr');
+    assert.strictEqual(statusOf('k-vfr'), 'WAIT');
+    darts.state = snapshot({ mapEnabled: false, ifrEnabled: true, vfrEnabled: false, lastRequestId: vfrCommand.request_id });
+    await runTimers();
+    assert.strictEqual(statusOf('k-vfr'), 'OFF');
+
     // No confirmation within the timeout -> ERROR + alert, then re-sync to live state.
-    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pinapplecola.darts.map', context: 'k-map', payload: {} });
+    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pineapplecola.darts.map', context: 'k-map', payload: {} });
     assert.strictEqual(statusOf('k-map'), 'WAIT');
     clock += state.TIMING.confirmTimeoutMs;
     await runTimers();
@@ -170,7 +202,7 @@ async function runPluginScenario() {
 
     // HTTP failure -> immediate ERROR.
     darts.commandStatus = 503;
-    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pinapplecola.darts.map', context: 'k-map', payload: {} });
+    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pineapplecola.darts.map', context: 'k-map', payload: {} });
     assert.strictEqual(statusOf('k-map'), 'ERROR');
     darts.commandStatus = 200;
     clock += state.TIMING.errorHoldMs + 1;
@@ -181,7 +213,7 @@ async function runPluginScenario() {
     assert.strictEqual(statusOf('k-map'), 'NO MAP');
     const commandCount = darts.commands.length;
     sent.length = 0;
-    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pinapplecola.darts.ifr', context: 'k-ifr', payload: {} });
+    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pineapplecola.darts.ifr', context: 'k-ifr', payload: {} });
     assert.strictEqual(darts.commands.length, commandCount);
     assert.ok(sent.some((m) => m.event === 'showAlert' && m.context === 'k-ifr'));
     darts.up = false;
@@ -193,7 +225,7 @@ async function runPluginScenario() {
     darts.state = snapshot({ ifrEnabled: true });
     await runTimers();
     assert.strictEqual(statusOf('k-ifr'), 'ON');
-    plugin.handleDeckMessage({ event: 'didReceiveSettings', action: 'com.pinapplecola.darts.ifr', context: 'k-ifr', payload: { settings: { label: 'IFR WP', colorOn: '#123456' } } });
+    plugin.handleDeckMessage({ event: 'didReceiveSettings', action: 'com.pineapplecola.darts.ifr', context: 'k-ifr', payload: { settings: { label: 'IFR WP', colorOn: '#123456' } } });
     assert.ok(lastImage('k-ifr').includes('fill="#123456"'));
     assert.ok(lastImage('k-ifr').includes('>IFR WP</text>'));
 

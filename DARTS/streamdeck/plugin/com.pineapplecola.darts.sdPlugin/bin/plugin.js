@@ -1,6 +1,6 @@
 'use strict';
 
-// DARTS Stream Deck plugin (Node.js, no third-party dependencies).
+// com.pineapplecola.darts Stream Deck plugin (Node.js, no third-party dependencies).
 //
 // Stream Deck  <-- WebSocket (SDK) -->  this plugin  <-- HTTP -->  DARTS (localhost:8766)
 //   - keyDown          -> POST /api/ui-command {command, request_id}

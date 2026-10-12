@@ -40,8 +40,20 @@ The batch files can't show anything on the key face. The **DARTS Stream Deck
 plugin** in [`streamdeck/plugin/`](streamdeck/plugin/README.md) replaces keys
 13–15 with keys that turn **green (on)**, **red (off)**, **amber (waiting)** or
 **grey (offline / no map)** based on the state the open live map reports. See its
-README for install steps (copy the `.sdPlugin` folder into the Stream Deck plugins
-folder; requires Stream Deck 7.1+).
+README for full install steps. Requires **Stream Deck 7.1+**, which provides
+**Node.js 24**:
+
+1. Fully quit the Stream Deck app (not just its window).
+2. Copy `streamdeck/plugin/com.pineapplecola.darts.sdPlugin/` — the
+   **`com.pineapplecola.darts.sdPlugin` folder itself, not its parent** — into:
+   - Windows: `%APPDATA%\Elgato\StreamDeck\Plugins\`
+   - macOS: `~/Library/Application Support/com.elgato.StreamDeck/Plugins/`
+3. Verify `manifest.json` is directly inside that folder, e.g.
+   `%APPDATA%\Elgato\StreamDeck\Plugins\com.pineapplecola.darts.sdPlugin\manifest.json`.
+   Do not rename the folder or nest it inside another copied folder.
+4. Restart Stream Deck and drag the DARTS MAP / IFR / VFR actions onto keys.
+5. Start DARTS and open `http://localhost:8766/map`; keys turn green/red based
+   on confirmed map state. The shared API URL defaults to `http://127.0.0.1:8766`.
 
 ---
 
