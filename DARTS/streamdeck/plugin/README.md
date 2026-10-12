@@ -47,9 +47,13 @@ Stream Deck app ⇄ plugin (Node.js) ──HTTP──▶ DARTS :8766 ──WebSo
   state of the **controlling map** — the earliest-connected tab still open. If it
   closes, the next tab takes over.
 
-The plugin is plain Node.js with no npm dependencies, so there is nothing to build.
+The plugin is plain JavaScript with **no third-party runtime dependencies**.
+Stream Deck's Node.js 24 supplies `fetch`, `WebSocket`, and the Node built-ins;
+the only local module is `bin/state.js`. The inspector is self-contained HTML.
+The npm development tools below are for validation/packaging only and are not
+needed to install or run the plugin.
 
-## Install
+## Install by double-click (recommended)
 
 Requirements: **Stream Deck app 7.1 or newer** (it ships the Node.js 24 runtime the
 plugin uses), on the **same computer** as DARTS.
@@ -57,6 +61,25 @@ plugin uses), on the **same computer** as DARTS.
 The canonical plugin UUID is **`com.pineapplecola.darts`**. Its folder name,
 manifest UUID and MAP / IFR / VFR action UUIDs must match; do not rename the
 folder or edit its contents.
+
+1. Download [**com.pineapplecola.darts.streamDeckPlugin**](dist/com.pineapplecola.darts.streamDeckPlugin)
+   from this repository (use **Download raw file** on GitHub, not Save page).
+   A prebuilt installer is committed in `dist/`.
+2. **Double-click the downloaded file** and approve installation in Stream Deck.
+   Stream Deck installs the whole plugin, including the UI, code, and images.
+3. Find **DARTS** in the actions list and drag **MAP toggle**, **IFR waypoints**
+   and **VFR waypoints** onto keys.
+4. Start DARTS and open the live map as described under **Use** below.
+
+For a clean reinstall after earlier manual edits, fully quit Stream Deck and
+remove previous DARTS plugin folders from its Plugins directory first. Reopen
+Stream Deck, then double-click the installer. Replace old key actions if they
+belonged to a differently named plugin.
+
+## Fallback: manual copy
+
+Use this only if you cannot use the installer. **Copy the ENTIRE `.sdPlugin`
+folder unchanged**; never copy or move its `ui`, `bin`, or `imgs` separately.
 
 1. **Fully quit Stream Deck** (Windows: tray icon → Quit; macOS: Stream Deck →
    Quit). Closing its window is not enough.
@@ -91,14 +114,37 @@ folder or edit its contents.
    remove its old key actions and add these new actions; the new UUID does not
    inherit the old plugin's settings.
 
-Developers with the Elgato CLI (`npm i -g @elgato/cli`) can instead run
-`streamdeck link com.pineapplecola.darts.sdPlugin` from this folder, or
-`streamdeck pack com.pineapplecola.darts.sdPlugin` to make a double-click
-installable `.streamDeckPlugin` file.
+To update, use the double-click installer again. Settings for the same UUID are
+stored by Stream Deck and are kept.
 
-To update this canonical plugin: fully quit Stream Deck, replace the folder,
-and restart Stream Deck. Settings for the same UUID are stored by the app and
-are kept. No `npm install`, build step or `package.json` is needed.
+## Build / validate / package
+
+With Node.js and npm installed, run these commands from the repository root:
+
+```sh
+cd DARTS/streamdeck/plugin
+npm ci
+npm run validate
+npm run pack
+```
+
+`validate` runs the regression tests and Elgato's manifest/resource validator.
+`pack` validates again and uses the pinned Elgato CLI to write
+`dist/com.pineapplecola.darts.streamDeckPlugin`, overwriting the previous installer.
+Regenerate and commit this file whenever plugin contents change. No compilation
+or runtime `npm install` inside the `.sdPlugin` folder is necessary.
+
+Alternatively, install the CLI globally and run its commands directly from
+`DARTS/streamdeck/plugin`:
+
+```sh
+npm i -g @elgato/cli
+streamdeck validate com.pineapplecola.darts.sdPlugin
+streamdeck pack com.pineapplecola.darts.sdPlugin --output dist --force
+```
+
+The validator may warn that category **DARTS** differs from plugin name
+**DARTS Live Map**; this is intentional and does not prevent packaging.
 
 ## Use
 
@@ -136,8 +182,10 @@ Tests: `node DARTS/tests/streamdeck_plugin_regression.test.js`.
 ## Troubleshooting
 
 - **DARTS does not appear in the actions list** — check Stream Deck is 7.1+,
-  verify the exact installed manifest path above, then fully quit and restart
-  the app. Re-copy the clean folder if files were hand-edited.
+  then use the **double-click installer**. A manually copied folder may be split
+  or incomplete: `ui/settings.html`, `bin/`, and `imgs/` must all be inside the
+  `.sdPlugin` folder alongside its top-level `manifest.json`. Do not create a
+  separate “plugin UI” folder. Fully quit and restart the app after manual copy.
 - **All keys `OFFLINE`** — DARTS isn't running, or the DARTS API setting/port is
   wrong. Check `curl http://localhost:8766/api/ui-state`.
 - **All keys `NO MAP`** — open (or refresh) `http://localhost:8766/map`. An old

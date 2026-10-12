@@ -1,0 +1,14 @@
+{
+  "name": "com.pineapplecola.darts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Validation and installer packaging for the self-contained DARTS Stream Deck plugin.",
+  "scripts": {
+    "test": "node ../../tests/streamdeck_plugin_regression.test.js",
+    "validate": "npm test && streamdeck validate com.pineapplecola.darts.sdPlugin",
+    "pack": "npm run validate && streamdeck pack com.pineapplecola.darts.sdPlugin --output dist --force"
+  },
+  "devDependencies": {
+    "@elgato/cli": "1.10.2"
+  }
+}

@@ -18,8 +18,14 @@
     "MinimumVersion": "7.1"
   },
   "OS": [
-    { "Platform": "windows", "MinimumVersion": "10" },
-    { "Platform": "mac", "MinimumVersion": "12" }
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    },
+    {
+      "Platform": "mac",
+      "MinimumVersion": "12"
+    }
   ],
   "Actions": [
     {
@@ -27,30 +33,51 @@
       "Name": "MAP toggle",
       "Tooltip": "Toggle the live map basemap (MAP TOGGLE). Green = on, red = off.",
       "Icon": "imgs/action",
-      "Controllers": ["Keypad"],
+      "Controllers": [
+        "Keypad"
+      ],
       "SupportedInMultiActions": false,
       "UserTitleEnabled": false,
-      "States": [{ "Image": "imgs/key", "ShowTitle": false }]
+      "States": [
+        {
+          "Image": "imgs/key",
+          "ShowTitle": false
+        }
+      ]
     },
     {
       "UUID": "com.pineapplecola.darts.ifr",
       "Name": "IFR waypoints",
       "Tooltip": "Toggle IFR waypoints on the live map. Green = visible, red = hidden.",
       "Icon": "imgs/action",
-      "Controllers": ["Keypad"],
+      "Controllers": [
+        "Keypad"
+      ],
       "SupportedInMultiActions": false,
       "UserTitleEnabled": false,
-      "States": [{ "Image": "imgs/key", "ShowTitle": false }]
+      "States": [
+        {
+          "Image": "imgs/key",
+          "ShowTitle": false
+        }
+      ]
     },
     {
       "UUID": "com.pineapplecola.darts.vfr",
       "Name": "VFR waypoints",
       "Tooltip": "Toggle VFR waypoints on the live map. Green = visible, red = hidden.",
       "Icon": "imgs/action",
-      "Controllers": ["Keypad"],
+      "Controllers": [
+        "Keypad"
+      ],
       "SupportedInMultiActions": false,
       "UserTitleEnabled": false,
-      "States": [{ "Image": "imgs/key", "ShowTitle": false }]
+      "States": [
+        {
+          "Image": "imgs/key",
+          "ShowTitle": false
+        }
+      ]
     }
   ]
 }

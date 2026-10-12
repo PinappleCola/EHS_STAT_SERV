@@ -43,17 +43,18 @@ plugin** in [`streamdeck/plugin/`](streamdeck/plugin/README.md) replaces keys
 README for full install steps. Requires **Stream Deck 7.1+**, which provides
 **Node.js 24**:
 
-1. Fully quit the Stream Deck app (not just its window).
-2. Copy `streamdeck/plugin/com.pineapplecola.darts.sdPlugin/` — the
-   **`com.pineapplecola.darts.sdPlugin` folder itself, not its parent** — into:
-   - Windows: `%APPDATA%\Elgato\StreamDeck\Plugins\`
-   - macOS: `~/Library/Application Support/com.elgato.StreamDeck/Plugins/`
-3. Verify `manifest.json` is directly inside that folder, e.g.
-   `%APPDATA%\Elgato\StreamDeck\Plugins\com.pineapplecola.darts.sdPlugin\manifest.json`.
-   Do not rename the folder or nest it inside another copied folder.
-4. Restart Stream Deck and drag the DARTS MAP / IFR / VFR actions onto keys.
-5. Start DARTS and open `http://localhost:8766/map`; keys turn green/red based
+1. Download [com.pineapplecola.darts.streamDeckPlugin](streamdeck/plugin/dist/com.pineapplecola.darts.streamDeckPlugin)
+   using GitHub's **Download raw file** button.
+2. **Double-click** it and approve the installation in Stream Deck. The installer
+   keeps the UI, code, manifest, and images together; no manual copying is needed.
+3. Drag the DARTS MAP / IFR / VFR actions onto keys.
+4. Start DARTS (`run.bat` / `run.sh`) and open `http://localhost:8766/map`; keys turn green/red based
    on confirmed map state. The shared API URL defaults to `http://127.0.0.1:8766`.
+
+If earlier manual copies do not appear, their folders may be split or incomplete.
+Use the installer above. The [plugin README](streamdeck/plugin/README.md)
+documents a whole-folder manual-copy fallback and the reproducible
+`npm run validate` / `npm run pack` commands.
 
 ---
 
