@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>DARTS key settings</title>
+    <style>
+        body { background: #2d2d2d; color: #d8d8d8; font: 13px "Segoe UI", Arial, sans-serif; margin: 0; padding: 8px 12px; }
+        h4 { margin: 14px 0 6px; color: #9a9a9a; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .row { display: flex; align-items: center; margin: 5px 0; }
+        .row label { width: 96px; flex: none; }
+        .row input[type=text] { flex: 1; min-width: 0; background: #3d3d3d; color: #d8d8d8; border: 1px solid #555; border-radius: 3px; padding: 4px 6px; }
+        .row input[type=color] { width: 44px; height: 24px; border: 1px solid #555; background: #3d3d3d; padding: 0; }
+        .hint { color: #8a8a8a; font-size: 11px; margin: 2px 0 6px 96px; }
+        button { background: #3d3d3d; color: #d8d8d8; border: 1px solid #555; border-radius: 3px; padding: 4px 10px; margin-top: 6px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h4>Key appearance</h4>
+    <div class="row"><label for="label">Label</label><input type="text" id="label" maxlength="10" placeholder="MAP / IFR / VFR"></div>
+    <div class="row"><label for="colorOn">On</label><input type="color" id="colorOn"></div>
+    <div class="row"><label for="colorOff">Off</label><input type="color" id="colorOff"></div>
+    <div class="row"><label for="colorPending">Pending / error</label><input type="color" id="colorPending"></div>
+    <div class="row"><label for="colorOffline">Offline</label><input type="color" id="colorOffline"></div>
+    <div class="row"><label for="colorNoMap">No map / stale</label><input type="color" id="colorNoMap"></div>
+    <div class="row"><label for="icon">Icon file</label><input type="text" id="icon" placeholder="optional, e.g. C:\icons\ifr.png"></div>
+    <div class="hint">PNG, JPG, GIF or SVG, max 512 KB. Leave empty for text only.</div>
+    <button id="reset" type="button">Reset to defaults</button>
+
+    <h4>DARTS connection (all keys)</h4>
+    <div class="row"><label for="dartsUrl">DARTS API</label><input type="text" id="dartsUrl" placeholder="http://127.0.0.1:8766"></div>
+    <div class="hint">The live map must be open in a browser for MAP / IFR / VFR state.</div>
+
+    <script>
+        const DEFAULT_COLORS = {
+            colorOn: '#15803D', colorOff: '#B91C1C', colorPending: '#B45309',
+            colorOffline: '#1E293B', colorNoMap: '#475569',
+        };
+        const DEFAULT_LABELS = {
+            'com.pinapplecola.darts.map': 'MAP',
+            'com.pinapplecola.darts.ifr': 'IFR',
+            'com.pinapplecola.darts.vfr': 'VFR',
+        };
+        let socket = null;
+        let uuid = null;
+        let settings = {};
+        let globalSettings = {};
+
+        function sendToDeck(message) {
+            if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+        }
+
+        function fillForm() {
+            document.getElementById('label').value = settings.label || '';
+            for (const [key, value] of Object.entries(DEFAULT_COLORS)) {
+                document.getElementById(key).value = /^#[0-9a-fA-F]{6}$/.test(settings[key] || '') ? settings[key] : value;
+            }
+            document.getElementById('icon').value = settings.icon || '';
+            document.getElementById('dartsUrl').value = globalSettings.dartsUrl || '';
+        }
+
+        function saveSettings() {
+            settings.label = document.getElementById('label').value.trim();
+            for (const key of Object.keys(DEFAULT_COLORS)) settings[key] = document.getElementById(key).value;
+            settings.icon = document.getElementById('icon').value.trim();
+            sendToDeck({ event: 'setSettings', context: uuid, payload: settings });
+        }
+
+        function saveGlobalSettings() {
+            globalSettings.dartsUrl = document.getElementById('dartsUrl').value.trim();
+            sendToDeck({ event: 'setGlobalSettings', context: uuid, payload: globalSettings });
+        }
+
+        // Called by the Stream Deck app when the property inspector opens.
+        function connectElgatoStreamDeckSocket(inPort, inUUID, inRegisterEvent, inInfo, inActionInfo) {
+            uuid = inUUID;
+            let actionInfo = {};
+            try { actionInfo = JSON.parse(inActionInfo); } catch (_err) { actionInfo = {}; }
+            settings = (actionInfo.payload && actionInfo.payload.settings) || {};
+            document.getElementById('label').placeholder = DEFAULT_LABELS[actionInfo.action] || 'Label';
+            fillForm();
+
+            socket = new WebSocket('ws://127.0.0.1:' + inPort);
+            socket.onopen = () => {
+                sendToDeck({ event: inRegisterEvent, uuid: inUUID });
+                sendToDeck({ event: 'getGlobalSettings', context: inUUID });
+            };
+            socket.onmessage = (event) => {
+                let msg;
+                try { msg = JSON.parse(event.data); } catch (_err) { return; }
+                if (msg.event === 'didReceiveGlobalSettings') {
+                    globalSettings = (msg.payload && msg.payload.settings) || {};
+                    fillForm();
+                } else if (msg.event === 'didReceiveSettings') {
+                    settings = (msg.payload && msg.payload.settings) || {};
+                    fillForm();
+                }
+            };
+        }
+
+        ['label', 'icon'].forEach((id) => document.getElementById(id).addEventListener('change', saveSettings));
+        Object.keys(DEFAULT_COLORS).forEach((id) => document.getElementById(id).addEventListener('input', saveSettings));
+        document.getElementById('dartsUrl').addEventListener('change', saveGlobalSettings);
+        document.getElementById('reset').addEventListener('click', () => {
+            settings = {};
+            fillForm();
+            saveSettings();
+        });
+    </script>
+</body>
+</html>

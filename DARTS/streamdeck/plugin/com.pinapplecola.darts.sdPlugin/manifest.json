@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "UUID": "com.pinapplecola.darts",
+  "Name": "DARTS Live Map",
+  "Version": "0.1.0.0",
+  "Author": "PinappleCola",
+  "Description": "Coloured live-state MAP / IFR / VFR toggle keys for the DARTS live map.",
+  "URL": "https://github.com/PinappleCola/EHS_STAT_SERV",
+  "Icon": "imgs/plugin",
+  "Category": "DARTS",
+  "CategoryIcon": "imgs/category",
+  "CodePath": "bin/plugin.js",
+  "PropertyInspectorPath": "ui/settings.html",
+  "SDKVersion": 2,
+  "Nodejs": {
+    "Version": "24"
+  },
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "OS": [
+    { "Platform": "windows", "MinimumVersion": "10" },
+    { "Platform": "mac", "MinimumVersion": "12" }
+  ],
+  "Actions": [
+    {
+      "UUID": "com.pinapplecola.darts.map",
+      "Name": "MAP toggle",
+      "Tooltip": "Toggle the live map basemap (MAP TOGGLE). Green = on, red = off.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{ "Image": "imgs/key", "ShowTitle": false }]
+    },
+    {
+      "UUID": "com.pinapplecola.darts.ifr",
+      "Name": "IFR waypoints",
+      "Tooltip": "Toggle IFR waypoints on the live map. Green = visible, red = hidden.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{ "Image": "imgs/key", "ShowTitle": false }]
+    },
+    {
+      "UUID": "com.pinapplecola.darts.vfr",
+      "Name": "VFR waypoints",
+      "Tooltip": "Toggle VFR waypoints on the live map. Green = visible, red = hidden.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{ "Image": "imgs/key", "ShowTitle": false }]
+    }
+  ]
+}
