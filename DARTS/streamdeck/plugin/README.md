@@ -56,6 +56,21 @@ It **does not depend on Stream Deck's managed Node.js runtime** or any system-in
 so it loads and runs reliably even on machines where `%APPDATA%\Elgato\StreamDeck\NodeJS\` is empty,
 absent, or failed to install.
 
+## Automated Windows Development & Testing Workflow
+
+For testing new commits, avoiding folder confusion, and automating plugin deployment and rollback on Windows, use the repository's helper launcher:
+
+```powershell
+# From the repository root in PowerShell:
+.\tools\dev.ps1 setup    # One-time setup: establish authoritative repo and plugin paths
+.\tools\dev.ps1 status   # Inspect deployed version, commit SHA, and detect stray folders
+.\tools\dev.ps1 test     # Run all regression tests on current or target commit
+.\tools\dev.ps1 deploy   # Safely backup and deploy to Stream Deck AppData
+.\tools\dev.ps1 rollback # Instantly restore the last known good build
+```
+
+See the complete guide in [DEV_WORKFLOW.md](../../../DEV_WORKFLOW.md).
+
 ## Install by double-click (recommended)
 
 Requirements: **Stream Deck app 7.1 or newer**, on the **same computer** as DARTS.

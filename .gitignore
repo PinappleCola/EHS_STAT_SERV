@@ -6,3 +6,7 @@ DARTS/*.db-shm
 DARTS/data/
 DARTS/3DSPAT_SAVES/
 DARTS/AUTO_3DSPAT_SAVES/
+.dev-workflow.local.json
+.dev-workflow-history.json
+.darts-dev-backups/
+*.local.json
