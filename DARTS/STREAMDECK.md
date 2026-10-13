@@ -40,21 +40,30 @@ The batch files can't show anything on the key face. The **DARTS Stream Deck
 plugin** in [`streamdeck/plugin/`](streamdeck/plugin/README.md) replaces keys
 13–15 with keys that turn **green (on)**, **red (off)**, **amber (waiting)** or
 **grey (offline / no map)** based on the state the open live map reports. See its
-README for full install steps. Requires **Stream Deck 7.1+**, which provides
-**Node.js 24**:
+README for full install steps. Requires **Stream Deck 7.1+**.
 
-1. Download [com.pineapplecola.darts.streamDeckPlugin](streamdeck/plugin/dist/com.pineapplecola.darts.streamDeckPlugin)
-   using GitHub's **Download raw file** button.
-2. **Double-click** it and approve the installation in Stream Deck. The installer
-   keeps the UI, code, manifest, and images together; no manual copying is needed.
+> **No managed Node.js runtime required**: Unlike standard Node plugins, this plugin
+> is built as a self-contained native executable (`darts-plugin.exe` on Windows,
+> universal binary on macOS). It does **not** depend on Stream Deck's managed
+> Node.js runtime and loads reliably even if `%APPDATA%\Elgato\StreamDeck\NodeJS\` is
+> empty or absent on your machine.
+
+1. **Install via double-click installer (recommended):**
+   Download [com.pineapplecola.darts.streamDeckPlugin](streamdeck/plugin/dist/com.pineapplecola.darts.streamDeckPlugin)
+   using GitHub's **Download raw file** button. Double-click it and approve the installation in Stream Deck.
+   The installer keeps the UI, executable code, manifest, and images together; no manual copying is needed.
+2. **Manual install fallback:**
+   If installing manually, copy the entire folder `DARTS/streamdeck/plugin/com.pineapplecola.darts.sdPlugin/`
+   into `%APPDATA%\Elgato\StreamDeck\Plugins\` on Windows (or `~/Library/Application Support/com.elgato.StreamDeck/Plugins/` on macOS).
+   Always fully quit Stream Deck (right-click tray icon → Quit) and restart it after manual installation.
 3. Drag the DARTS MAP / IFR / VFR actions onto keys.
 4. Start DARTS (`run.bat` / `run.sh`) and open `http://localhost:8766/map`; keys turn green/red based
    on confirmed map state. The shared API URL defaults to `http://127.0.0.1:8766`.
 
-If earlier manual copies do not appear, their folders may be split or incomplete.
-Use the installer above. The [plugin README](streamdeck/plugin/README.md)
-documents a whole-folder manual-copy fallback and the reproducible
-`npm run validate` / `npm run pack` commands.
+### Troubleshooting the Plugin
+- **Confirming the plugin loaded**: Open Stream Deck Settings → Plugins. **DARTS Live Map** appears in the installed list. When active, `darts-plugin.exe` runs as a process in Task Manager.
+- **Actions never appear**: If using older Node-based plugins, Stream Deck's managed runtime may be missing from `%APPDATA%\Elgato\StreamDeck\NodeJS\`. This standalone native plugin eliminates that failure mode. Use the double-click `.streamDeckPlugin` installer to ensure complete asset installation.
+- The [plugin README](streamdeck/plugin/README.md) documents full troubleshooting, state machines, and the reproducible `npm run build` / `npm run validate` / `npm run pack` commands.
 
 ---
 

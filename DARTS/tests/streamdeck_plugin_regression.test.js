@@ -16,13 +16,24 @@ assert.deepStrictEqual(fs.readdirSync(path.dirname(pluginDir)).filter((name) => 
 assert.deepStrictEqual(manifest.Actions.map((a) => a.UUID).sort(), [
     'com.pineapplecola.darts.ifr', 'com.pineapplecola.darts.map', 'com.pineapplecola.darts.vfr',
 ]);
-assert.strictEqual(manifest.CodePath, 'bin/plugin.js');
+assert.strictEqual(manifest.CodePath, 'bin/darts-plugin');
+assert.strictEqual(manifest.CodePathWin, 'bin/darts-plugin.exe');
+assert.strictEqual(manifest.CodePathMac, 'bin/darts-plugin');
 assert.strictEqual(manifest.PropertyInspectorPath, 'ui/settings.html');
-assert.strictEqual(manifest.Nodejs.Version, '24');
+assert.strictEqual(manifest.Nodejs, undefined, 'Plugin must not depend on Stream Deck managed Node.js runtime');
 assert.strictEqual(manifest.Software.MinimumVersion, '7.1');
-for (const resource of [manifest.CodePath, manifest.PropertyInspectorPath, 'bin/state.js']) {
+for (const resource of [manifest.CodePath, manifest.CodePathWin, manifest.CodePathMac, manifest.PropertyInspectorPath, 'bin/state.js', 'bin/plugin.js']) {
     assert.ok(fs.statSync(path.join(pluginDir, resource)).isFile(), resource);
 }
+
+// Verify standalone binaries have valid headers and are non-empty
+const winBuf = fs.readFileSync(path.join(pluginDir, manifest.CodePathWin));
+assert.ok(winBuf.length > 1024 * 1024, 'Windows binary must be standalone compiled executable');
+assert.strictEqual(winBuf.toString('ascii', 0, 2), 'MZ', 'Windows binary must be PE32+ executable (MZ header)');
+
+const macBuf = fs.readFileSync(path.join(pluginDir, manifest.CodePathMac));
+assert.ok(macBuf.length > 1024 * 1024, 'macOS binary must be standalone compiled executable');
+assert.strictEqual(macBuf.readUInt32BE(0), 0xcafebabe, 'macOS binary must be universal Mach-O (FAT_MAGIC header)');
 for (const image of [manifest.Icon, manifest.CategoryIcon,
     ...manifest.Actions.flatMap((a) => [a.Icon, ...a.States.map((s) => s.Image)])]) {
     for (const suffix of ['.png', '@2x.png']) {
@@ -261,6 +272,9 @@ async function runPluginScenario() {
 }
 
 runPluginScenario().then(() => {
+    const { execFileSync } = require('child_process');
+    const srcGoDir = path.join(__dirname, '..', 'streamdeck', 'plugin', 'src_go');
+    execFileSync('go', ['test', '-v', '.'], { cwd: srcGoDir, stdio: 'inherit' });
     console.log('streamdeck_plugin_regression: OK');
 }).catch((err) => {
     console.error(err);

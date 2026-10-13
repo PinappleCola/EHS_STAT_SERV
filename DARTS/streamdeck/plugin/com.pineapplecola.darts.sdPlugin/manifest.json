@@ -8,12 +8,11 @@
   "Icon": "imgs/plugin",
   "Category": "DARTS",
   "CategoryIcon": "imgs/category",
-  "CodePath": "bin/plugin.js",
+  "CodePath": "bin/darts-plugin",
+  "CodePathWin": "bin/darts-plugin.exe",
+  "CodePathMac": "bin/darts-plugin",
   "PropertyInspectorPath": "ui/settings.html",
   "SDKVersion": 2,
-  "Nodejs": {
-    "Version": "24"
-  },
   "Software": {
     "MinimumVersion": "7.1"
   },
