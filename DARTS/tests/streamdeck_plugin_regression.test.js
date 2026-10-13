@@ -63,6 +63,54 @@ for (const action of manifest.Actions) assert.ok(inspectorHtml.includes(`'${acti
 assert.deepStrictEqual(manifest.Actions.map((a) => a.UUID).sort(), Object.keys(state.ACTIONS).sort());
 for (const action of manifest.Actions) assert.ok(action.UUID.startsWith(`${manifest.UUID}.`));
 
+// --- Robustness, packaging, scripts, and documentation assertions ---
+const pluginRootDir = path.join(__dirname, '..', 'streamdeck', 'plugin');
+
+// Verify helper scripts exist
+const scriptsDir = path.join(pluginRootDir, 'scripts');
+assert.ok(fs.existsSync(scriptsDir) && fs.statSync(scriptsDir).isDirectory(), 'Scripts directory must exist');
+for (const scriptName of ['install-manual.ps1', 'uninstall.ps1', 'doctor.ps1']) {
+    const scriptPath = path.join(scriptsDir, scriptName);
+    assert.ok(fs.existsSync(scriptPath) && fs.statSync(scriptPath).isFile(), `Helper script ${scriptName} must exist`);
+    assert.ok(fs.statSync(scriptPath).size > 100, `Helper script ${scriptName} must be non-empty`);
+}
+
+// Verify prebuilt installer package in dist/
+const distInstaller = path.join(pluginRootDir, 'dist', 'com.pineapplecola.darts.streamDeckPlugin');
+assert.ok(fs.existsSync(distInstaller) && fs.statSync(distInstaller).isFile(), 'Committed installer bundle must exist in dist/');
+const installerSize = fs.statSync(distInstaller).size;
+assert.ok(installerSize > 1024 * 1024, `Committed installer size (${installerSize} bytes) must be > 1 MB`);
+
+// Verify no misspelled "pinapplecola" (missing-e) anywhere in the plugin tree
+function assertNoMisspelling(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+        if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
+        const fullPath = path.join(dir, entry.name);
+        assert.ok(!entry.name.toLowerCase().includes('pinapplecola'), `Path name must not have misspelled UUID: ${fullPath}`);
+        if (entry.isDirectory()) {
+            assertNoMisspelling(fullPath);
+        } else if (entry.isFile() && /\.(md|json|js|go|html|ps1|bat|sh)$/i.test(entry.name)) {
+            const text = fs.readFileSync(fullPath, 'utf8');
+            assert.ok(!text.includes('pinapplecola'), `File ${fullPath} contains misspelled "pinapplecola"`);
+        }
+    }
+}
+assertNoMisspelling(pluginRootDir);
+
+// Verify README mentions both install locations and the self-contained/no-managed-Node note
+const readmePath = path.join(pluginRootDir, 'README.md');
+assert.ok(fs.existsSync(readmePath), 'Plugin README.md must exist');
+const readmeText = fs.readFileSync(readmePath, 'utf8');
+assert.ok(readmeText.includes('APPDATA') && readmeText.includes('Elgato') && readmeText.includes('Plugins'),
+    'README must mention per-user AppData plugin install location');
+assert.ok(readmeText.includes('Program Files') && readmeText.includes('Plugins'),
+    'README must mention system-wide Program Files plugin install location');
+assert.ok(/self-contained|standalone/i.test(readmeText),
+    'README must document self-contained / standalone executable architecture');
+assert.ok(/not require.*(?:managed )?Node/i.test(readmeText) || /does NOT require.*Node/i.test(readmeText),
+    'README must state managed Node runtime is not required');
+
 // --- State model ---
 let uuidSeq = 0;
 const randomUUID = () => `uuid-${++uuidSeq}`;
