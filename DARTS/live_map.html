@@ -22,6 +22,12 @@
             position: absolute; top: 10px; left: 10px; right: 10px; z-index: 50;
             display: flex; justify-content: flex-start; align-items: center;
             pointer-events: none;
+            transform: translateY(0); opacity: 1; visibility: visible;
+            transition: transform 0.3s ease, opacity 0.3s ease, visibility 0s;
+        }
+        .hud-top.osd-hidden {
+            transform: translateY(calc(-100% - 20px)); opacity: 0; visibility: hidden; pointer-events: none;
+            transition: transform 0.3s ease, opacity 0.3s ease, visibility 0s linear 0.3s;
         }
         
         .hud-panel {
@@ -191,6 +197,7 @@
             padding: 2px 6px !important;
         }
         .leaflet-control-attribution a { color: #7dd3fc !important; }
+        .leaflet-tile-pane { filter: brightness(var(--night-map-brightness, 1)); }
     </style>
 </head>
 <body>
@@ -214,7 +221,7 @@
             
             <div style="width: 1px; height: 20px; background: #334155; margin: 0 5px;"></div>
             
-            <select id="map-style-dropdown" class="map-select" style="display: none;">
+            <select id="map-style-dropdown" class="map-select" style="visibility: hidden; opacity: 0; pointer-events: none;">
                 <option value="carto-dark">CARTO DARK</option>
                 <option value="carto-light">CARTO LIGHT</option>
                 <option value="carto-voyager">CARTO VOYAGER</option>
@@ -957,8 +964,16 @@
                 trailEndCode.value = endClock;
             }
         }
-        trailMin.addEventListener('input', () => updateSliderLabels(true, 'min'));
-        trailMax.addEventListener('input', () => updateSliderLabels(true, 'max'));
+        trailMin.addEventListener('input', () => {
+            activeSpan = null;
+            updateSliderLabels(true, 'min');
+            reportUiState();
+        });
+        trailMax.addEventListener('input', () => {
+            activeSpan = null;
+            updateSliderLabels(true, 'max');
+            reportUiState();
+        });
         function applyTimecodeInput(inputEl, isStart) {
             const nowMs = Date.now();
             const { fromMs, toMs } = getTrailRangeWindow(nowMs);
@@ -1176,7 +1191,10 @@
                 networkMode = 'ONLINE';
                 document.getElementById('btn-network').innerText = 'MAP TOGGLE';
                 document.getElementById('btn-network').className = 'btn-action btn-toggle active';
-                document.getElementById('map-style-dropdown').style.display = 'block';
+                document.getElementById('map-style-dropdown').style.visibility = 'visible';
+                document.getElementById('map-style-dropdown').style.opacity = '1';
+                document.getElementById('map-style-dropdown').style.pointerEvents = 'auto';
+                document.getElementById('map-style-dropdown').disabled = false;
                 mapContainer.style.display = 'block';
                 
                 rCanvas.style.pointerEvents = 'auto'; 
@@ -1194,7 +1212,10 @@
                 networkMode = 'OFF-GRID';
                 document.getElementById('btn-network').innerText = 'MAP TOGGLE';
                 document.getElementById('btn-network').className = 'btn-action btn-toggle';
-                document.getElementById('map-style-dropdown').style.display = 'none';
+                document.getElementById('map-style-dropdown').style.visibility = 'hidden';
+                document.getElementById('map-style-dropdown').style.opacity = '0';
+                document.getElementById('map-style-dropdown').style.pointerEvents = 'none';
+                document.getElementById('map-style-dropdown').disabled = true;
                 mapContainer.style.display = 'none';
                 rCanvas.style.boxShadow = 'inset 0 0 150px rgba(0,0,0,0.9)'; 
                 
@@ -1211,7 +1232,72 @@
         }
         document.getElementById('btn-network').addEventListener('click', toggleMap);
 
-        // --- Stream Deck state reporting: this map is authoritative for MAP/IFR/VFR ---
+        let activeSpan = null;
+        let nightMode = false;
+        let nightSnapshot = null;
+        let osdVisible = true;
+        let exportState = 'idle';
+        let exportProgress = null;
+        let nightBrightness = { brightness_map: 0.4, brightness_elements: 0.4, brightness_trails: 0.4 };
+        fetch(`${HTTP_API}/api/night-config`).then(response => response.ok ? response.json() : null).then(config => {
+            if (!config) return;
+            ['brightness_map', 'brightness_elements', 'brightness_trails'].forEach(key => {
+                const value = Number(config[key]);
+                if (Number.isFinite(value)) nightBrightness[key] = Math.max(0, Math.min(1, value));
+            });
+            document.documentElement.style.setProperty('--night-map-brightness', nightMode ? nightBrightness.brightness_map : 1);
+        }).catch(error => console.warn('Night brightness config unavailable:', error));
+
+        function applySpan(spanKey) {
+            const spans = { '30m': 30, '1h': 60, '2h': 120, '4h': 240, day: 1440 };
+            if (!Object.hasOwn(spans, spanKey)) return false;
+            trailMin.value = String(TRAIL_WINDOW_MAX_MINUTES - spans[spanKey]);
+            trailMax.value = String(TRAIL_WINDOW_MAX_MINUTES);
+            activeSpan = spanKey;
+            updateSliderLabels(true);
+            reportUiState();
+            return true;
+        }
+
+        function setOsdVisible(visible) {
+            osdVisible = !!visible;
+            document.querySelector('.hud-top').classList.toggle('osd-hidden', !osdVisible);
+        }
+
+        function toggleOsd() {
+            setOsdVisible(!osdVisible);
+            reportUiState();
+        }
+
+        function toggleNightMode() {
+            if (!nightMode) {
+                nightSnapshot = {
+                    trailMin: trailMin.value,
+                    trailMax: trailMax.value,
+                    activeSpan,
+                    osdVisible,
+                };
+                nightMode = true;
+                document.documentElement.style.setProperty('--night-map-brightness', nightBrightness.brightness_map);
+                applySpan('30m');
+                setOsdVisible(false);
+            } else {
+                nightMode = false;
+                document.documentElement.style.setProperty('--night-map-brightness', 1);
+                if (nightSnapshot) {
+                    trailMin.value = nightSnapshot.trailMin;
+                    trailMax.value = nightSnapshot.trailMax;
+                    activeSpan = nightSnapshot.activeSpan;
+                    clampTrailRange();
+                    updateSliderLabels(true);
+                    setOsdVisible(nightSnapshot.osdVisible);
+                }
+                nightSnapshot = null;
+            }
+            reportUiState();
+        }
+
+        // --- Stream Deck state reporting: this map is authoritative for all UI controls ---
         let uiCommandRequestId = null;
         function reportUiState() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -1222,6 +1308,11 @@
                     mapEnabled: networkMode === 'ONLINE',
                     ifrEnabled: !hiddenMapSources.ifr_waypoints,
                     vfrEnabled: !hiddenMapSources.vfr_waypoints,
+                    activeSpan,
+                    nightMode,
+                    osdVisible,
+                    exportState,
+                    exportProgress,
                 },
             }));
         }
@@ -1565,6 +1656,8 @@
             const params = new URLSearchParams({ from: String(fromMs), to: String(toMs) });
             const response = await fetch(`${HTTP_API}/api/trails/export3d.geojson?${params.toString()}`);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const contentLength = Number(response.headers.get('content-length'));
+            const hasReliableProgress = Number.isFinite(contentLength) && contentLength > 0;
             let received = 0;
             let lastReport = 0;
             const reader = response.body.getReader();
@@ -1573,12 +1666,23 @@
                     try {
                         const { done, value } = await reader.read();
                         if (done) {
+                            if (hasReliableProgress && exportProgress !== 100) {
+                                exportProgress = 100;
+                                reportUiState();
+                            }
                             console.info(`3D export: download complete (${(received / 1048576).toFixed(1)} MiB)`);
                             reader.releaseLock();
                             controller.close();
                             return;
                         }
                         received += value.byteLength;
+                        if (hasReliableProgress) {
+                            const nextProgress = Math.min(99, Math.floor((received / contentLength) * 100));
+                            if (nextProgress !== exportProgress) {
+                                exportProgress = nextProgress;
+                                reportUiState();
+                            }
+                        }
                         if (Date.now() - lastReport >= 1000) {
                             console.info(`3D export: ${(received / 1048576).toFixed(1)} MiB received`);
                             lastReport = Date.now();
@@ -1632,14 +1736,35 @@
             }
         }
 
-        document.getElementById('btn-export-geojson-3d').addEventListener('click', async () => {
+        async function startExport3D() {
+            if (exportState === 'working') return;
+            exportState = 'working';
+            exportProgress = null;
+            reportUiState();
             try {
                 await exportTrail3DGeoJSON();
+                exportState = 'done';
+                exportProgress = 100;
+                reportUiState();
+                setTimeout(() => {
+                    exportState = 'idle';
+                    exportProgress = null;
+                    reportUiState();
+                }, 800);
             } catch (err) {
                 console.warn('3D GeoJSON export failed:', err);
                 alert('Unable to export trail 3D GeoJSON right now.');
+                exportState = 'error';
+                exportProgress = null;
+                reportUiState();
+                setTimeout(() => {
+                    exportState = 'idle';
+                    reportUiState();
+                }, 1500);
             }
-        });
+        }
+
+        document.getElementById('btn-export-geojson-3d').addEventListener('click', startExport3D);
 
         function getCanvasPoint(lat, lon, R_CX, R_CY, ppd) {
             return projectWorldToCanvas(lat, lon, { R_CX, R_CY, ppd, useMapProjection: true });
@@ -1890,6 +2015,9 @@
                 }
 
                 const ppd = R_MIN / activeZoomDeg;
+                const elementBrightness = nightMode ? nightBrightness.brightness_elements : 1;
+                const trailBrightness = nightMode ? nightBrightness.brightness_trails : 1;
+                rCtx.globalAlpha = elementBrightness;
 
                 if (networkMode === 'OFF-GRID') {
                     rCtx.strokeStyle = 'rgba(56, 189, 248, 0.1)'; rCtx.lineWidth = 1;
@@ -2006,7 +2134,7 @@
                                 }
                             }
                             
-                            rCtx.globalAlpha = isDimmed ? 0.3 : 1.0;
+                            rCtx.globalAlpha = elementBrightness * (isDimmed ? 0.3 : 1.0);
                             rCtx.strokeStyle = color; rCtx.fillStyle = color; rCtx.lineWidth = 1.5;
                             
                             if (isSelected && !isDimmed) { rCtx.shadowBlur = 8; rCtx.shadowColor = '#38bdf8'; }
@@ -2050,7 +2178,7 @@
 
                             if (props.name) { rCtx.font = "bold 9px monospace"; rCtx.fillText(props.name, pt.x + 8, pt.y + 4); }
                             
-                            rCtx.globalAlpha = 1.0;
+                            rCtx.globalAlpha = elementBrightness;
                             rCtx.shadowBlur = 0;
                         }
                     });
@@ -2077,6 +2205,7 @@
                 
                 const { minAgeMs, maxAgeMs } = getTrailRangeWindow(renderTime);
                 const timeSpan = maxAgeMs - minAgeMs || 1; 
+                rCtx.globalAlpha = trailBrightness;
                 Object.keys(trailHistory).forEach(icao => {
                     const historyObj = trailHistory[icao];
                     const history = historyObj.path;
@@ -2112,6 +2241,7 @@
                     rCtx.shadowBlur = 0; 
                 });
 
+                rCtx.globalAlpha = elementBrightness;
                 planes.forEach(p => {
                     const renderPos = getRenderablePos(p);
                     if (renderPos) {
@@ -2131,7 +2261,7 @@
                             const heading = (p.display_heading && p.display_heading !== '----') ? parseFloat(p.display_heading) : ((p.track && p.track !== '----') ? parseFloat(p.track) : 0);
                             const gs = (p.speed && p.speed !== '----') ? parseFloat(p.speed) : 0;
 
-                            rCtx.globalAlpha = isDimmed ? 0.3 : 1.0;
+                            rCtx.globalAlpha = elementBrightness * (isDimmed ? 0.3 : 1.0);
 
                             if (gs > 10) {
                                 const distNm = gs * (60 / 3600); 
@@ -2160,7 +2290,7 @@
                             rCtx.lineTo(4, 10); rCtx.lineTo(0, 8.5); rCtx.lineTo(-4, 10); rCtx.lineTo(-4, 9);
                             rCtx.lineTo(-1.5, 6.5); rCtx.lineTo(-1.5, 2.5); rCtx.lineTo(-6.5, 4); rCtx.lineTo(-6.5, 3);
                             rCtx.lineTo(-1.5, -1); rCtx.lineTo(-1.5, -5); rCtx.closePath();
-                            rCtx.fill(); rCtx.restore(); rCtx.shadowBlur = 0; rCtx.globalAlpha = 1.0;
+                            rCtx.fill(); rCtx.restore(); rCtx.shadowBlur = 0; rCtx.globalAlpha = elementBrightness;
 
                             
                             let vRateSym = '≈';
@@ -2337,7 +2467,7 @@
                         const wptPt = getCanvasPoint(p.intent_wp_lat, p.intent_wp_lon, R_CX, R_CY, ppd);
 
                         const isDimmed = ((lockedEntity || secondaryEntity) && p.icao !== lockedEntity && p.icao !== secondaryEntity && p.icao !== hoveredEntity);
-                        rCtx.globalAlpha = isDimmed ? 0.25 : 0.85;
+                        rCtx.globalAlpha = elementBrightness * (isDimmed ? 0.25 : 0.85);
 
                         // Dotted line from aircraft to intent waypoint
                         rCtx.beginPath();
@@ -2367,7 +2497,7 @@
                         rCtx.fillStyle = '#f59e0b';
                         rCtx.fillText(wptName, wptPt.x + ds + 3, wptPt.y + 3);
 
-                        rCtx.globalAlpha = 1.0;
+                        rCtx.globalAlpha = elementBrightness;
                     });
                 }
 
@@ -2623,6 +2753,14 @@
                         case 'toggle_map': toggleMap(); break;
                         case 'toggle_ifr': toggleMapSource('btn-ifr-toggle', 'ifr_waypoints'); break;
                         case 'toggle_vfr': toggleMapSource('btn-vfr-toggle', 'vfr_waypoints'); break;
+                        case 'span_30m': applySpan('30m'); break;
+                        case 'span_1h': applySpan('1h'); break;
+                        case 'span_2h': applySpan('2h'); break;
+                        case 'span_4h': applySpan('4h'); break;
+                        case 'span_day': applySpan('day'); break;
+                        case 'toggle_night': toggleNightMode(); break;
+                        case 'toggle_osd': toggleOsd(); break;
+                        case 'export_3d': startExport3D(); break;
                     }
                     return;
                 }
@@ -3017,7 +3155,7 @@
             noPoints.style.display = 'none';
             tbody.innerHTML = '';
             points.forEach(name => {
-                const cfg = auditConfig[name] || { outer_radius_nm: 5.0, inner_radius_nm: 2.0, colour_r: 255, colour_g: 165, colour_b: 0 };
+                const cfg = auditConfig[name] || { outer_radius_nm: 0.3, inner_radius_nm: 0.1, colour_r: 255, colour_g: 165, colour_b: 0 };
                 const hexColour = '#' + [cfg.colour_r, cfg.colour_g, cfg.colour_b].map(c => (c || 0).toString(16).padStart(2, '0')).join('');
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
@@ -3046,8 +3184,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         point_name: name,
-                        outer_radius_nm: parseFloat(outerEl.value) || 5.0,
-                        inner_radius_nm: parseFloat(innerEl.value) || 2.0,
+                        outer_radius_nm: parseFloat(outerEl.value) || 0.3,
+                        inner_radius_nm: parseFloat(innerEl.value) || 0.1,
                         colour_r: r, colour_g: g, colour_b: b,
                     })
                 });
@@ -3083,7 +3221,7 @@
                 if (!geom || geom.type !== 'Point') return;
                 if (props.masked) return;
                 const name = props.name || props.id || 'UNNAMED';
-                const cfg = auditConfig[name] || { outer_radius_nm: 5.0, inner_radius_nm: 2.0, colour_r: 255, colour_g: 165, colour_b: 0 };
+                const cfg = auditConfig[name] || { outer_radius_nm: 0.3, inner_radius_nm: 0.1, colour_r: 255, colour_g: 165, colour_b: 0 };
                 const centLat = geom.coordinates[1];
                 const centLon = geom.coordinates[0];
                 const centPt = getCanvasPoint(centLat, centLon, R_CX, R_CY, ppd);

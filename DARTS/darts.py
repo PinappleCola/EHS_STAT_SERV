@@ -82,6 +82,9 @@ def load_runtime_config():
         "3DGEO_AUTO_EXPORT_ENABLE": 1,
         "3DGEO_AUTO_EXPORT_DAILY_TIME": "2400",
         "3DGEO_AUTO_EXPORT_TIMEZONE": "Australia/Sydney",
+        "brightness_map": 0.4,
+        "brightness_elements": 0.4,
+        "brightness_trails": 0.4,
     }
 
     try:
@@ -1528,8 +1531,17 @@ WS_PORT = RUNTIME_CONFIG["ws_port"]
 HTTP_PORT = RUNTIME_CONFIG["http_port"]
 WS_LOOP = None
 WS_CLIENTS = set()
-UI_COMMANDS = ("toggle_map", "toggle_ifr", "toggle_vfr")
-UI_STATE_KEYS = ("mapEnabled", "ifrEnabled", "vfrEnabled")
+UI_COMMANDS = (
+    "toggle_map", "toggle_ifr", "toggle_vfr",
+    "span_30m", "span_1h", "span_2h", "span_4h", "span_day",
+    "toggle_night", "toggle_osd", "export_3d",
+)
+UI_STATE_BOOL_KEYS = ("mapEnabled", "ifrEnabled", "vfrEnabled", "nightMode", "osdVisible")
+UI_STATE_KEYS = (
+    *UI_STATE_BOOL_KEYS, "activeSpan", "exportState", "exportProgress",
+)
+UI_SPAN_KEYS = (None, "30m", "1h", "2h", "4h", "day")
+UI_EXPORT_STATES = ("idle", "working", "done", "error")
 UI_STATE_STALE_SEC = 6.0
 UI_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 # Live-map toggle state reported by browser map tabs (keyed by WebSocket).
@@ -1778,6 +1790,8 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(cfg)
         elif path == "/api/ui-state":
             self._send_json(get_ui_state_snapshot())
+        elif path == "/api/night-config":
+            self._send_json(get_night_config_snapshot())
         else:
             self._send_json({"error": "Not found"}, status=404)
 
@@ -1795,7 +1809,7 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
 
             command = data.get("command") if isinstance(data, dict) else None
             if command not in UI_COMMANDS:
-                self._send_json({"error": "command must be toggle_map, toggle_ifr, or toggle_vfr"}, status=400)
+                self._send_json({"error": f"command must be one of: {', '.join(UI_COMMANDS)}"}, status=400)
                 return
             request_id = data.get("request_id")
             if request_id is not None and not is_valid_ui_request_id(request_id):
@@ -1835,8 +1849,8 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             if not point_name:
                 self._send_json({"error": "point_name is required"}, status=400)
                 return
-            outer_nm = float(data.get("outer_radius_nm", 5.0))
-            inner_nm = float(data.get("inner_radius_nm", 2.0))
+            outer_nm = float(data.get("outer_radius_nm", 0.3))
+            inner_nm = float(data.get("inner_radius_nm", 0.1))
             colour_r = int(data.get("colour_r", 255))
             colour_g = int(data.get("colour_g", 165))
             colour_b = int(data.get("colour_b", 0))
@@ -2862,11 +2876,15 @@ with audit_db_lock:
     _c.execute("PRAGMA synchronous=NORMAL;")
     _c.execute('''CREATE TABLE IF NOT EXISTS audit_config
                                (point_name TEXT PRIMARY KEY,
-                                outer_radius_nm REAL DEFAULT 5.0,
-                                inner_radius_nm REAL DEFAULT 2.0,
+                                outer_radius_nm REAL DEFAULT 0.3,
+                                inner_radius_nm REAL DEFAULT 0.1,
                                 colour_r INTEGER DEFAULT 255,
                                 colour_g INTEGER DEFAULT 165,
                                 colour_b INTEGER DEFAULT 0)''')
+    if audit_db_conn.execute("PRAGMA user_version").fetchone()[0] < 1:
+        _c.execute("UPDATE audit_config SET outer_radius_nm = 0.3, inner_radius_nm = 0.1")
+        audit_db_conn.execute("PRAGMA user_version = 1")
+        audit_db_conn.commit()
     # Audit crossing log — snapshot of aircraft data when crossing a boundary
     _c.execute('''CREATE TABLE IF NOT EXISTS audit_crossings
                                (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3676,7 +3694,7 @@ def get_audit_points():
             continue
         name = props.get("name") or props.get("id") or "UNNAMED"
         lon, lat = geom["coordinates"][0], geom["coordinates"][1]
-        cfg = cfg_snapshot.get(name, {"outer_radius_nm": 5.0, "inner_radius_nm": 2.0, "colour_r": 255, "colour_g": 165, "colour_b": 0})
+        cfg = cfg_snapshot.get(name, {"outer_radius_nm": 0.3, "inner_radius_nm": 0.1, "colour_r": 255, "colour_g": 165, "colour_b": 0})
         points.append({"name": name, "lat": lat, "lon": lon, **cfg})
     return points
 
@@ -4955,7 +4973,27 @@ def _bump_ui_revision_locked():
 
 def record_ui_state(client_key, state, request_id=None, now=None):
     """Store a live-map toggle state report. Returns False for malformed reports."""
-    if not isinstance(state, dict) or not all(isinstance(state.get(k), bool) for k in UI_STATE_KEYS):
+    if not isinstance(state, dict) or not all(isinstance(state.get(k), bool) for k in ("mapEnabled", "ifrEnabled", "vfrEnabled")):
+        return False
+    normalized_state = {
+        "nightMode": False,
+        "osdVisible": True,
+        "activeSpan": None,
+        "exportState": "idle",
+        "exportProgress": None,
+        **state,
+    }
+    if not all(isinstance(normalized_state.get(k), bool) for k in UI_STATE_BOOL_KEYS):
+        return False
+    if normalized_state.get("activeSpan") not in UI_SPAN_KEYS:
+        return False
+    if normalized_state.get("exportState") not in UI_EXPORT_STATES:
+        return False
+    progress = normalized_state.get("exportProgress")
+    if progress is not None and (
+        isinstance(progress, bool) or not isinstance(progress, (int, float))
+        or not math.isfinite(progress) or not 0 <= progress <= 100
+    ):
         return False
     if request_id is not None and not is_valid_ui_request_id(request_id):
         request_id = None
@@ -4965,7 +5003,7 @@ def record_ui_state(client_key, state, request_id=None, now=None):
         if report is None:
             UI_STATE["seq"] += 1
             report = UI_MAP_REPORTS[client_key] = {"seq": UI_STATE["seq"]}
-        report["state"] = {k: state[k] for k in UI_STATE_KEYS}
+        report["state"] = {k: normalized_state.get(k) for k in UI_STATE_KEYS}
         report["request_id"] = request_id
         report["updated_at"] = now
         _bump_ui_revision_locked()
@@ -4987,6 +5025,11 @@ def get_ui_state_snapshot(now=None):
             "mapEnabled": None,
             "ifrEnabled": None,
             "vfrEnabled": None,
+            "activeSpan": None,
+            "nightMode": False,
+            "osdVisible": True,
+            "exportState": "idle",
+            "exportProgress": None,
             "lastRequestId": None,
             "stateAgeMs": None,
             "revision": UI_STATE["revision"],
@@ -5000,6 +5043,20 @@ def get_ui_state_snapshot(now=None):
             snapshot["stateAgeMs"] = int(age * 1000)
             snapshot["connectionState"] = "stale" if age > UI_STATE_STALE_SEC else "connected"
     return snapshot
+
+
+def get_night_config_snapshot():
+    def clamp_brightness(key):
+        try:
+            value = float(RUNTIME_CONFIG.get(key, 0.4))
+        except (TypeError, ValueError):
+            value = 0.4
+        return max(0.0, min(1.0, value)) if math.isfinite(value) else 0.4
+
+    return {
+        key: clamp_brightness(key)
+        for key in ("brightness_map", "brightness_elements", "brightness_trails")
+    }
 
 
 async def broadcast_ui_command(command, request_id=None):

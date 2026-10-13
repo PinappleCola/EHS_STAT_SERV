@@ -1,12 +1,16 @@
 # DARTS Stream Deck Plugin (`com.pineapplecola.darts`)
 
-Three coloured, live-state keys for the DARTS live map:
+Live-state controls for the DARTS map, including:
 
 | Action | What a press does | Same as ribbon button | Action UUID |
 |--------|-------------------|-----------------------|-------------|
 | **MAP toggle** | Basemap / network mode on ⇄ off | `MAP TOGGLE` (`btn-network`) | `com.pineapplecola.darts.map` |
 | **IFR waypoints** | IFR waypoints visible ⇄ hidden | `IFR` (`btn-ifr-toggle`) | `com.pineapplecola.darts.ifr` |
 | **VFR waypoints** | VFR waypoints visible ⇄ hidden | `VFR` (`btn-vfr-toggle`) | `com.pineapplecola.darts.vfr` |
+| **30MIN / 1HR / 2HR / 4HR / DAY** | Select the recent trail window (radio group) | Trail sliders | `com.pineapplecola.darts.span30m` etc. |
+| **NIGHT** | Save current span/OSD, select 30 minutes, hide OSD, dim; restore on second press | — | `com.pineapplecola.darts.night` |
+| **OSD** | Show or hide the top ribbon | — | `com.pineapplecola.darts.osd` |
+| **EXPORT 3D** | Export the current trail window with processing feedback | `EXPORT 3D` | `com.pineapplecola.darts.export3d` |
 
 Each key displays a prominent label (MAP / IFR / VFR), a live status text, and a colour-coded background:
 
@@ -19,6 +23,9 @@ Each key displays a prominent label (MAP / IFR / VFR), a live status text, and a
 | `NO MAP` | Grey | `#475569` | DARTS is running, but no live map browser tab is open |
 | `STALE` | Grey | `#475569` | The map stopped reporting (no heartbeat update for > 6 s) |
 | `OFFLINE` | Light neutral | `#CBD5E1` | DARTS API is unreachable or offline (calm appearance with dark text `#0F172A`) |
+| `WORKING…` / percent | Amber | `#B45309` | EXPORT 3D is processing (percentage shown when response size is available) |
+| `✓ DONE` | Green | `#15803D` | Export completed; briefly acknowledged before returning to READY |
+| `✗ FAIL` | Red | `#B91C1C` | Export failed; briefly acknowledged before returning to READY |
 
 > **Note on IFR/VFR**: `ON` means the waypoint layer is enabled in the live map view. The global **ELEMENT TOGGLE** or an empty waypoint dataset can still result in no markers being drawn on screen.
 
@@ -71,12 +78,20 @@ Stream Deck App ⇄ Native Plugin Binary ──HTTP POST /api/ui-command──�
 2. **Internal Pending Tracking (Calm Toggle UX)**:
    On a normal successful press, the button keeps showing its last confirmed state rather than flashing a distracting WAIT graphic. Internally, the plugin tracks pending confirmation, accelerates polling to 4×/s, and reconciles the echoed `request_id`. Rapid double-presses while pending are ignored without triggering an alarming exclamation-mark alert.
 3. **Confirmed Authoritative State**:
-   The active live map browser tab is authoritative. It reports `mapEnabled`, `ifrEnabled`, and `vfrEnabled` to DARTS when connecting, after every toggle, and as a 2-second heartbeat. Once the map applies the command, it echoes back the `request_id`.
+   The active live map browser tab is authoritative. It reports `mapEnabled`, `ifrEnabled`, `vfrEnabled`, `activeSpan`, `nightMode`, `osdVisible`, `exportState`, and nullable `exportProgress` to DARTS when connecting, after changes, and as a 2-second heartbeat. Once the map applies the command, it echoes back the `request_id`.
    The plugin polls `GET /api/ui-state` once per second (accelerating to 4×/s while awaiting confirmation). When the matching request ID is seen, the key transitions to `ON` (green) or `OFF` (red).
 4. **Timeout & Failure Handling**:
    If no confirmation arrives within 3 seconds, the key displays `ERROR`, flashes the Stream Deck alert triangle, and then resynchronizes to the live state reported by the map. Real errors (network transport failure, HTTP error, timeout) trigger alerts; commands are never retried automatically.
 5. **Multiple Browser Tabs & Background Execution**:
    The live map browser tab does **not** need to be the active/frontmost window on screen; it only needs to remain open and connected. With multiple map tabs open, all tabs toggle together, and keys reflect the state of the *controlling map* (the earliest-connected active tab). If closed, the next tab takes over.
+
+### New controls
+
+- The five span keys are mutually exclusive; manually dragging either trail slider clears the selection.
+- NIGHT snapshots both slider values and OSD visibility, applies the 30-minute span, hides the ribbon, and dims map tiles/elements/trails. Turning it off restores the exact previous values.
+- Brightness is configured in one server-side file, `DARTS/runtime_config.json`: `brightness_map`, `brightness_elements`, and `brightness_trails` independently accept values from `0.0` to `1.0` (all default to `0.4`).
+- Audit-point radii default to INNER `0.1 NM` / OUTER `0.3 NM`.
+- EXPORT 3D is an Action-with-Processing key (READY → WORKING/percentage → DONE or FAIL); rapid presses while working are ignored.
 
 ---
 

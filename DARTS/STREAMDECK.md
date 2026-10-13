@@ -293,11 +293,12 @@ All relative to `http://localhost:8766` (the fixed HTTP API server).
 | GET | `/api/rx-status` | Receiver A/B connected state + last-frame age |
 | GET | `/api/rx-config` | Current `rx_mode`, receiver_a/b config |
 | GET | `/api/audit-alerts` | Active audit alerts |
+| GET | `/api/night-config` | Clamped Night Mode brightness levels from `runtime_config.json` |
 | GET | `/api/trails/export.geojson` | 2D trail export (GeoJSON) |
 | GET | `/api/trails/export3d.geojson` | 3D trail export (Kepler.gl GeoJSON) |
 | POST | `/api/rx-config` | Set `rx_mode` (`A`/`B`/`DUAL`) and/or `restart` (`A`/`B`/`BOTH`) |
-| POST | `/api/ui-command` | Toggle the open live map: `{"command":"toggle_map"}`, `{"command":"toggle_ifr"}`, or `{"command":"toggle_vfr"}` |
-| GET | `/api/ui-state` | MAP / IFR / VFR state reported by the controlling live map (used by the Stream Deck plugin) |
+| POST | `/api/ui-command` | Send a map command: `toggle_map`, `toggle_ifr`, `toggle_vfr`, `span_30m`, `span_1h`, `span_2h`, `span_4h`, `span_day`, `toggle_night`, `toggle_osd`, or `export_3d` |
+| GET | `/api/ui-state` | Toggle, trail-span, Night/OSD, and export lifecycle state reported by the controlling live map |
 
 `/api/ui-command` returns `{"ok": true, "command": "<command>"}` on success.
 Missing/invalid commands or malformed JSON return HTTP 400 with `{"error":"..."}`.
@@ -310,14 +311,22 @@ the response, forwarded to the map, and reported back by the map in
 
 ```json
 {"connectionState": "connected", "mapEnabled": false, "ifrEnabled": true, "vfrEnabled": true,
+ "activeSpan": "2h", "nightMode": false, "osdVisible": true, "exportState": "idle", "exportProgress": null,
  "lastRequestId": "sd-…", "stateAgeMs": 840, "revision": 7, "mapClients": 1, "staleAfterMs": 6000}
 ```
 
-`connectionState` is `connected`, `no_map` (no live map page open; state fields are
-`null`) or `stale` (the map hasn't reported for more than 6 s). The live map reports
-over its existing WebSocket (`{"action":"ui_state", ...}`) on connect, after every
-toggle, and every 2 s. With several map tabs open, the earliest-connected tab is the
-controlling map whose state is reported.
+`connectionState` is `connected`, `no_map` (no live map page open; map toggle fields
+are `null`) or `stale` (the map hasn't reported for more than 6 s). `activeSpan` is
+`30m`, `1h`, `2h`, `4h`, `day`, or `null`; `exportState` is `idle`, `working`, `done`,
+or `error`; `exportProgress` is nullable and ranges from 0 to 100. The live map
+reports over its existing WebSocket (`{"action":"ui_state", ...}`) on connect, after
+state changes, and every 2 s. With several map tabs open, the earliest-connected tab
+is the controlling map whose state is reported.
+
+Night Mode brightness can be tuned in `DARTS/runtime_config.json` using the
+independent `brightness_map`, `brightness_elements`, and `brightness_trails`
+settings (each defaults to `0.4`, clamped to `[0,1]`). Audit point defaults are
+INNER `0.1 NM` and OUTER `0.3 NM`.
 
 ---
 

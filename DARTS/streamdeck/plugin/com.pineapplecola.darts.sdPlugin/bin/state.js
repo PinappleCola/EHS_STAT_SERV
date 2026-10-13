@@ -7,12 +7,28 @@ const CONTROLS = {
     map: { command: 'toggle_map', stateKey: 'mapEnabled', label: 'MAP' },
     ifr: { command: 'toggle_ifr', stateKey: 'ifrEnabled', label: 'IFR' },
     vfr: { command: 'toggle_vfr', stateKey: 'vfrEnabled', label: 'VFR' },
+    span_30m: { command: 'span_30m', stateKey: 'activeSpan', stateValue: '30m', label: '30MIN' },
+    span_1h: { command: 'span_1h', stateKey: 'activeSpan', stateValue: '1h', label: '1HR' },
+    span_2h: { command: 'span_2h', stateKey: 'activeSpan', stateValue: '2h', label: '2HR' },
+    span_4h: { command: 'span_4h', stateKey: 'activeSpan', stateValue: '4h', label: '4HR' },
+    span_day: { command: 'span_day', stateKey: 'activeSpan', stateValue: 'day', label: 'DAY' },
+    night: { command: 'toggle_night', stateKey: 'nightMode', label: 'NIGHT' },
+    osd: { command: 'toggle_osd', stateKey: 'osdVisible', label: 'OSD' },
+    export3d: { command: 'export_3d', stateKey: 'exportState', label: 'EXPORT 3D' },
 };
 
 const ACTIONS = {
     'com.pineapplecola.darts.map': 'map',
     'com.pineapplecola.darts.ifr': 'ifr',
     'com.pineapplecola.darts.vfr': 'vfr',
+    'com.pineapplecola.darts.span30m': 'span_30m',
+    'com.pineapplecola.darts.span1h': 'span_1h',
+    'com.pineapplecola.darts.span2h': 'span_2h',
+    'com.pineapplecola.darts.span4h': 'span_4h',
+    'com.pineapplecola.darts.spanday': 'span_day',
+    'com.pineapplecola.darts.night': 'night',
+    'com.pineapplecola.darts.osd': 'osd',
+    'com.pineapplecola.darts.export3d': 'export3d',
 };
 
 const CONNECTION_STATES = new Set(['connected', 'offline', 'no_map', 'stale']);
@@ -31,16 +47,21 @@ const DEFAULT_COLORS = {
     colorPending: '#B45309', // waiting for confirmation (also ERROR)
     colorOffline: '#CBD5E1', // DARTS unreachable (calm neutral light)
     colorNoMap: '#475569',   // DARTS up, but no live map (or its state is stale)
+    colorWorking: '#B45309',
+    colorDone: '#15803D',
+    colorFailed: '#B91C1C',
 };
 
 const STATUS_TEXT = {
     on: 'ON', off: 'OFF', pending: 'WAIT', error: 'ERROR',
     offline: 'OFFLINE', no_map: 'NO MAP', stale: 'STALE',
+    working: 'WORKING…', done: '✓ DONE', failed: '✗ FAIL', ready: 'READY',
 };
 
 const STATUS_COLOR_KEY = {
     on: 'colorOn', off: 'colorOff', pending: 'colorPending', error: 'colorPending',
     offline: 'colorOffline', no_map: 'colorNoMap', stale: 'colorNoMap',
+    working: 'colorWorking', done: 'colorDone', failed: 'colorFailed', ready: 'colorNoMap',
 };
 
 const STATUS_IMAGE_KEY = {
@@ -57,6 +78,11 @@ function createModel() {
         mapEnabled: null,
         ifrEnabled: null,
         vfrEnabled: null,
+        activeSpan: null,
+        nightMode: false,
+        osdVisible: true,
+        exportState: 'idle',
+        exportProgress: null,
         connectionState: 'offline',
         lastRequestId: null,
         revision: null,
@@ -72,8 +98,18 @@ function applySnapshot(model, snapshot) {
     }
     model.connectionState = snapshot.connectionState;
     for (const { stateKey } of Object.values(CONTROLS)) {
-        model[stateKey] = typeof snapshot[stateKey] === 'boolean' ? snapshot[stateKey] : null;
+        if (stateKey === 'activeSpan') {
+            model.activeSpan = typeof snapshot.activeSpan === 'string' ? snapshot.activeSpan : null;
+        } else if (stateKey === 'exportState') {
+            model.exportState = ['idle', 'working', 'done', 'error'].includes(snapshot.exportState) ? snapshot.exportState : 'idle';
+        } else {
+            model[stateKey] = typeof snapshot[stateKey] === 'boolean' ? snapshot[stateKey] : null;
+        }
     }
+    model.nightMode = snapshot.nightMode === true;
+    model.osdVisible = typeof snapshot.osdVisible === 'boolean' ? snapshot.osdVisible : true;
+    model.exportProgress = typeof snapshot.exportProgress === 'number' && Number.isFinite(snapshot.exportProgress)
+        && snapshot.exportProgress >= 0 && snapshot.exportProgress <= 100 ? snapshot.exportProgress : null;
     model.lastRequestId = typeof snapshot.lastRequestId === 'string' ? snapshot.lastRequestId : null;
     model.revision = typeof snapshot.revision === 'number' ? snapshot.revision : null;
     if (model.pendingCommand && model.lastRequestId === model.pendingCommand.requestId) {
@@ -84,6 +120,11 @@ function applySnapshot(model, snapshot) {
 function markOffline(model) {
     model.connectionState = 'offline';
     for (const { stateKey } of Object.values(CONTROLS)) model[stateKey] = null;
+    model.activeSpan = null;
+    model.nightMode = false;
+    model.osdVisible = true;
+    model.exportState = 'idle';
+    model.exportProgress = null;
     model.lastRequestId = null;
     model.revision = null;
 }
@@ -93,6 +134,7 @@ function beginCommand(model, control, now, randomUUID) {
     const spec = CONTROLS[control];
     if (!spec) return { ok: false, reason: 'unknown_control' };
     if (model.pendingCommand) return { ok: false, reason: 'pending' };
+    if (control === 'export3d' && model.exportState === 'working') return { ok: false, reason: 'busy' };
     if (model.connectionState !== 'connected') return { ok: false, reason: model.connectionState };
     const requestId = `sd-${randomUUID()}`;
     model.pendingCommand = { requestId, control, command: spec.command, sentAt: now };
@@ -119,6 +161,12 @@ function keyStatus(model, control, now) {
     if ((model.errors[control] || 0) > now) return 'error';
     if (model.connectionState !== 'connected') return model.connectionState;
     const value = spec ? model[spec.stateKey] : null;
+    if (spec && spec.stateKey === 'activeSpan') return model.activeSpan === spec.stateValue ? 'on' : 'off';
+    if (spec && spec.stateKey === 'exportState') {
+        if (model.exportState === 'working' || model.exportState === 'done') return model.exportState;
+        if (model.exportState === 'error') return 'failed';
+        return 'ready';
+    }
     if (value === true) return 'on';
     if (value === false) return 'off';
     return 'stale';
@@ -164,7 +212,7 @@ function textColorForBackground(bgHex) {
     return lum > 160 ? '#0F172A' : '#FFFFFF';
 }
 
-function renderKeySvg(control, status, settings, iconDataUri) {
+function renderKeySvg(control, status, settings, iconDataUri, progress = null) {
     const s = normalizeSettings(control, settings);
     const background = s[STATUS_COLOR_KEY[status] || 'colorOffline'];
     const hasIcon = typeof iconDataUri === 'string' && ICON_DATA_URI_RE.test(iconDataUri);
@@ -177,7 +225,7 @@ function renderKeySvg(control, status, settings, iconDataUri) {
         `<rect width="144" height="144" rx="18" fill="${background}"/>`,
         hasIcon ? `<image href="${iconDataUri}" x="46" y="8" width="52" height="52" preserveAspectRatio="xMidYMid meet"/>` : '',
         `<text x="72" y="${hasIcon ? 96 : 82}" ${font} font-size="${labelSize}">${escapeXml(s.label)}</text>`,
-        `<text x="72" y="${hasIcon ? 128 : 120}" ${font} font-size="22">${STATUS_TEXT[status] || ''}</text>`,
+        `<text x="72" y="${hasIcon ? 128 : 120}" ${font} font-size="22">${status === 'working' && Number.isFinite(progress) ? `${Math.round(progress)}%` : (STATUS_TEXT[status] || '')}</text>`,
         '</svg>',
     ].join('');
 }

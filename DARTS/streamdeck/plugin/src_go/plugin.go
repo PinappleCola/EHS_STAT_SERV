@@ -129,15 +129,15 @@ type DartsPlugin struct {
 	ReadIcon     func(path string) (string, error)
 	scheduleFunc func(delay time.Duration, fn func()) func()
 
-	mu        sync.Mutex
-	baseURL   string
-	model     *Model
-	contexts  map[string]*ContextEntry
-	iconCache map[string]string
+	mu          sync.Mutex
+	baseURL     string
+	model       *Model
+	contexts    map[string]*ContextEntry
+	iconCache   map[string]string
 	cancelTimer func()
-	polling   bool
-	repoll    bool
-	running   bool
+	polling     bool
+	repoll      bool
+	running     bool
 }
 
 func NewDartsPlugin(opts PluginOptions) *DartsPlugin {
@@ -380,7 +380,7 @@ func (p *DartsPlugin) Poll() {
 	if p.repoll {
 		p.repoll = false
 		p.schedulePollLocked(0)
-	} else if p.model.PendingCommand != nil {
+	} else if p.model.PendingCommand != nil || p.model.ExportState == "working" {
 		p.schedulePollLocked(PendingPollInterval)
 	} else if p.model.ConnectionState == "offline" {
 		p.schedulePollLocked(OfflinePollInterval)
@@ -419,7 +419,7 @@ func (p *DartsPlugin) pressKey(contextKey string) {
 	begin := p.model.BeginCommand(entry.Control, now, p.UUIDGen)
 	if !begin.Ok {
 		p.mu.Unlock()
-		if begin.Reason != "pending" {
+		if begin.Reason != "pending" && begin.Reason != "busy" {
 			p.Send(OutgoingMessage{
 				Event:   "showAlert",
 				Context: contextKey,
@@ -507,6 +507,7 @@ func (p *DartsPlugin) renderContext(contextKey string) {
 	}
 	now := p.Now()
 	status := p.model.KeyStatus(entry.Control, now)
+	progress := p.model.ExportProgress
 	settings := entry.Settings
 	p.mu.Unlock()
 
@@ -514,7 +515,7 @@ func (p *DartsPlugin) renderContext(contextKey string) {
 	image := p.iconFor(normalized.ImagePath(status))
 	if image == "" {
 		iconUri := p.iconFor(normalized.Icon)
-		image = SvgToImage(RenderKeySvg(entry.Control, status, settings, iconUri))
+		image = SvgToImage(RenderKeySvgWithProgress(entry.Control, status, settings, iconUri, progress))
 	}
 
 	p.mu.Lock()

@@ -20,6 +20,10 @@ def _load_darts_module():
 
 
 DARTS = _load_darts_module()
+NEW_COMMANDS = (
+    "toggle_map", "toggle_ifr", "toggle_vfr", "span_30m", "span_1h",
+    "span_2h", "span_4h", "span_day", "toggle_night", "toggle_osd", "export_3d",
+)
 
 
 class UICommandTests(unittest.IsolatedAsyncioTestCase):
@@ -77,7 +81,7 @@ class UICommandTests(unittest.IsolatedAsyncioTestCase):
             for client in (first, second):
                 state = json.loads(await asyncio.wait_for(client.recv(), 3))
                 self.assertIn("airframes", state)
-            for command in ("toggle_map", "toggle_ifr", "toggle_vfr"):
+            for command in NEW_COMMANDS:
                 status, response = await self.post(json.dumps({"command": command}))
                 self.assertEqual(status, 200)
                 self.assertEqual(response, {"ok": True, "command": command})
@@ -89,7 +93,7 @@ class UICommandTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(message, {"type": "ui_command", "command": command})
 
     async def test_commands_are_accepted_without_clients(self):
-        for command in ("toggle_map", "toggle_ifr", "toggle_vfr"):
+        for command in NEW_COMMANDS:
             status, response = await self.post(json.dumps({"command": command}))
             self.assertEqual(status, 200)
             self.assertEqual(response, {"ok": True, "command": command})
@@ -140,15 +144,24 @@ class UICommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(state["ifrEnabled"])
         self.assertEqual(state["mapClients"], 0)
 
-        def report(map_on, ifr_on, vfr_on, request_id=None):
+        def report(map_on, ifr_on, vfr_on, request_id=None, extra_state=None):
+            ui_state = {
+                "mapEnabled": map_on, "ifrEnabled": ifr_on, "vfrEnabled": vfr_on,
+                **(extra_state or {}),
+            }
             return json.dumps({"action": "ui_state", "request_id": request_id,
-                               "state": {"mapEnabled": map_on, "ifrEnabled": ifr_on, "vfrEnabled": vfr_on}})
+                               "state": ui_state})
 
         async with websockets.connect(self.ws_url) as first:
             await first.send(json.dumps({"action": "ui_state", "state": {"mapEnabled": "yes"}}))
-            await first.send(report(True, False, True, "req-1"))
+            await first.send(report(True, False, True, "req-1", {
+                "activeSpan": "2h", "nightMode": True, "osdVisible": False,
+                "exportState": "working", "exportProgress": 37,
+            }))
             state = await self.wait_for_state(lambda s: s["connectionState"] == "connected")
             self.assertEqual((state["mapEnabled"], state["ifrEnabled"], state["vfrEnabled"]), (True, False, True))
+            self.assertEqual((state["activeSpan"], state["nightMode"], state["osdVisible"]), ("2h", True, False))
+            self.assertEqual((state["exportState"], state["exportProgress"]), ("working", 37))
             self.assertEqual(state["lastRequestId"], "req-1")
             revision = state["revision"]
 
@@ -183,6 +196,58 @@ class UICommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(DARTS.record_ui_state(key, None))
         finally:
             DARTS.forget_ui_state(key)
+
+    async def test_audit_config_post_uses_inner_and_outer_defaults(self):
+        with mock.patch.object(DARTS, "save_audit_point_config") as save:
+            status, response = await self.post_audit_config({"point_name": "TEST"})
+        self.assertEqual(status, 200)
+        self.assertEqual(response, {"ok": True, "point_name": "TEST"})
+        save.assert_called_once_with("TEST", 0.3, 0.1, 255, 165, 0)
+
+    async def post_audit_config(self, body):
+        def request():
+            conn = http.client.HTTPConnection("127.0.0.1", self.http_server.server_port, timeout=5)
+            try:
+                conn.request("POST", "/api/audit-config", json.dumps(body), {"Content-Type": "application/json"})
+                response = conn.getresponse()
+                return response.status, json.loads(response.read())
+            finally:
+                conn.close()
+        return await asyncio.to_thread(request)
+
+    def test_night_config_clamps_each_brightness_channel(self):
+        original = DARTS.RUNTIME_CONFIG
+        try:
+            DARTS.RUNTIME_CONFIG = {
+                "brightness_map": -0.5, "brightness_elements": 1.2, "brightness_trails": "0.25",
+            }
+            self.assertEqual(DARTS.get_night_config_snapshot(), {
+                "brightness_map": 0.0, "brightness_elements": 1.0, "brightness_trails": 0.25,
+            })
+        finally:
+            DARTS.RUNTIME_CONFIG = original
+
+    async def test_night_config_endpoint_exposes_clamped_brightness(self):
+        original = DARTS.RUNTIME_CONFIG
+        try:
+            DARTS.RUNTIME_CONFIG = {
+                **original, "brightness_map": 0.2, "brightness_elements": 2, "brightness_trails": 0,
+            }
+            def request():
+                conn = http.client.HTTPConnection("127.0.0.1", self.http_server.server_port, timeout=5)
+                try:
+                    conn.request("GET", "/api/night-config")
+                    response = conn.getresponse()
+                    return response.status, json.loads(response.read())
+                finally:
+                    conn.close()
+            status, config = await asyncio.to_thread(request)
+        finally:
+            DARTS.RUNTIME_CONFIG = original
+        self.assertEqual(status, 200)
+        self.assertEqual(config, {
+            "brightness_map": 0.2, "brightness_elements": 1.0, "brightness_trails": 0.0,
+        })
 
 
 if __name__ == "__main__":
