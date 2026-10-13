@@ -6,12 +6,124 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestPerStateImageRendering(t *testing.T) {
+	dir := t.TempDir()
+	fields := map[string]string{
+		"on": "imageOn", "off": "imageOff", "error": "imageError",
+		"offline": "imageOffline", "no_map": "imageNoMap", "stale": "imageStale",
+	}
+	settingsMap := map[string]string{"label": "CUSTOM", "colorOn": "#123456"}
+	expected := make(map[string]string)
+	for status, field := range fields {
+		path := filepath.Join(dir, status+".svg")
+		if err := os.WriteFile(path, []byte(`<svg xmlns="http://www.w3.org/2000/svg"><text>`+status+`</text></svg>`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		settingsMap[field] = " " + path + " "
+		uri, err := ReadIconFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected[status] = uri
+	}
+	settingsMap["imagePending"] = filepath.Join(dir, "pending.svg")
+	settingsMap["icon"] = strings.TrimSpace(settingsMap["imageOn"])
+	data, _ := json.Marshal(settingsMap)
+	var settings KeySettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(100, 0)
+	for _, control := range []string{"map", "ifr", "vfr"} {
+		t.Run(control, func(t *testing.T) {
+			var images []string
+			reads := make(map[string]int)
+			plugin := NewDartsPlugin(PluginOptions{
+				Now: func() time.Time { return now },
+				Send: func(msg any) {
+					out := msg.(OutgoingMessage)
+					if out.Event == "setImage" {
+						images = append(images, out.Payload.(map[string]any)["image"].(string))
+					}
+				},
+				ReadIcon: func(path string) (string, error) {
+					reads[path]++
+					return ReadIconFile(path)
+				},
+			})
+			entry := &ContextEntry{Control: control, Settings: settings}
+			plugin.contexts["key"] = entry
+			for _, status := range []string{"on", "off", "error", "offline", "no_map", "stale"} {
+				plugin.model = CreateModel()
+				if status == "on" || status == "off" || status == "error" {
+					plugin.model.ConnectionState = "connected"
+					plugin.model.MapEnabled = boolPtr(status == "on")
+					plugin.model.IfrEnabled = boolPtr(status == "on")
+					plugin.model.VfrEnabled = boolPtr(status == "on")
+					if status == "error" {
+						plugin.model.Errors[control] = now.Add(time.Second)
+					}
+				} else {
+					plugin.model.ConnectionState = status
+				}
+				plugin.renderContext("key")
+				if got := images[len(images)-1]; got != expected[status] {
+					t.Fatalf("%s image: got %q, want %q", status, got, expected[status])
+				}
+				before := len(images)
+				plugin.renderContext("key")
+				if len(images) != before || reads[strings.TrimSpace(settingsMap[fields[status]])] != 1 {
+					t.Fatalf("%s image was resent or reloaded", status)
+				}
+			}
+			plugin.model.ConnectionState = "connected"
+			plugin.model.MapEnabled = boolPtr(true)
+			plugin.model.IfrEnabled = boolPtr(true)
+			plugin.model.VfrEnabled = boolPtr(true)
+			plugin.model.PendingCommand = &PendingCommand{Control: control, RequestId: "pending", SentAt: now}
+			plugin.renderContext("key")
+			if got := images[len(images)-1]; got != expected["on"] {
+				t.Fatalf("pending command changed confirmed image: %q", got)
+			}
+			for _, path := range []string{"", filepath.Join(dir, "missing.png"), filepath.Join(dir, "invalid.txt")} {
+				entry.Settings.ImageOn = path
+				plugin.renderContext("key")
+				want := SvgToImage(RenderKeySvg(control, "on", entry.Settings, expected["on"]))
+				if entry.LastImage != want {
+					t.Fatalf("fallback did not preserve SVG and icon for %q", path)
+				}
+			}
+			entry.Settings = settings
+			plugin.renderContext("key")
+			onPath := strings.TrimSpace(settings.ImageOn)
+			if err := os.WriteFile(onPath, []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			payload, _ := json.Marshal(DeckPayload{Settings: settings})
+			msg, _ := json.Marshal(StreamDeckEvent{Event: "didReceiveSettings", Context: "key", Payload: payload})
+			plugin.HandleDeckMessage(msg)
+			fresh, err := ReadIconFile(onPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if entry.LastImage != fresh || reads[onPath] != 2 {
+				t.Fatal("settings update did not refresh the cached state image")
+			}
+			if err := os.WriteFile(onPath, []byte(`<svg xmlns="http://www.w3.org/2000/svg"><text>on</text></svg>`), 0600); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 type roundTripFunc func(req *http.Request) *http.Response
 

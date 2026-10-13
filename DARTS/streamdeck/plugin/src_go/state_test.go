@@ -1,12 +1,56 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestPerStateImageSettings(t *testing.T) {
+	fields := map[string]string{
+		"on": "imageOn", "off": "imageOff", "pending": "imagePending",
+		"error": "imageError", "offline": "imageOffline", "no_map": "imageNoMap", "stale": "imageStale",
+	}
+	input := make(map[string]string)
+	for status, field := range fields {
+		input[field] = " /art/" + status + ".png "
+	}
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings KeySettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	data, err = json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output map[string]string
+	if err := json.Unmarshal(data, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(input, output) {
+		t.Fatalf("settings round-trip: got %v, want %v", output, input)
+	}
+	normalized := NormalizeSettings("map", settings)
+	for status := range fields {
+		if got := normalized.ImagePath(status); got != "/art/"+status+".png" {
+			t.Errorf("%s image path: %q", status, got)
+		}
+		if got := NormalizeSettings("map", KeySettings{}).ImagePath(status); got != "" {
+			t.Errorf("%s default image path: %q", status, got)
+		}
+	}
+	if got := normalized.ImagePath("unknown"); got != "" {
+		t.Errorf("unknown status image path: %q", got)
+	}
+}
 
 func boolPtr(b bool) *bool {
 	return &b

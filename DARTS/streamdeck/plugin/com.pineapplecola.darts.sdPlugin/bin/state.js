@@ -43,6 +43,11 @@ const STATUS_COLOR_KEY = {
     offline: 'colorOffline', no_map: 'colorNoMap', stale: 'colorNoMap',
 };
 
+const STATUS_IMAGE_KEY = {
+    on: 'imageOn', off: 'imageOff', pending: 'imagePending', error: 'imageError',
+    offline: 'imageOffline', no_map: 'imageNoMap', stale: 'imageStale',
+};
+
 const COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const ICON_DATA_URI_RE = /^data:image\/(?:png|jpeg|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
 const MAX_LABEL_LENGTH = 10;
@@ -127,7 +132,14 @@ function normalizeSettings(control, settings) {
         out[key] = typeof src[key] === 'string' && COLOR_RE.test(src[key].trim()) ? src[key].trim() : fallback;
     }
     out.icon = typeof src.icon === 'string' ? src.icon.trim() : '';
+    for (const key of Object.values(STATUS_IMAGE_KEY)) {
+        out[key] = typeof src[key] === 'string' ? src[key].trim() : '';
+    }
     return out;
+}
+
+function imagePathFor(status, settings) {
+    return Object.hasOwn(STATUS_IMAGE_KEY, status) ? settings[STATUS_IMAGE_KEY[status]] : '';
 }
 
 function escapeXml(text) {
@@ -187,6 +199,7 @@ module.exports = {
     expirePending,
     failCommand,
     keyStatus,
+    imagePathFor,
     markOffline,
     normalizeSettings,
     renderKeySvg,

@@ -291,6 +291,7 @@ Clicking any DARTS key in the Stream Deck software opens its Property Inspector:
 - **Label**: Override the button text (up to 10 characters; default MAP, IFR, or VFR).
 - **Colours**: Customize hex colours for On, Off, Pending/Wait, Offline, and No Map/Stale.
 - **Icon file**: Full path to a local PNG/JPG/GIF/SVG (≤ 512 KB) to render above the label.
+- **Per-state images**: Optional absolute file paths for On, Off, Pending, Error, Offline, No Map, and Stale (`imageOn`, `imageOff`, `imagePending`, `imageError`, `imageOffline`, `imageNoMap`, `imageStale`). A loaded image fully replaces that state's generated face, including text, colours, and icon; use pre-made 144×144 px PNG/JPG/GIF/SVG artwork (≤ 512 KB). Empty or unreadable/invalid paths fall back to the generated face and optional icon. Images share the icon cache and are re-read when key settings are saved. Routine pending toggles still show the last confirmed ON/OFF image.
 - **Reset to defaults**: Restores default labels, colours, and layout.
 - **DARTS API**: Shared URL across all keys, defaulting to `http://127.0.0.1:8766`. Change only if DARTS is configured on a non-default port.
 
