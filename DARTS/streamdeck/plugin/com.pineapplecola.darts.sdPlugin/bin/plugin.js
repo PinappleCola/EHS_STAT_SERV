@@ -179,7 +179,9 @@ class DartsPlugin {
         if (!entry) return;
         const begin = beginCommand(this.model, entry.control, this.now(), this.randomUUID);
         if (!begin.ok) {
-            this.send({ event: 'showAlert', context });
+            if (begin.reason !== 'pending') {
+                this.send({ event: 'showAlert', context });
+            }
             this.requestSync();
             return;
         }

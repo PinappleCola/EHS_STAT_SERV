@@ -14,19 +14,21 @@ Each key shows a large label (MAP / IFR / VFR), a status line, and a coloured ba
 |----------|----------------|---------|
 | `ON` | green `#15803D` | basemap on / waypoint layer visible |
 | `OFF` | red `#B91C1C` | basemap off / waypoint layer hidden |
-| `WAIT` | amber `#B45309` | command sent, waiting for the map to confirm |
+| `WAIT` | amber `#B45309` | internal pending state (hidden for normal toggles; key retains last confirmed state) |
 | `ERROR` | amber `#B45309` | command failed or was not confirmed within 3 s (shown briefly, then re-syncs) |
 | `NO MAP` | grey `#475569` | DARTS is running but no live map page is open |
 | `STALE` | grey `#475569` | the map stopped reporting (no update for 6 s) |
-| `OFFLINE` | dark `#1E293B` | DARTS is not reachable |
+| `OFFLINE` | light neutral `#CBD5E1` | DARTS is not reachable (calm appearance with dark text `#0F172A`) |
 
 For IFR/VFR, **ON means the layer is enabled** on the map; the global
 **ELEMENT TOGGLE** or an empty waypoint file can still mean nothing is drawn.
 
+> For the comprehensive design standard, architecture details, and recipe for adding new buttons, see [BUTTON_SPEC.md](BUTTON_SPEC.md).
+
 ## How it works
 
 ```
-Stream Deck app ⇄ plugin (Node.js) ──HTTP──▶ DARTS :8766 ──WebSocket :8765──▶ live map tab
+Stream Deck app ⇄ plugin (native Go) ──HTTP──▶ DARTS :8766 ──WebSocket :8765──▶ live map tab
                                      ◀─────── GET /api/ui-state ◀── ui_state reports ──┘
 ```
 
@@ -37,12 +39,16 @@ Stream Deck app ⇄ plugin (Node.js) ──HTTP──▶ DARTS :8766 ──WebSo
   and `vfrEnabled` to DARTS when it connects, after every toggle (Stream Deck or
   mouse click) and every 2 s as a heartbeat. The plugin reads this from
   `GET /api/ui-state` once per second (4×/s while a press is pending).
-- After a press the key stays **WAIT** until the map echoes the same `request_id`.
-  The plugin never guesses the result. If no confirmation arrives within 3 s the
-  key shows **ERROR**, flashes the Stream Deck alert, and then returns to whatever
-  the map reports. Toggles are never retried automatically.
-- Presses are ignored (alert shown, nothing sent) while the key is `NO MAP`,
-  `STALE`, `OFFLINE`, or another press is still pending.
+- **Background browser support** → the browser live map does **not** need to be the
+  active/frontmost window on screen. It only needs to remain open and connected.
+- **Calm toggle UX** → on a normal press, the button keeps showing the last confirmed
+  state rather than flashing a distracting WAIT graphic. When the echoed `request_id`
+  confirms, the key transitions directly to the new state. Rapid double-presses while
+  busy are ignored without alarming exclamation-mark alerts. If no confirmation
+  arrives within 3 s, the key shows **ERROR**, flashes the Stream Deck alert, and then
+  returns to whatever the map reports.
+- Presses are ignored while the key is `NO MAP`, `STALE`, `OFFLINE`, or another
+  press is still pending. Real errors (network failure, HTTP error, timeout) show an alert.
 - With several map tabs open, every tab toggles (as before), and the keys show the
   state of the **controlling map** — the earliest-connected tab still open. If it
   closes, the next tab takes over.
