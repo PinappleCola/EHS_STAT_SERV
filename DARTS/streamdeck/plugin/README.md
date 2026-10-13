@@ -47,16 +47,19 @@ Stream Deck app ⇄ plugin (Node.js) ──HTTP──▶ DARTS :8766 ──WebSo
   state of the **controlling map** — the earliest-connected tab still open. If it
   closes, the next tab takes over.
 
-The plugin is plain JavaScript with **no third-party runtime dependencies**.
-Stream Deck's Node.js 24 supplies `fetch`, `WebSocket`, and the Node built-ins;
-the only local module is `bin/state.js`. The inspector is self-contained HTML.
-The npm development tools below are for validation/packaging only and are not
-needed to install or run the plugin.
+### Standalone executable architecture (no managed Node.js dependency)
+
+Unlike plugins that require Stream Deck's managed Node.js runtime (`%APPDATA%\Elgato\StreamDeck\NodeJS\`),
+this plugin is compiled into **self-contained native binaries** (`darts-plugin.exe` for Windows and
+`darts-plugin` universal binary for macOS) with all dependencies embedded.
+It **does not depend on Stream Deck's managed Node.js runtime** or any system-installed Node.js,
+so it loads and runs reliably even on machines where `%APPDATA%\Elgato\StreamDeck\NodeJS\` is empty,
+absent, or failed to install.
 
 ## Install by double-click (recommended)
 
-Requirements: **Stream Deck app 7.1 or newer** (it ships the Node.js 24 runtime the
-plugin uses), on the **same computer** as DARTS.
+Requirements: **Stream Deck app 7.1 or newer**, on the **same computer** as DARTS.
+**No Node.js runtime is required.**
 
 The canonical plugin UUID is **`com.pineapplecola.darts`**. Its folder name,
 manifest UUID and MAP / IFR / VFR action UUIDs must match; do not rename the
@@ -98,6 +101,8 @@ folder unchanged**; never copy or move its `ui`, `bin`, or `imgs` separately.
    └── com.pineapplecola.darts.sdPlugin/
       ├── manifest.json
       ├── bin/
+      │   ├── darts-plugin.exe   (Windows native binary)
+      │   ├── darts-plugin       (macOS universal native binary)
       │   ├── plugin.js
       │   └── state.js
       ├── ui/
@@ -119,26 +124,27 @@ stored by Stream Deck and are kept.
 
 ## Build / validate / package
 
-With Node.js and npm installed, run these commands from the repository root:
+Building from source requires **Go 1.22+** and **Node.js** (for running the build/validation scripts):
 
 ```sh
 cd DARTS/streamdeck/plugin
 npm ci
+npm run build
 npm run validate
 npm run pack
 ```
 
-`validate` runs the regression tests and Elgato's manifest/resource validator.
-`pack` validates again and uses the pinned Elgato CLI to write
-`dist/com.pineapplecola.darts.streamDeckPlugin`, overwriting the previous installer.
-Regenerate and commit this file whenever plugin contents change. No compilation
-or runtime `npm install` inside the `.sdPlugin` folder is necessary.
+- `npm run build` compiles `bin/darts-plugin.exe` (Windows amd64) and `bin/darts-plugin` (macOS universal binary with x86_64 and arm64 slices) from `src_go/`. Dependencies in `src_go/vendor/` are fully vendored and build 100% offline.
+- `npm run validate` runs the regression tests and Elgato's manifest validator.
+- `npm run pack` builds, validates, and packages `dist/com.pineapplecola.darts.streamDeckPlugin`.
+The prebuilt native binaries and `.streamDeckPlugin` installer are committed in this repository.
 
 Alternatively, install the CLI globally and run its commands directly from
 `DARTS/streamdeck/plugin`:
 
 ```sh
 npm i -g @elgato/cli
+node build.js
 streamdeck validate com.pineapplecola.darts.sdPlugin
 streamdeck pack com.pineapplecola.darts.sdPlugin --output dist --force
 ```
@@ -171,8 +177,11 @@ how the key looks, not what it does.
 
 | Path | Purpose |
 |------|---------|
-| `manifest.json` | Plugin and action definitions |
-| `bin/plugin.js` | Stream Deck connection, DARTS polling, key presses |
+| `manifest.json` | Plugin and action definitions (specifies native executables per OS) |
+| `bin/darts-plugin.exe` | Windows native compiled binary (standalone, no Node runtime required) |
+| `bin/darts-plugin` | macOS universal native binary (x86_64 + arm64) |
+| `src_go/` | Go source code and offline vendored dependencies |
+| `bin/plugin.js` | Reference JavaScript implementation |
 | `bin/state.js` | State model (`mapEnabled`, `ifrEnabled`, `vfrEnabled`, `connectionState`, `pendingCommand`) and SVG key-face rendering |
 | `ui/settings.html` | Property inspector (label / colours / icon / DARTS URL) |
 | `imgs/` | Default plugin, category, action-list and key images |
@@ -182,10 +191,11 @@ Tests: `node DARTS/tests/streamdeck_plugin_regression.test.js`.
 ## Troubleshooting
 
 - **DARTS does not appear in the actions list** — check Stream Deck is 7.1+,
-  then use the **double-click installer**. A manually copied folder may be split
-  or incomplete: `ui/settings.html`, `bin/`, and `imgs/` must all be inside the
-  `.sdPlugin` folder alongside its top-level `manifest.json`. Do not create a
-  separate “plugin UI” folder. Fully quit and restart the app after manual copy.
+  then use the **double-click installer**.
+  - If you previously tried Node-based plugins that failed because Stream Deck's managed Node.js runtime was absent from `%APPDATA%\Elgato\StreamDeck\NodeJS\`, this standalone architecture completely resolves that issue by running as a native executable.
+  - For manual copy, verify that `manifest.json`, `bin/darts-plugin.exe` (Windows) or `bin/darts-plugin` (macOS), `ui/settings.html`, and `imgs/` are all inside `%APPDATA%\Elgato\StreamDeck\Plugins\com.pineapplecola.darts.sdPlugin\`.
+  - Always fully quit Stream Deck (right click tray icon → Quit) and restart it after installing or modifying plugins.
+- **Confirming the plugin loaded** — in Stream Deck Settings → Plugins, **DARTS Live Map** appears in the installed list. In addition, when Stream Deck launches the plugin, the `darts-plugin.exe` (or `darts-plugin`) process will be running in Task Manager / Activity Monitor.
 - **All keys `OFFLINE`** — DARTS isn't running, or the DARTS API setting/port is
   wrong. Check `curl http://localhost:8766/api/ui-state`.
 - **All keys `NO MAP`** — open (or refresh) `http://localhost:8766/map`. An old
