@@ -336,4 +336,8 @@ controlling map whose state is reported.
   parameters; omitting them exports the default maximum window.
 - Batch/URL keys cannot show live data on the Stream Deck key face; use the
   [DARTS Stream Deck plugin](streamdeck/plugin/README.md) for live MAP / IFR / VFR
-  key colours.
+  key colours and interactive status.
+- The browser live map does **not** need to be the active/frontmost window for
+  Stream Deck plugin toggles to work; it only needs to remain open and connected.
+- For full details on the confirmed-toggle button standard, state transitions, and
+  how to add new buttons, see [BUTTON_SPEC.md](streamdeck/plugin/BUTTON_SPEC.md).

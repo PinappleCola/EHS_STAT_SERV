@@ -46,7 +46,7 @@ var DefaultColors = map[string]string{
 	"colorOn":      "#15803D",
 	"colorOff":     "#B91C1C",
 	"colorPending": "#B45309",
-	"colorOffline": "#1E293B",
+	"colorOffline": "#CBD5E1",
 	"colorNoMap":   "#475569",
 }
 
@@ -157,6 +157,25 @@ func EscapeXml(text string) string {
 	return xmlReplacer.Replace(text)
 }
 
+func TextColorForBackground(bgHex string) string {
+	clean := strings.TrimPrefix(strings.TrimSpace(bgHex), "#")
+	if len(clean) == 3 {
+		clean = string([]byte{clean[0], clean[0], clean[1], clean[1], clean[2], clean[2]})
+	}
+	if len(clean) != 6 {
+		return "#FFFFFF"
+	}
+	var r, g, b uint8
+	if _, err := fmt.Sscanf(clean, "%02x%02x%02x", &r, &g, &b); err != nil {
+		return "#FFFFFF"
+	}
+	lum := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
+	if lum > 160 {
+		return "#0F172A"
+	}
+	return "#FFFFFF"
+}
+
 func RenderKeySvg(control string, status string, settings KeySettings, iconDataUri string) string {
 	s := NormalizeSettings(control, settings)
 	colorKey := StatusColorKey[status]
@@ -182,7 +201,8 @@ func RenderKeySvg(control string, status string, settings KeySettings, iconDataU
 		}
 	}
 
-	font := `font-family="Arial, Helvetica, sans-serif" font-weight="bold" fill="#FFFFFF" text-anchor="middle"`
+	textColor := TextColorForBackground(background)
+	font := fmt.Sprintf(`font-family="Arial, Helvetica, sans-serif" font-weight="bold" fill="%s" text-anchor="middle"`, textColor)
 
 	var sb strings.Builder
 	sb.WriteString(`<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">`)
@@ -317,9 +337,6 @@ func (m *Model) ExpirePending(now time.Time) bool {
 }
 
 func (m *Model) KeyStatus(control string, now time.Time) string {
-	if m.PendingCommand != nil && m.PendingCommand.Control == control {
-		return "pending"
-	}
 	if until, ok := m.Errors[control]; ok && until.After(now) {
 		return "error"
 	}

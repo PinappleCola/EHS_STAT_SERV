@@ -14,13 +14,15 @@ Each key displays a prominent label (MAP / IFR / VFR), a live status text, and a
 |----------|----------------|-----|---------|
 | `ON` | Green | `#15803D` | Basemap enabled / waypoint layer visible |
 | `OFF` | Red | `#B91C1C` | Basemap disabled / waypoint layer hidden |
-| `WAIT` | Amber | `#B45309` | Command sent, awaiting confirmation from the live map |
+| `WAIT` | Amber | `#B45309` | Internal pending state (hidden for normal toggles; key retains last confirmed state) |
 | `ERROR` | Amber | `#B45309` | Command failed or was unconfirmed after 3 s (briefly shown, then re-syncs) |
 | `NO MAP` | Grey | `#475569` | DARTS is running, but no live map browser tab is open |
 | `STALE` | Grey | `#475569` | The map stopped reporting (no heartbeat update for > 6 s) |
-| `OFFLINE` | Dark slate | `#1E293B` | DARTS API is unreachable or offline |
+| `OFFLINE` | Light neutral | `#CBD5E1` | DARTS API is unreachable or offline (calm appearance with dark text `#0F172A`) |
 
 > **Note on IFR/VFR**: `ON` means the waypoint layer is enabled in the live map view. The global **ELEMENT TOGGLE** or an empty waypoint dataset can still result in no markers being drawn on screen.
+
+> For the comprehensive design standard, architecture details, and recipe for adding new buttons, see [BUTTON_SPEC.md](BUTTON_SPEC.md).
 
 ---
 
@@ -28,6 +30,7 @@ Each key displays a prominent label (MAP / IFR / VFR), a live status text, and a
 
 - [Overview & Requirements](#overview--requirements)
 - [How It Works](#how-it-works)
+- [Button Design Standard (`BUTTON_SPEC.md`)](BUTTON_SPEC.md)
 - [Install Method 1: Double-Click Installer (Primary)](#install-method-1-double-click-installer-primary)
 - [Install Method 2: Manual Copy (Reliable Fallback)](#install-method-2-manual-copy-reliable-fallback)
 - [Uninstall & Clean Reset (Critical)](#uninstall--clean-reset-critical)
@@ -64,15 +67,15 @@ Stream Deck App ⇄ Native Plugin Binary ──HTTP POST /api/ui-command──�
 
 1. **User Press**:
    Pressing a key dispatches `POST /api/ui-command` with a unique request ID (e.g. `{"command":"toggle_ifr","request_id":"sd-…"}`). DARTS forwards the command over its WebSocket to all connected map tabs, triggering the exact same handler as clicking the corresponding ribbon button.
-2. **Pending State**:
-   The pressed key immediately shifts to `WAIT` (amber). The plugin never guesses the outcome or updates the display optimistically. Other keys continue showing their live state.
+2. **Internal Pending Tracking (Calm Toggle UX)**:
+   On a normal successful press, the button keeps showing its last confirmed state rather than flashing a distracting WAIT graphic. Internally, the plugin tracks pending confirmation, accelerates polling to 4×/s, and reconciles the echoed `request_id`. Rapid double-presses while pending are ignored without triggering an alarming exclamation-mark alert.
 3. **Confirmed Authoritative State**:
    The active live map browser tab is authoritative. It reports `mapEnabled`, `ifrEnabled`, and `vfrEnabled` to DARTS when connecting, after every toggle, and as a 2-second heartbeat. Once the map applies the command, it echoes back the `request_id`.
    The plugin polls `GET /api/ui-state` once per second (accelerating to 4×/s while awaiting confirmation). When the matching request ID is seen, the key transitions to `ON` (green) or `OFF` (red).
 4. **Timeout & Failure Handling**:
-   If no confirmation arrives within 3 seconds, the key displays `ERROR`, flashes the Stream Deck alert triangle, and then resynchronizes to the live state reported by the map. Commands are never retried automatically.
-5. **Multiple Browser Tabs**:
-   With multiple map tabs open, all tabs toggle together. The keys reflect the state of the *controlling map* (the earliest-connected active tab). If closed, the next tab takes over.
+   If no confirmation arrives within 3 seconds, the key displays `ERROR`, flashes the Stream Deck alert triangle, and then resynchronizes to the live state reported by the map. Real errors (network transport failure, HTTP error, timeout) trigger alerts; commands are never retried automatically.
+5. **Multiple Browser Tabs & Background Execution**:
+   The live map browser tab does **not** need to be the active/frontmost window on screen; it only needs to remain open and connected. With multiple map tabs open, all tabs toggle together, and keys reflect the state of the *controlling map* (the earliest-connected active tab). If closed, the next tab takes over.
 
 ---
 
@@ -251,10 +254,11 @@ Located under `DARTS/streamdeck/plugin/scripts/`:
 2. **Open the live map**:
    Navigate to `http://localhost:8766/map` in your web browser. Without an open map tab, the keys display `NO MAP` because layer states are managed by Leaflet in the browser.
 3. **Press a key**:
-   - The key face immediately displays `WAIT` in amber.
-   - The map receives the command via WebSocket and toggles the layer.
+   - On a normal successful toggle, the key face calmly retains its confirmed state rather than flashing a distracting WAIT graphic.
+   - The map receives the command via WebSocket and toggles the layer (the browser tab does not need to be active or frontmost, only open and connected).
    - The map reports the confirmed state back to DARTS with the echoed `request_id`.
    - The key updates to `ON` (green) or `OFF` (red).
+   - Rapid double-presses while busy are ignored without alarming exclamation-mark alerts. Real errors or timeouts trigger `ERROR` and an alert.
 4. **Mouse sync**:
    Toggling layers using the live map's ribbon buttons updates the Stream Deck keys within 1 second.
 

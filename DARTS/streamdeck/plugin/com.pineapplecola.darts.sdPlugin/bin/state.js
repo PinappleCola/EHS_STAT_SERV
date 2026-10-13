@@ -29,7 +29,7 @@ const DEFAULT_COLORS = {
     colorOn: '#15803D',      // enabled / visible
     colorOff: '#B91C1C',     // disabled / hidden
     colorPending: '#B45309', // waiting for confirmation (also ERROR)
-    colorOffline: '#1E293B', // DARTS unreachable
+    colorOffline: '#CBD5E1', // DARTS unreachable (calm neutral light)
     colorNoMap: '#475569',   // DARTS up, but no live map (or its state is stale)
 };
 
@@ -111,7 +111,6 @@ function expirePending(model, now) {
 
 function keyStatus(model, control, now) {
     const spec = CONTROLS[control];
-    if (model.pendingCommand && model.pendingCommand.control === control) return 'pending';
     if ((model.errors[control] || 0) > now) return 'error';
     if (model.connectionState !== 'connected') return model.connectionState;
     const value = spec ? model[spec.stateKey] : null;
@@ -137,13 +136,30 @@ function escapeXml(text) {
     }[ch]));
 }
 
+function textColorForBackground(bgHex) {
+    if (typeof bgHex !== 'string') return '#FFFFFF';
+    let clean = bgHex.trim().replace(/^#/, '');
+    if (clean.length === 3) {
+        clean = clean.split('').map((c) => c + c).join('');
+    }
+    if (clean.length !== 6) return '#FFFFFF';
+    const num = parseInt(clean, 16);
+    if (Number.isNaN(num)) return '#FFFFFF';
+    const r = (num >> 16) & 255;
+    const g = (num >> 8) & 255;
+    const b = num & 255;
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    return lum > 160 ? '#0F172A' : '#FFFFFF';
+}
+
 function renderKeySvg(control, status, settings, iconDataUri) {
     const s = normalizeSettings(control, settings);
     const background = s[STATUS_COLOR_KEY[status] || 'colorOffline'];
     const hasIcon = typeof iconDataUri === 'string' && ICON_DATA_URI_RE.test(iconDataUri);
     const baseSize = hasIcon ? 34 : 52;
     const labelSize = s.label.length > 3 ? Math.max(16, Math.floor(baseSize * 3 / s.label.length)) : baseSize;
-    const font = 'font-family="Arial, Helvetica, sans-serif" font-weight="bold" fill="#FFFFFF" text-anchor="middle"';
+    const textColor = textColorForBackground(background);
+    const font = `font-family="Arial, Helvetica, sans-serif" font-weight="bold" fill="${textColor}" text-anchor="middle"`;
     return [
         '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">',
         `<rect width="144" height="144" rx="18" fill="${background}"/>`,
@@ -175,4 +191,5 @@ module.exports = {
     normalizeSettings,
     renderKeySvg,
     svgToImage,
+    textColorForBackground,
 };
