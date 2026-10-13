@@ -8,6 +8,9 @@
     "3DGEO_AUTO_EXPORT_ENABLE": 1,
     "3DGEO_AUTO_EXPORT_DAILY_TIME": "2400",
     "3DGEO_AUTO_EXPORT_TIMEZONE": "Australia/Sydney",
+    "brightness_map": 0.4,
+    "brightness_elements": 0.4,
+    "brightness_trails": 0.4,
     "receiver_a": {
         "port": "COM5",
         "baud": 115200,

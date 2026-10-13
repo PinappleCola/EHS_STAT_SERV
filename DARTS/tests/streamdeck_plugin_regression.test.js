@@ -10,14 +10,17 @@ const manifest = require(path.join(pluginDir, 'manifest.json'));
 const state = require(path.join(pluginDir, 'bin', 'state.js'));
 const { DartsPlugin, normalizeBaseUrl, parseArgs, readIconFile } = require(path.join(pluginDir, 'bin', 'plugin.js'));
 
-// --- Manifest exposes exactly the MAP / IFR / VFR actions the plugin handles ---
+// --- Manifest action UUIDs remain in parity with the plugin state registry ---
 assert.strictEqual(manifest.UUID, 'com.pineapplecola.darts');
 assert.strictEqual(path.basename(pluginDir), `${manifest.UUID}.sdPlugin`);
 assert.deepStrictEqual(fs.readdirSync(path.dirname(pluginDir)).filter((name) => name.endsWith('.sdPlugin')),
     ['com.pineapplecola.darts.sdPlugin']);
 assert.deepStrictEqual(manifest.Actions.map((a) => a.UUID).sort(), [
     'com.pineapplecola.darts.ifr', 'com.pineapplecola.darts.map', 'com.pineapplecola.darts.vfr',
-]);
+    'com.pineapplecola.darts.span30m', 'com.pineapplecola.darts.span1h', 'com.pineapplecola.darts.span2h',
+    'com.pineapplecola.darts.span4h', 'com.pineapplecola.darts.spanday', 'com.pineapplecola.darts.night',
+    'com.pineapplecola.darts.osd', 'com.pineapplecola.darts.export3d',
+].sort());
 assert.strictEqual(manifest.CodePath, 'bin/darts-plugin');
 assert.strictEqual(manifest.CodePathWin, 'bin/darts-plugin.exe');
 assert.strictEqual(manifest.CodePathMac, 'bin/darts-plugin');
@@ -130,6 +133,43 @@ state.applySnapshot(model, snapshot());
 assert.strictEqual(state.keyStatus(model, 'map', 0), 'on');
 assert.strictEqual(state.keyStatus(model, 'ifr', 0), 'off');
 assert.strictEqual(state.keyStatus(model, 'vfr', 0), 'on');
+
+for (const [control, span] of [
+    ['span_30m', '30m'], ['span_1h', '1h'], ['span_2h', '2h'], ['span_4h', '4h'], ['span_day', 'day'],
+]) {
+    state.applySnapshot(model, snapshot({ activeSpan: span }));
+    for (const [candidate, candidateSpan] of [
+        ['span_30m', '30m'], ['span_1h', '1h'], ['span_2h', '2h'], ['span_4h', '4h'], ['span_day', 'day'],
+    ]) assert.strictEqual(state.keyStatus(model, candidate, 0), candidate === control ? 'on' : 'off');
+    assert.strictEqual(state.CONTROLS[control].stateValue, span);
+}
+state.applySnapshot(model, snapshot({ activeSpan: null, nightMode: true, osdVisible: false }));
+assert.strictEqual(state.keyStatus(model, 'night', 0), 'on');
+assert.strictEqual(state.keyStatus(model, 'osd', 0), 'off');
+state.applySnapshot(model, snapshot({ exportState: 'working', exportProgress: 42 }));
+assert.strictEqual(state.keyStatus(model, 'export3d', 0), 'working');
+assert.deepStrictEqual(state.beginCommand(model, 'export3d', 0, randomUUID), { ok: false, reason: 'busy' });
+assert.ok(state.renderKeySvg('export3d', 'working', {}, null, model.exportProgress).includes('>42%</text>'));
+state.applySnapshot(model, snapshot({ exportState: 'done', exportProgress: 100 }));
+assert.strictEqual(state.keyStatus(model, 'export3d', 0), 'done');
+state.applySnapshot(model, snapshot({ exportState: 'error', exportProgress: null }));
+assert.strictEqual(state.keyStatus(model, 'export3d', 0), 'failed');
+state.applySnapshot(model, snapshot({ exportState: 'idle', exportProgress: null }));
+assert.strictEqual(state.keyStatus(model, 'export3d', 0), 'ready');
+const newStateSnapshot = snapshot({
+    activeSpan: '4h', nightMode: true, osdVisible: false, exportState: 'working', exportProgress: 63,
+});
+assert.deepStrictEqual(JSON.parse(JSON.stringify(newStateSnapshot)), newStateSnapshot);
+for (const [uuid, control] of Object.entries({
+    'com.pineapplecola.darts.span30m': 'span_30m',
+    'com.pineapplecola.darts.span1h': 'span_1h',
+    'com.pineapplecola.darts.span2h': 'span_2h',
+    'com.pineapplecola.darts.span4h': 'span_4h',
+    'com.pineapplecola.darts.spanday': 'span_day',
+    'com.pineapplecola.darts.night': 'night',
+    'com.pineapplecola.darts.osd': 'osd',
+    'com.pineapplecola.darts.export3d': 'export3d',
+})) assert.strictEqual(state.ACTIONS[uuid], control);
 
 state.applySnapshot(model, snapshot({ connectionState: 'no_map', mapEnabled: null, ifrEnabled: null, vfrEnabled: null }));
 assert.strictEqual(state.keyStatus(model, 'ifr', 0), 'no_map');

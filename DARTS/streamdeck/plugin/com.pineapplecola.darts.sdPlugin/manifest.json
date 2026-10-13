@@ -4,7 +4,7 @@
   "Name": "DARTS Live Map",
   "Version": "0.1.0.0",
   "Author": "PineappleCola",
-  "Description": "Coloured live-state MAP / IFR / VFR toggle keys for the DARTS live map.",
+  "Description": "Live map controls, trail-span presets, night/OSD toggles, and 3D export for DARTS.",
   "Icon": "imgs/plugin",
   "Category": "DARTS",
   "CategoryIcon": "imgs/category",
@@ -13,18 +13,10 @@
   "CodePathMac": "bin/darts-plugin",
   "PropertyInspectorPath": "ui/settings.html",
   "SDKVersion": 2,
-  "Software": {
-    "MinimumVersion": "7.1"
-  },
+  "Software": {"MinimumVersion": "7.1"},
   "OS": [
-    {
-      "Platform": "windows",
-      "MinimumVersion": "10"
-    },
-    {
-      "Platform": "mac",
-      "MinimumVersion": "12"
-    }
+    {"Platform": "windows", "MinimumVersion": "10"},
+    {"Platform": "mac", "MinimumVersion": "12"}
   ],
   "Actions": [
     {
@@ -32,51 +24,110 @@
       "Name": "MAP toggle",
       "Tooltip": "Toggle the live map basemap (MAP TOGGLE). Green = on, red = off.",
       "Icon": "imgs/action",
-      "Controllers": [
-        "Keypad"
-      ],
+      "Controllers": ["Keypad"],
       "SupportedInMultiActions": false,
       "UserTitleEnabled": false,
-      "States": [
-        {
-          "Image": "imgs/key",
-          "ShowTitle": false
-        }
-      ]
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
     },
     {
       "UUID": "com.pineapplecola.darts.ifr",
       "Name": "IFR waypoints",
       "Tooltip": "Toggle IFR waypoints on the live map. Green = visible, red = hidden.",
       "Icon": "imgs/action",
-      "Controllers": [
-        "Keypad"
-      ],
+      "Controllers": ["Keypad"],
       "SupportedInMultiActions": false,
       "UserTitleEnabled": false,
-      "States": [
-        {
-          "Image": "imgs/key",
-          "ShowTitle": false
-        }
-      ]
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
     },
     {
       "UUID": "com.pineapplecola.darts.vfr",
       "Name": "VFR waypoints",
       "Tooltip": "Toggle VFR waypoints on the live map. Green = visible, red = hidden.",
       "Icon": "imgs/action",
-      "Controllers": [
-        "Keypad"
-      ],
+      "Controllers": ["Keypad"],
       "SupportedInMultiActions": false,
       "UserTitleEnabled": false,
-      "States": [
-        {
-          "Image": "imgs/key",
-          "ShowTitle": false
-        }
-      ]
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
+    },
+    {
+      "UUID": "com.pineapplecola.darts.span30m",
+      "Name": "30-minute trail span",
+      "Tooltip": "Select the last 30 minutes of trails.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
+    },
+    {
+      "UUID": "com.pineapplecola.darts.span1h",
+      "Name": "1-hour trail span",
+      "Tooltip": "Select the last hour of trails.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
+    },
+    {
+      "UUID": "com.pineapplecola.darts.span2h",
+      "Name": "2-hour trail span",
+      "Tooltip": "Select the last two hours of trails.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
+    },
+    {
+      "UUID": "com.pineapplecola.darts.span4h",
+      "Name": "4-hour trail span",
+      "Tooltip": "Select the last four hours of trails.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
+    },
+    {
+      "UUID": "com.pineapplecola.darts.spanday",
+      "Name": "Day trail span",
+      "Tooltip": "Select the full 24-hour trail window.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
+    },
+    {
+      "UUID": "com.pineapplecola.darts.night",
+      "Name": "Night Mode",
+      "Tooltip": "Set a 30-minute trail span, hide the OSD, and dim the map.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
+    },
+    {
+      "UUID": "com.pineapplecola.darts.osd",
+      "Name": "OSD toggle",
+      "Tooltip": "Show or hide the live map top ribbon.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
+    },
+    {
+      "UUID": "com.pineapplecola.darts.export3d",
+      "Name": "Export 3D",
+      "Tooltip": "Download a 3D GeoJSON export of the current trail window.",
+      "Icon": "imgs/action",
+      "Controllers": ["Keypad"],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [{"Image": "imgs/key", "ShowTitle": false}]
     }
   ]
 }

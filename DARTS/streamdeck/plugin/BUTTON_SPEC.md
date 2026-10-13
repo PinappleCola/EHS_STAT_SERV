@@ -24,6 +24,11 @@ Stream Deck App ⇄ Native Plugin (Go) ──HTTP POST /api/ui-command──▶ 
                                       ◀──HTTP GET /api/ui-state─── DARTS (:8766) ◀──WS ui_state───┘
 ```
 
+The map also reports `activeSpan` (`30m`, `1h`, `2h`, `4h`, `day`, or `null`),
+`nightMode`, `osdVisible`, `exportState` (`idle`, `working`, `done`, or `error`),
+and nullable `exportProgress` (0–100). These are authoritative map state, just like
+the existing MAP/IFR/VFR fields.
+
 ### 2.2 Background Browser Tolerance
 - **Browser does NOT need to be frontmost**: The live map page does **not** need to be the active or frontmost window on the screen. It can be running in the background behind other applications (e.g. flight simulators, ATC displays, or development tools).
 - **Connectivity Requirement**: The browser must remain open and connected.
@@ -200,12 +205,17 @@ Package the updated `.streamDeckPlugin` artifact into `dist/`.
 
 While the Confirmed Toggle pattern covers MAP, IFR, and VFR, future extensions may introduce new archetypes:
 
-1. **Momentary / Action Buttons**:
-   - Fire-and-forget commands (e.g. "Recenter Map", "Clear Trails", "Mute Audio").
-   - No `ON`/`OFF` status; brief visual acknowledgement on press (e.g. 500 ms flash), then return to default ready state.
-2. **Multi-State Cycle Buttons**:
+1. **Action-with-Processing Buttons**:
+   - Fire a command without representing a persistent `ON`/`OFF` state (e.g. **EXPORT 3D**).
+   - The authoritative client reports an action lifecycle: `idle` renders neutral `READY`; `working` renders `WORKING…` or a reported percentage; `done` renders green `✓ DONE`; and `error` renders red `✗ FAIL`.
+   - Terminal states are brief acknowledgements (about 800 ms for success and 1500 ms for failure), then return to `READY`. Repeated presses while `working` are ignored without `showAlert`.
+   - The key dispatches through `/api/ui-command`, but its face is driven by action-state fields in `/api/ui-state`, never the toggle `KeyStatus` boolean path. Future exports, screenshots, or similar operations should reuse this lifecycle.
+2. **Radio-Group Presets**:
+   - Related keys (for example `30MIN`, `1HR`, `2HR`, `4HR`, `DAY`) represent one shared selection; exactly the matching preset is `ON`.
+   - The authoritative map reports the selected value (or `null` for no selection). Manual adjustment of the underlying control clears the selection.
+3. **Multi-State Cycle Buttons**:
    - Step through a finite set of options (e.g. basemap style: Default → Dark → Satellite → Terrain).
    - Display current active state name and icon.
-3. **Telemetry & Readout Displays (Headless Operation)**:
+4. **Telemetry & Readout Displays (Headless Operation)**:
    - Status-only or hybrid readout buttons displaying real-time values (e.g. active aircraft count, frame rate, receiver health).
    - Driven directly by DARTS server APIs, functional even without any browser window open.

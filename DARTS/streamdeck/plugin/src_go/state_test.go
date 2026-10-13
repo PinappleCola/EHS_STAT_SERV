@@ -60,6 +60,109 @@ func intPtr(i int) *int {
 	return &i
 }
 
+func stringPtr(value string) *string {
+	return &value
+}
+
+func floatPtr(value float64) *float64 {
+	return &value
+}
+
+func TestNewControlsAndActionLifecycle(t *testing.T) {
+	now := time.Unix(10, 0)
+	model := CreateModel()
+	model.ApplySnapshot(&UiStateSnapshot{
+		ConnectionState: "connected",
+		MapEnabled:      boolPtr(false),
+		IfrEnabled:      boolPtr(true),
+		VfrEnabled:      boolPtr(true),
+		ActiveSpan:      stringPtr("2h"),
+		NightMode:       boolPtr(true),
+		OsdVisible:      boolPtr(false),
+		ExportState:     "idle",
+	})
+
+	for control, want := range map[string]string{
+		"span_30m": "off", "span_1h": "off", "span_2h": "on", "span_4h": "off", "span_day": "off",
+		"night": "on", "osd": "off", "export3d": "ready",
+	} {
+		if got := model.KeyStatus(control, now); got != want {
+			t.Errorf("%s status = %q, want %q", control, got, want)
+		}
+	}
+
+	sequence := 0
+	begin := model.BeginCommand("export3d", now, func() string {
+		sequence++
+		return fmt.Sprintf("action-%d", sequence)
+	})
+	if !begin.Ok || begin.Command != "export_3d" {
+		t.Fatalf("export action did not dispatch: %+v", begin)
+	}
+	if pending := model.BeginCommand("map", now, func() string { return "pending" }); pending.Ok || pending.Reason != "pending" {
+		t.Fatalf("another command during export confirmation should be ignored: %+v", pending)
+	}
+	model.ApplySnapshot(&UiStateSnapshot{
+		ConnectionState: "connected", MapEnabled: boolPtr(false), IfrEnabled: boolPtr(true), VfrEnabled: boolPtr(true),
+		ActiveSpan: stringPtr("2h"), NightMode: boolPtr(true), OsdVisible: boolPtr(false),
+		ExportState: "working", ExportProgress: floatPtr(42), LastRequestId: begin.RequestId,
+	})
+	if got := model.KeyStatus("export3d", now); got != "working" {
+		t.Fatalf("export working status = %q", got)
+	}
+	if busy := model.BeginCommand("export3d", now, func() string { return "busy" }); busy.Ok || busy.Reason != "busy" {
+		t.Fatalf("working export press should be ignored: %+v", busy)
+	}
+	model.ExportState = "done"
+	if got := model.KeyStatus("export3d", now); got != "done" {
+		t.Fatalf("export done status = %q", got)
+	}
+	svg := RenderKeySvgWithProgress("export3d", "working", KeySettings{}, "", model.ExportProgress)
+	if !strings.Contains(svg, ">42%</text>") {
+		t.Fatalf("working export progress is not rendered: %s", svg)
+	}
+	doneSvg := RenderKeySvg("export3d", "done", KeySettings{ColorDone: "#00ff00"}, "")
+	if !strings.Contains(doneSvg, `fill="#00ff00"`) || !strings.Contains(doneSvg, ">✓ DONE</text>") {
+		t.Fatalf("export completion face/color is incorrect: %s", doneSvg)
+	}
+	if got := model.KeyStatus("export3d", now); got != "done" {
+		t.Fatalf("momentary export state should not become an on/off toggle: %q", got)
+	}
+
+	data, err := json.Marshal(&UiStateSnapshot{
+		ConnectionState: "connected", MapEnabled: boolPtr(true), IfrEnabled: boolPtr(false), VfrEnabled: boolPtr(true),
+		ActiveSpan: stringPtr("day"), NightMode: boolPtr(true), OsdVisible: boolPtr(false),
+		ExportState: "working", ExportProgress: floatPtr(68),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip UiStateSnapshot
+	if err := json.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.ActiveSpan == nil || *roundTrip.ActiveSpan != "day" || roundTrip.NightMode == nil || !*roundTrip.NightMode ||
+		roundTrip.OsdVisible == nil || *roundTrip.OsdVisible || roundTrip.ExportState != "working" ||
+		roundTrip.ExportProgress == nil || *roundTrip.ExportProgress != 68 {
+		t.Fatalf("new ui-state fields did not round-trip: %+v", roundTrip)
+	}
+
+	for uuid, control := range map[string]string{
+		"com.pineapplecola.darts.span30m":  "span_30m",
+		"com.pineapplecola.darts.span1h":   "span_1h",
+		"com.pineapplecola.darts.span2h":   "span_2h",
+		"com.pineapplecola.darts.span4h":   "span_4h",
+		"com.pineapplecola.darts.spanday":  "span_day",
+		"com.pineapplecola.darts.night":    "night",
+		"com.pineapplecola.darts.osd":      "osd",
+		"com.pineapplecola.darts.export3d": "export3d",
+	} {
+		if got := Actions[uuid]; got != control {
+			t.Errorf("action %s maps to %q, want %q", uuid, got, control)
+		}
+	}
+}
+
 func TestStateModel(t *testing.T) {
 	seq := 0
 	uuidGen := func() string {

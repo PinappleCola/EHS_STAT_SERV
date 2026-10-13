@@ -10,19 +10,23 @@ assert.ok(start >= 0 && end > start);
 const source = liveMap.slice(start, end);
 assert.doesNotMatch(source, /JSON\.parse|blob\.text/);
 
-async function download(disposition, fail = false) {
+async function download(disposition, fail = false, reportProgress = false) {
     const messages = [];
     const anchor = { click() { this.clicked = true; } };
     let downloadedBlob;
     let revoked = false;
     const bytes = new TextEncoder().encode('{"type":"FeatureCollection","features":[]}');
-    const context = {
+    const stateReports = [];
+    let context;
+    context = {
         HTTP_API: 'http://localhost',
         getTrailRangeWindow: () => ({ fromMs: 1000, toMs: 2000 }),
         URLSearchParams, ReadableStream, Response,
+        exportProgress: null,
+        reportUiState() { stateReports.push(context.exportProgress); },
         fetch: async () => ({
             ok: true,
-            headers: { get: () => disposition },
+            headers: { get: name => name === 'content-length' && reportProgress ? String(bytes.length) : disposition },
             body: new ReadableStream({
                 start(controller) {
                     controller.enqueue(bytes.slice(0, 10));
@@ -54,6 +58,7 @@ async function download(disposition, fail = false) {
     assert.ok(anchor.clicked && revoked);
     assert.ok(messages.some(message => message.includes('MiB received')));
     assert.ok(messages.some(message => message.includes('download complete')));
+    if (reportProgress) assert.deepStrictEqual(stateReports, [23, 99, 100]);
     return anchor.download;
 }
 
@@ -63,6 +68,7 @@ async function download(disposition, fail = false) {
     assert.strictEqual(await download("attachment; filename*=UTF-8''..%2Fsafe.geojson"),
         'safe.geojson');
     assert.match(await download(''), /^3DSPAT_.*_0000\.geojson$/);
+    await download('', false, true);
     await download('', true);
     console.log('export3d_regression: OK');
 })().catch(error => {
