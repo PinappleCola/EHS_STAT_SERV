@@ -63,6 +63,54 @@ for (const action of manifest.Actions) assert.ok(inspectorHtml.includes(`'${acti
 assert.deepStrictEqual(manifest.Actions.map((a) => a.UUID).sort(), Object.keys(state.ACTIONS).sort());
 for (const action of manifest.Actions) assert.ok(action.UUID.startsWith(`${manifest.UUID}.`));
 
+// --- Robustness, packaging, scripts, and documentation assertions ---
+const pluginRootDir = path.join(__dirname, '..', 'streamdeck', 'plugin');
+
+// Verify helper scripts exist
+const scriptsDir = path.join(pluginRootDir, 'scripts');
+assert.ok(fs.existsSync(scriptsDir) && fs.statSync(scriptsDir).isDirectory(), 'Scripts directory must exist');
+for (const scriptName of ['install-manual.ps1', 'uninstall.ps1', 'doctor.ps1']) {
+    const scriptPath = path.join(scriptsDir, scriptName);
+    assert.ok(fs.existsSync(scriptPath) && fs.statSync(scriptPath).isFile(), `Helper script ${scriptName} must exist`);
+    assert.ok(fs.statSync(scriptPath).size > 100, `Helper script ${scriptName} must be non-empty`);
+}
+
+// Verify prebuilt installer package in dist/
+const distInstaller = path.join(pluginRootDir, 'dist', 'com.pineapplecola.darts.streamDeckPlugin');
+assert.ok(fs.existsSync(distInstaller) && fs.statSync(distInstaller).isFile(), 'Committed installer bundle must exist in dist/');
+const installerSize = fs.statSync(distInstaller).size;
+assert.ok(installerSize > 1024 * 1024, `Committed installer size (${installerSize} bytes) must be > 1 MB`);
+
+// Verify no misspelled "pinapplecola" (missing-e) anywhere in the plugin tree
+function assertNoMisspelling(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+        if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
+        const fullPath = path.join(dir, entry.name);
+        assert.ok(!entry.name.toLowerCase().includes('pinapplecola'), `Path name must not have misspelled UUID: ${fullPath}`);
+        if (entry.isDirectory()) {
+            assertNoMisspelling(fullPath);
+        } else if (entry.isFile() && /\.(md|json|js|go|html|ps1|bat|sh)$/i.test(entry.name)) {
+            const text = fs.readFileSync(fullPath, 'utf8');
+            assert.ok(!text.includes('pinapplecola'), `File ${fullPath} contains misspelled "pinapplecola"`);
+        }
+    }
+}
+assertNoMisspelling(pluginRootDir);
+
+// Verify README mentions both install locations and the self-contained/no-managed-Node note
+const readmePath = path.join(pluginRootDir, 'README.md');
+assert.ok(fs.existsSync(readmePath), 'Plugin README.md must exist');
+const readmeText = fs.readFileSync(readmePath, 'utf8');
+assert.ok(readmeText.includes('APPDATA') && readmeText.includes('Elgato') && readmeText.includes('Plugins'),
+    'README must mention per-user AppData plugin install location');
+assert.ok(readmeText.includes('Program Files') && readmeText.includes('Plugins'),
+    'README must mention system-wide Program Files plugin install location');
+assert.ok(/self-contained|standalone/i.test(readmeText),
+    'README must document self-contained / standalone executable architecture');
+assert.ok(/not require.*(?:managed )?Node/i.test(readmeText) || /does NOT require.*Node/i.test(readmeText),
+    'README must state managed Node runtime is not required');
+
 // --- State model ---
 let uuidSeq = 0;
 const randomUUID = () => `uuid-${++uuidSeq}`;
@@ -90,15 +138,17 @@ state.applySnapshot(model, { connectionState: 'bogus' });
 assert.strictEqual(model.connectionState, 'offline');
 assert.strictEqual(model.ifrEnabled, null);
 
-// Press -> pending until the map echoes the request ID; no guessed state.
+// Press -> pending internally until the map echoes the request ID; confirmed state retained on key
 state.applySnapshot(model, snapshot());
 const begin = state.beginCommand(model, 'ifr', 1000, randomUUID);
 assert.deepStrictEqual(begin, { ok: true, requestId: 'sd-uuid-1', command: 'toggle_ifr' });
-assert.strictEqual(state.keyStatus(model, 'ifr', 1000), 'pending');
+assert.strictEqual(model.pendingCommand.requestId, 'sd-uuid-1');
+assert.strictEqual(state.keyStatus(model, 'ifr', 1000), 'off', 'retains confirmed state during pending');
 assert.strictEqual(state.keyStatus(model, 'map', 1000), 'on', 'other keys keep their live state');
 assert.deepStrictEqual(state.beginCommand(model, 'map', 1000, randomUUID), { ok: false, reason: 'pending' });
-state.applySnapshot(model, snapshot({ ifrEnabled: true, lastRequestId: 'other' }));
-assert.strictEqual(state.keyStatus(model, 'ifr', 1100), 'pending', 'unrelated reports do not confirm');
+state.applySnapshot(model, snapshot({ ifrEnabled: false, lastRequestId: 'other' }));
+assert.strictEqual(model.pendingCommand.requestId, 'sd-uuid-1', 'unrelated reports do not confirm');
+assert.strictEqual(state.keyStatus(model, 'ifr', 1100), 'off');
 state.applySnapshot(model, snapshot({ ifrEnabled: true, lastRequestId: 'sd-uuid-1' }));
 assert.strictEqual(model.pendingCommand, null);
 assert.strictEqual(state.keyStatus(model, 'ifr', 1200), 'on');
@@ -129,6 +179,10 @@ for (const [status, color, text] of [
     assert.ok(svg.includes(`>${text}</text>`), status);
     assert.ok(svg.includes('>IFR</text>'));
 }
+assert.strictEqual(state.textColorForBackground(D.colorOffline), '#0F172A');
+assert.strictEqual(state.textColorForBackground(D.colorOn), '#FFFFFF');
+const offlineSvg = state.renderKeySvg('ifr', 'offline', {});
+assert.ok(offlineSvg.includes('fill="#0F172A"'), 'offline text uses dark contrast against light neutral background');
 const custom = state.renderKeySvg('map', 'on', { label: ' <B&> ', colorOn: '#00ff00', colorOff: 'red" onload="x' });
 assert.strictEqual(colorsOf(custom), '#00ff00');
 assert.ok(custom.includes('>&lt;B&amp;&gt;</text>'));
@@ -191,17 +245,24 @@ async function runPluginScenario() {
     assert.strictEqual(statusOf('k-vfr'), 'ON');
     assert.ok(!sent.some((m) => m.context === 'k-other'));
 
-    // Press IFR: command carries a request ID; key goes amber until the map confirms.
+    // Press IFR: command carries a request ID; key retains confirmed state (no WAIT flash)
     const imagesBefore = sent.filter((m) => m.event === 'setImage').length;
     await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pineapplecola.darts.ifr', context: 'k-ifr', payload: {} });
     assert.strictEqual(darts.commands.length, 1);
     assert.strictEqual(darts.commands[0].command, 'toggle_ifr');
     assert.match(darts.commands[0].request_id, /^sd-uuid-\d+$/);
     assert.strictEqual(darts.commands[0].request_id, plugin.model.pendingCommand.requestId);
-    assert.strictEqual(statusOf('k-ifr'), 'WAIT');
-    assert.ok(sent.filter((m) => m.event === 'setImage').length > imagesBefore);
+    assert.strictEqual(statusOf('k-ifr'), 'OFF', 'retains confirmed state during pending toggle');
+
+    // Rapid double-press while busy: ignored without sending new commands and without showAlert
+    const alertsBefore = sent.filter((m) => m.event === 'showAlert').length;
+    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pineapplecola.darts.ifr', context: 'k-ifr', payload: {} });
+    await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pineapplecola.darts.map', context: 'k-map', payload: {} });
+    assert.strictEqual(darts.commands.length, 1, 'extra commands suppressed while pending');
+    assert.strictEqual(sent.filter((m) => m.event === 'showAlert').length, alertsBefore, 'no exclamation mark alert for busy presses');
+
     await runTimers();
-    assert.strictEqual(statusOf('k-ifr'), 'WAIT', 'no guessing while the map has not confirmed');
+    assert.strictEqual(statusOf('k-ifr'), 'OFF', 'retains confirmed state until map confirms');
     darts.state = snapshot({ ifrEnabled: true, lastRequestId: darts.commands[0].request_id });
     await runTimers();
     assert.strictEqual(statusOf('k-ifr'), 'ON');
@@ -215,14 +276,14 @@ async function runPluginScenario() {
     await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pineapplecola.darts.vfr', context: 'k-vfr', payload: {} });
     const vfrCommand = darts.commands[darts.commands.length - 1];
     assert.strictEqual(vfrCommand.command, 'toggle_vfr');
-    assert.strictEqual(statusOf('k-vfr'), 'WAIT');
+    assert.strictEqual(statusOf('k-vfr'), 'ON', 'retains confirmed state during pending toggle');
     darts.state = snapshot({ mapEnabled: false, ifrEnabled: true, vfrEnabled: false, lastRequestId: vfrCommand.request_id });
     await runTimers();
     assert.strictEqual(statusOf('k-vfr'), 'OFF');
 
     // No confirmation within the timeout -> ERROR + alert, then re-sync to live state.
     await plugin.handleDeckMessage({ event: 'keyDown', action: 'com.pineapplecola.darts.map', context: 'k-map', payload: {} });
-    assert.strictEqual(statusOf('k-map'), 'WAIT');
+    assert.strictEqual(statusOf('k-map'), 'OFF', 'retains confirmed state until timeout');
     clock += state.TIMING.confirmTimeoutMs;
     await runTimers();
     assert.strictEqual(statusOf('k-map'), 'ERROR');

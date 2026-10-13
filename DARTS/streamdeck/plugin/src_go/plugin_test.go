@@ -191,7 +191,7 @@ func TestPluginScenario(t *testing.T) {
 		t.Fatalf("expected no image for k-other, got %s", st)
 	}
 
-	// Press key
+	// Press key: retains last confirmed state (OFF) rather than flashing WAIT
 	plugin.pressKey("k-ifr")
 	dartsMu.Lock()
 	if len(dartsCommands) != 1 {
@@ -207,8 +207,40 @@ func TestPluginScenario(t *testing.T) {
 		t.Fatalf("expected sd-uuid- prefix, got %s", reqCmd["request_id"])
 	}
 
-	if st := statusOf("k-ifr"); st != "WAIT" {
-		t.Fatalf("expected WAIT, got %s", st)
+	if st := statusOf("k-ifr"); st != "OFF" {
+		t.Fatalf("expected OFF (retains confirmed state, no WAIT flash), got %s", st)
+	}
+
+	// Rapid double-press while pending: ignored and does NOT send showAlert
+	sentMu.Lock()
+	alertsBefore := 0
+	for _, m := range sent {
+		if m.Event == "showAlert" {
+			alertsBefore++
+		}
+	}
+	sentMu.Unlock()
+
+	plugin.pressKey("k-ifr")
+	plugin.pressKey("k-map")
+
+	dartsMu.Lock()
+	if len(dartsCommands) != 1 {
+		t.Fatalf("expected busy presses to be ignored without sending new commands")
+	}
+	dartsMu.Unlock()
+
+	sentMu.Lock()
+	alertsAfter := 0
+	for _, m := range sent {
+		if m.Event == "showAlert" {
+			alertsAfter++
+		}
+	}
+	sentMu.Unlock()
+
+	if alertsAfter != alertsBefore {
+		t.Fatalf("expected no showAlert for busy press while pending")
 	}
 
 	// Confirm with snapshot
@@ -227,16 +259,30 @@ func TestPluginScenario(t *testing.T) {
 		t.Fatalf("expected confirmed ON, got %s", st)
 	}
 
-	// Timeout into ERROR
+	// Press k-map (currently ON): retains ON until timeout triggers ERROR
 	plugin.pressKey("k-map")
-	if st := statusOf("k-map"); st != "WAIT" {
-		t.Fatalf("expected map WAIT, got %s", st)
+	if st := statusOf("k-map"); st != "ON" {
+		t.Fatalf("expected map ON during pending confirmation, got %s", st)
 	}
 
 	advanceClock(ConfirmTimeout)
 	runTimers()
 	if st := statusOf("k-map"); st != "ERROR" {
 		t.Fatalf("expected map ERROR after timeout, got %s", st)
+	}
+
+	// Genuine failure must trigger showAlert
+	sentMu.Lock()
+	hasMapAlert := false
+	for _, m := range sent {
+		if m.Event == "showAlert" && m.Context == "k-map" {
+			hasMapAlert = true
+			break
+		}
+	}
+	sentMu.Unlock()
+	if !hasMapAlert {
+		t.Fatalf("expected showAlert for k-map on genuine timeout failure")
 	}
 
 	advanceClock(ErrorHoldDuration + time.Millisecond)

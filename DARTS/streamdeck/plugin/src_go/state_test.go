@@ -59,14 +59,17 @@ func TestStateModel(t *testing.T) {
 		t.Fatalf("expected vfr on, got %s", st)
 	}
 
-	// Begin command
+	// Begin command: internally pending, but KeyStatus retains confirmed state to avoid WAIT flash
 	cmdNow := time.Unix(1, 0)
 	begin := model.BeginCommand("ifr", cmdNow, uuidGen)
 	if !begin.Ok || begin.RequestId != "sd-uuid-1" || begin.Command != "toggle_ifr" {
 		t.Fatalf("unexpected begin result: %+v", begin)
 	}
-	if st := model.KeyStatus("ifr", cmdNow); st != "pending" {
-		t.Fatalf("expected pending, got %s", st)
+	if model.PendingCommand == nil || model.PendingCommand.RequestId != "sd-uuid-1" {
+		t.Fatalf("expected pending command to be tracked internally")
+	}
+	if st := model.KeyStatus("ifr", cmdNow); st != "off" {
+		t.Fatalf("expected ifr to retain confirmed 'off' state during pending, got %s", st)
 	}
 	if st := model.KeyStatus("map", cmdNow); st != "on" {
 		t.Fatalf("expected map still on, got %s", st)
@@ -82,12 +85,15 @@ func TestStateModel(t *testing.T) {
 	model.ApplySnapshot(&UiStateSnapshot{
 		ConnectionState: "connected",
 		MapEnabled:      boolPtr(true),
-		IfrEnabled:      boolPtr(true),
+		IfrEnabled:      boolPtr(false),
 		VfrEnabled:      boolPtr(true),
 		LastRequestId:   "other",
 	})
-	if st := model.KeyStatus("ifr", cmdNow.Add(100*time.Millisecond)); st != "pending" {
-		t.Fatalf("expected still pending, got %s", st)
+	if model.PendingCommand == nil {
+		t.Fatalf("expected pendingCommand to remain active")
+	}
+	if st := model.KeyStatus("ifr", cmdNow.Add(100*time.Millisecond)); st != "off" {
+		t.Fatalf("expected ifr to remain confirmed 'off' until confirmed, got %s", st)
 	}
 
 	// Matching report confirms
@@ -194,5 +200,13 @@ func TestSvgRendering(t *testing.T) {
 	badIconSvg := RenderKeySvg("vfr", "on", KeySettings{}, "javascript:alert(1)")
 	if strings.Contains(badIconSvg, "<image") {
 		t.Fatalf("expected bad icon to be ignored in %s", badIconSvg)
+	}
+
+	// Text contrast for light vs dark backgrounds
+	if tc := TextColorForBackground(DefaultColors["colorOffline"]); tc != "#0F172A" {
+		t.Fatalf("expected dark text for light neutral offline color %s, got %s", DefaultColors["colorOffline"], tc)
+	}
+	if tc := TextColorForBackground(DefaultColors["colorOn"]); tc != "#FFFFFF" {
+		t.Fatalf("expected white text for dark green on color %s, got %s", DefaultColors["colorOn"], tc)
 	}
 }

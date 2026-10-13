@@ -39,31 +39,84 @@ Create a `streamdeck/` folder somewhere convenient and drop the scripts below in
 The batch files can't show anything on the key face. The **DARTS Stream Deck
 plugin** in [`streamdeck/plugin/`](streamdeck/plugin/README.md) replaces keys
 13–15 with keys that turn **green (on)**, **red (off)**, **amber (waiting)** or
-**grey (offline / no map)** based on the state the open live map reports. See its
-README for full install steps. Requires **Stream Deck 7.1+**.
+**grey (offline / no map)** based on the state the open live map reports.
+See the [plugin README](streamdeck/plugin/README.md) for full documentation.
+Requires **Stream Deck 7.1+** (tested on v7.6+ on Windows 11).
 
-> **No managed Node.js runtime required**: Unlike standard Node plugins, this plugin
-> is built as a self-contained native executable (`darts-plugin.exe` on Windows,
-> universal binary on macOS). It does **not** depend on Stream Deck's managed
-> Node.js runtime and loads reliably even if `%APPDATA%\Elgato\StreamDeck\NodeJS\` is
-> empty or absent on your machine.
+> **Self-contained native executables (No managed Node.js runtime required)**:
+> Unlike standard plugins that depend on Stream Deck's managed Node.js runtime
+> (`%APPDATA%\Elgato\StreamDeck\NodeJS\`), this plugin ships compiled native
+> standalone binaries (`bin/darts-plugin.exe` on Windows, universal binary on macOS).
+> It does **not** require or use Stream Deck's Node runtime and loads reliably even if
+> `%APPDATA%\Elgato\StreamDeck\NodeJS\` is empty, unprovisioned, or absent on your machine.
+> Any `NodeManager ... Manifest file not found` warnings in Stream Deck logs are completely harmless.
 
-1. **Install via double-click installer (recommended):**
-   Download [com.pineapplecola.darts.streamDeckPlugin](streamdeck/plugin/dist/com.pineapplecola.darts.streamDeckPlugin)
-   using GitHub's **Download raw file** button. Double-click it and approve the installation in Stream Deck.
-   The installer keeps the UI, executable code, manifest, and images together; no manual copying is needed.
-2. **Manual install fallback:**
-   If installing manually, copy the entire folder `DARTS/streamdeck/plugin/com.pineapplecola.darts.sdPlugin/`
-   into `%APPDATA%\Elgato\StreamDeck\Plugins\` on Windows (or `~/Library/Application Support/com.elgato.StreamDeck/Plugins/` on macOS).
-   Always fully quit Stream Deck (right-click tray icon → Quit) and restart it after manual installation.
-3. Drag the DARTS MAP / IFR / VFR actions onto keys.
-4. Start DARTS (`run.bat` / `run.sh`) and open `http://localhost:8766/map`; keys turn green/red based
-   on confirmed map state. The shared API URL defaults to `http://127.0.0.1:8766`.
+#### Install Method 1: Double-click installer (primary)
 
-### Troubleshooting the Plugin
-- **Confirming the plugin loaded**: Open Stream Deck Settings → Plugins. **DARTS Live Map** appears in the installed list. When active, `darts-plugin.exe` runs as a process in Task Manager.
-- **Actions never appear**: If using older Node-based plugins, Stream Deck's managed runtime may be missing from `%APPDATA%\Elgato\StreamDeck\NodeJS\`. This standalone native plugin eliminates that failure mode. Use the double-click `.streamDeckPlugin` installer to ensure complete asset installation.
-- The [plugin README](streamdeck/plugin/README.md) documents full troubleshooting, state machines, and the reproducible `npm run build` / `npm run validate` / `npm run pack` commands.
+1. Download [**com.pineapplecola.darts.streamDeckPlugin**](streamdeck/plugin/dist/com.pineapplecola.darts.streamDeckPlugin)
+   from `DARTS/streamdeck/plugin/dist/`.
+   > **WARNING**: Use GitHub's **Download raw file** button (the down-arrow icon) or a direct raw link.
+   > The webpage preview "Download" button can save an HTML page. Verify the file size is ~8 MB before installing.
+2. Fully quit Stream Deck (right-click the taskbar tray icon → **Quit**).
+3. Double-click the `.streamDeckPlugin` file and approve installation in Stream Deck.
+4. Drag the DARTS **MAP toggle**, **IFR waypoints**, and **VFR waypoints** actions onto keys.
+5. Start DARTS (`run.bat` / `run.sh`) and open `http://localhost:8766/map`.
+
+#### Install Method 2: Manual copy (reliable fallback)
+
+If the installer reports `(AlreadyInstalled)` but no actions appear, or double-click fails, use manual copy:
+
+1. Fully quit Stream Deck (`StreamDeck.exe` must not be running).
+2. Extract the `.streamDeckPlugin` (it is a standard zip archive) or copy the `com.pineapplecola.darts.sdPlugin` folder directly.
+3. Copy the whole `com.pineapplecola.darts.sdPlugin` folder into `%APPDATA%\Elgato\StreamDeck\Plugins\`.
+4. Exact PowerShell snippet:
+   ```powershell
+   $work = "$env:TEMP\darts-extract"
+   Expand-Archive -Force "com.pineapplecola.darts.streamDeckPlugin" "$work\out"
+   $dst = "$env:APPDATA\Elgato\StreamDeck\Plugins\com.pineapplecola.darts.sdPlugin"
+   Remove-Item -Recurse -Force $dst -ErrorAction SilentlyContinue
+   Copy-Item -Recurse -Force "$work\out\com.pineapplecola.darts.sdPlugin" $dst
+   ```
+   Or run the automated helper: `powershell -ExecutionPolicy Bypass -File streamdeck\plugin\scripts\install-manual.ps1`.
+5. Restart Stream Deck.
+
+#### Clean Reset / Uninstall (Two Install Locations)
+
+Stream Deck plugins can exist in **TWO** locations:
+- **Per-user**: `%APPDATA%\Elgato\StreamDeck\Plugins\com.pineapplecola.darts.sdPlugin\`
+- **System-wide**: `C:\Program Files\Elgato\StreamDeck\Plugins\com.pineapplecola.darts.sdPlugin\` (requires Administrator elevation to remove).
+
+**The Duplicate-UUID Trap**: If a copy exists in Program Files, Stream Deck logs:
+`Plugins war esd::plugins::Storage::load Plugin conflict: 'com.pineapplecola.darts' (already loaded plugin with same uuid)`.
+This makes the installer report `(AlreadyInstalled)` without showing any actions, and survives standard `%APPDATA%` wipes.
+
+To locate and cleanly remove every copy:
+1. Find all copies:
+   ```powershell
+   Get-ChildItem -Recurse -Path "$env:APPDATA\Elgato","$env:LOCALAPPDATA\Elgato","C:\Program Files\Elgato","C:\Program Files (x86)\Elgato" -Filter "manifest.json" -ErrorAction SilentlyContinue |
+     Where-Object { (Get-Content $_.FullName -Raw) -match "com\.pineapplecola\.darts" } |
+     Select-Object FullName
+   ```
+2. Remove the Program Files copy using an **Administrator PowerShell**:
+   ```powershell
+   Remove-Item -Recurse -Force "C:\Program Files\Elgato\StreamDeck\Plugins\com.pineapplecola.darts.sdPlugin"
+   ```
+3. Remove the AppData copy and temp cache:
+   ```powershell
+   Remove-Item -Recurse -Force "$env:APPDATA\Elgato\StreamDeck\Plugins\com.pineapplecola.darts.sdPlugin" -ErrorAction SilentlyContinue
+   Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Temp\com.elgato.streamdeck" -ErrorAction SilentlyContinue
+   ```
+   Or run the helper script: `powershell -ExecutionPolicy Bypass -File streamdeck\plugin\scripts\uninstall.ps1`.
+
+#### Troubleshooting the Plugin
+
+| Log / Symptom | Cause | Solution |
+|---------------|-------|----------|
+| `Plugin conflict: 'com.pineapplecola.darts' (already loaded plugin with same uuid)` | Duplicate copy in `C:\Program Files\Elgato\StreamDeck\Plugins\`. | Delete the Program Files copy via **Administrator PowerShell** and restart Stream Deck. |
+| Installer says `(AlreadyInstalled)` but no actions appear | Duplicate UUID conflict from leftover Program Files copy. | Follow the Clean Reset steps above and reinstall via manual copy. |
+| `NodeManager ... Manifest file not found` / `Failed to save Node.js manifest` | Stream Deck internal Node provisioning. | **HARMLESS.** Standalone executable does not use managed Node. |
+| Verify plugin loaded in log | Check StreamDeck.log for status. | `Get-Content "$env:APPDATA\Elgato\StreamDeck\logs\StreamDeck.log" -Tail 60 \| Select-String -Pattern "pineapplecola","darts","conflict","connected"` (Success = `connected` entry, no `conflict`). |
+| Diagnostic doctor | Check plugin health. | Run `powershell -ExecutionPolicy Bypass -File streamdeck\plugin\scripts\doctor.ps1`. |
 
 ---
 
@@ -283,4 +336,8 @@ controlling map whose state is reported.
   parameters; omitting them exports the default maximum window.
 - Batch/URL keys cannot show live data on the Stream Deck key face; use the
   [DARTS Stream Deck plugin](streamdeck/plugin/README.md) for live MAP / IFR / VFR
-  key colours.
+  key colours and interactive status.
+- The browser live map does **not** need to be the active/frontmost window for
+  Stream Deck plugin toggles to work; it only needs to remain open and connected.
+- For full details on the confirmed-toggle button standard, state transitions, and
+  how to add new buttons, see [BUTTON_SPEC.md](streamdeck/plugin/BUTTON_SPEC.md).

@@ -419,10 +419,12 @@ func (p *DartsPlugin) pressKey(contextKey string) {
 	begin := p.model.BeginCommand(entry.Control, now, p.UUIDGen)
 	if !begin.Ok {
 		p.mu.Unlock()
-		p.Send(OutgoingMessage{
-			Event:   "showAlert",
-			Context: contextKey,
-		})
+		if begin.Reason != "pending" {
+			p.Send(OutgoingMessage{
+				Event:   "showAlert",
+				Context: contextKey,
+			})
+		}
 		p.RequestSync()
 		return
 	}
