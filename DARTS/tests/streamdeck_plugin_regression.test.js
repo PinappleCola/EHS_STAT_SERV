@@ -285,7 +285,7 @@ class InspectorSocket {
 const inspector = vm.createContext({
     document: { getElementById: (id) => elements.get(id) }, WebSocket: InspectorSocket,
 });
-vm.runInContext(/<script>([\s\S]*?)<\/script>/.exec(inspectorHtml)[1], inspector);
+vm.runInContext(/<script>([\s\S]*?)<\/script>/i.exec(inspectorHtml)[1], inspector);
 inspector.connectElgatoStreamDeckSocket('1234', 'key', 'registerPropertyInspector', '{}',
     JSON.stringify({ action: 'com.pineapplecola.darts.map', payload: { settings: imageSettings } }));
 for (const [status, field] of Object.entries(imageFields)) {
