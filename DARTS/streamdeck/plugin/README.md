@@ -31,6 +31,7 @@ Each key displays a prominent label (MAP / IFR / VFR), a live status text, and a
 - [Overview & Requirements](#overview--requirements)
 - [How It Works](#how-it-works)
 - [Button Design Standard (`BUTTON_SPEC.md`)](BUTTON_SPEC.md)
+- [Automated Windows Development & Testing Workflow](#automated-windows-development--testing-workflow)
 - [Install Method 1: Double-Click Installer (Primary)](#install-method-1-double-click-installer-primary)
 - [Install Method 2: Manual Copy (Reliable Fallback)](#install-method-2-manual-copy-reliable-fallback)
 - [Uninstall & Clean Reset (Critical)](#uninstall--clean-reset-critical)
@@ -76,6 +77,25 @@ Stream Deck App ⇄ Native Plugin Binary ──HTTP POST /api/ui-command──�
    If no confirmation arrives within 3 seconds, the key displays `ERROR`, flashes the Stream Deck alert triangle, and then resynchronizes to the live state reported by the map. Real errors (network transport failure, HTTP error, timeout) trigger alerts; commands are never retried automatically.
 5. **Multiple Browser Tabs & Background Execution**:
    The live map browser tab does **not** need to be the active/frontmost window on screen; it only needs to remain open and connected. With multiple map tabs open, all tabs toggle together, and keys reflect the state of the *controlling map* (the earliest-connected active tab). If closed, the next tab takes over.
+
+---
+
+## Install Method 1: Double-Click Installer (Primary)
+
+## Automated Windows Development & Testing Workflow
+
+For testing new commits, avoiding folder confusion, and automating plugin deployment and rollback on Windows, use the repository's helper launcher:
+
+```powershell
+# From the repository root in PowerShell:
+.\tools\dev.ps1 setup    # One-time setup: establish authoritative repo and plugin paths
+.\tools\dev.ps1 status   # Inspect deployed version, commit SHA, and detect stray folders
+.\tools\dev.ps1 test     # Run all regression tests on current or target commit
+.\tools\dev.ps1 deploy   # Safely backup and deploy to Stream Deck AppData
+.\tools\dev.ps1 rollback # Instantly restore the last known good build
+```
+
+See the complete guide in [DEV_WORKFLOW.md](../../../DEV_WORKFLOW.md).
 
 ---
 

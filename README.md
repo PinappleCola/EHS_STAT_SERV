@@ -69,6 +69,17 @@ Runs on **Raspberry Pi 5** and **Windows 10/11** (Python 3.8+).
    ```
    The script creates a virtual environment, installs dependencies, and starts DARTS.
 
+4. **Testing commits and Stream Deck deployment:**
+   For a streamlined Windows workflow that prevents folder confusion and automates testing, deployment, and rollback:
+   ```powershell
+   .\tools\dev.ps1 setup    # One-time setup: confirm authoritative repository
+   .\tools\dev.ps1 status   # Check active commit & detect stray copies
+   .\tools\dev.ps1 test     # Run regression test suite
+   .\tools\dev.ps1 deploy   # Safely deploy plugin with automatic backup
+   .\tools\dev.ps1 rollback # Restore last known good build
+   ```
+   See [DEV_WORKFLOW.md](DEV_WORKFLOW.md) for full instructions.
+
 ---
 
 ## Manual Setup (any platform)
