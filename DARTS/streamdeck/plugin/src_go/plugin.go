@@ -510,9 +510,12 @@ func (p *DartsPlugin) renderContext(contextKey string) {
 	settings := entry.Settings
 	p.mu.Unlock()
 
-	iconUri := p.iconFor(strings.TrimSpace(settings.Icon))
-	svg := RenderKeySvg(entry.Control, status, settings, iconUri)
-	image := SvgToImage(svg)
+	normalized := NormalizeSettings(entry.Control, settings)
+	image := p.iconFor(normalized.ImagePath(status))
+	if image == "" {
+		iconUri := p.iconFor(normalized.Icon)
+		image = SvgToImage(RenderKeySvg(entry.Control, status, settings, iconUri))
+	}
 
 	p.mu.Lock()
 	entry, ok = p.contexts[contextKey]

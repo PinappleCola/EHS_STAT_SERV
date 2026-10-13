@@ -1,12 +1,14 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const vm = require('vm');
 const { isBuiltin } = require('module');
 
 const pluginDir = path.join(__dirname, '..', 'streamdeck', 'plugin', 'com.pineapplecola.darts.sdPlugin');
 const manifest = require(path.join(pluginDir, 'manifest.json'));
 const state = require(path.join(pluginDir, 'bin', 'state.js'));
-const { DartsPlugin, normalizeBaseUrl, parseArgs } = require(path.join(pluginDir, 'bin', 'plugin.js'));
+const { DartsPlugin, normalizeBaseUrl, parseArgs, readIconFile } = require(path.join(pluginDir, 'bin', 'plugin.js'));
 
 // --- Manifest exposes exactly the MAP / IFR / VFR actions the plugin handles ---
 assert.strictEqual(manifest.UUID, 'com.pineapplecola.darts');
@@ -192,6 +194,108 @@ const icon = 'data:image/png;base64,iVBORw0KGgo=';
 assert.ok(state.renderKeySvg('vfr', 'on', {}, icon).includes(`<image href="${icon}"`));
 assert.ok(!state.renderKeySvg('vfr', 'on', {}, 'javascript:alert(1)').includes('<image'));
 assert.ok(state.svgToImage('<svg/>').startsWith('data:image/svg+xml;charset=utf8,'));
+
+// --- Per-state full-key artwork, fallback, and shared cache ---
+const imageFields = {
+    on: 'imageOn', off: 'imageOff', pending: 'imagePending', error: 'imageError',
+    offline: 'imageOffline', no_map: 'imageNoMap', stale: 'imageStale',
+};
+const imageSettings = Object.fromEntries(Object.entries(imageFields).map(([status, field]) => [field, ` /art/${status}.png `]));
+for (const status of Object.keys(imageFields)) {
+    assert.strictEqual(state.imagePathFor(status, state.normalizeSettings('map', imageSettings)), `/art/${status}.png`);
+    assert.strictEqual(state.imagePathFor(status, state.normalizeSettings('map', {})), '');
+}
+assert.strictEqual(state.imagePathFor('unknown', state.normalizeSettings('map', imageSettings)), '');
+assert.strictEqual(state.imagePathFor('toString', state.normalizeSettings('map', imageSettings)), '');
+
+const artworkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'darts-artwork-'));
+try {
+    for (const control of ['map', 'ifr', 'vfr']) {
+        const settings = { label: 'CUSTOM', colorOn: '#123456' };
+        const expected = {};
+        for (const [status, field] of Object.entries(imageFields)) {
+            const file = path.join(artworkDir, `${control}-${status}.svg`);
+            fs.writeFileSync(file, `<svg xmlns="http://www.w3.org/2000/svg"><text>${status}</text></svg>`);
+            settings[field] = ` ${file} `;
+            expected[status] = readIconFile(file);
+        }
+        settings.icon = settings.imageOn.trim();
+        const sent = [];
+        const reads = new Map();
+        const plugin = new DartsPlugin({
+            send: (msg) => sent.push(msg), now: () => 100,
+            readIcon: (file) => {
+                reads.set(file, (reads.get(file) || 0) + 1);
+                return readIconFile(file);
+            },
+        });
+        plugin.handleDeckMessage({
+            event: 'willAppear', action: `com.pineapplecola.darts.${control}`,
+            context: 'key', payload: { settings },
+        });
+        const entry = plugin.contexts.get('key');
+        for (const status of ['on', 'off', 'error', 'offline', 'no_map', 'stale']) {
+            state.applySnapshot(plugin.model, snapshot({
+                connectionState: ['on', 'off', 'error'].includes(status) ? 'connected' : status,
+                mapEnabled: status === 'on', ifrEnabled: status === 'on', vfrEnabled: status === 'on',
+            }));
+            plugin.model.errors = status === 'error' ? { [control]: 200 } : {};
+            plugin.renderContext('key');
+            assert.strictEqual(entry.lastImage, expected[status], `${control} ${status}`);
+            const before = sent.length;
+            plugin.renderContext('key');
+            assert.strictEqual(sent.length, before, 'unchanged image is not resent');
+            assert.strictEqual(reads.get(settings[imageFields[status]].trim()), 1, 'state image is cached');
+        }
+        state.applySnapshot(plugin.model, snapshot());
+        plugin.model[ state.CONTROLS[control].stateKey ] = true;
+        state.beginCommand(plugin.model, control, 100, randomUUID);
+        plugin.renderContext('key');
+        assert.strictEqual(entry.lastImage, expected.on, 'pending retains confirmed artwork');
+        assert.ok(!reads.has(settings.imagePending.trim()), 'pending artwork does not enable WAIT');
+        for (const imageOn of ['', path.join(artworkDir, 'missing.png'), path.join(artworkDir, 'invalid.txt')]) {
+            entry.settings = { ...settings, imageOn };
+            plugin.renderContext('key');
+            assert.strictEqual(entry.lastImage,
+                state.svgToImage(state.renderKeySvg(control, 'on', entry.settings, expected.on)),
+                'SVG fallback retains custom label, colours, and icon');
+        }
+        entry.settings = settings;
+        plugin.renderContext('key');
+        fs.writeFileSync(settings.imageOn.trim(), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+        plugin.handleDeckMessage({ event: 'didReceiveSettings', context: 'key', payload: { settings } });
+        assert.strictEqual(entry.lastImage, readIconFile(settings.imageOn.trim()), 'settings refresh image contents');
+        assert.strictEqual(reads.get(settings.imageOn.trim()), 2, 'settings clear shared image cache');
+    }
+} finally {
+    fs.rmSync(artworkDir, { recursive: true, force: true });
+}
+
+// The property inspector restores, trims, saves, and resets all seven image paths.
+const elements = new Map();
+for (const [, id] of inspectorHtml.matchAll(/id="([^"]+)"/g)) {
+    elements.set(id, { value: '', listeners: {}, addEventListener(event, fn) { this.listeners[event] = fn; } });
+}
+const uiMessages = [];
+class InspectorSocket {
+    static OPEN = 1;
+    constructor() { this.readyState = InspectorSocket.OPEN; }
+    send(message) { uiMessages.push(JSON.parse(message)); }
+}
+const inspector = vm.createContext({
+    document: { getElementById: (id) => elements.get(id) }, WebSocket: InspectorSocket,
+});
+vm.runInContext(/<script>([\s\S]*?)<\/script>/i.exec(inspectorHtml)[1], inspector);
+inspector.connectElgatoStreamDeckSocket('1234', 'key', 'registerPropertyInspector', '{}',
+    JSON.stringify({ action: 'com.pineapplecola.darts.map', payload: { settings: imageSettings } }));
+for (const [status, field] of Object.entries(imageFields)) {
+    assert.strictEqual(elements.get(field).value, imageSettings[field], 'restores stored path');
+    elements.get(field).value = ` /new/${status}.png `;
+    elements.get(field).listeners.change();
+    assert.strictEqual(uiMessages.at(-1).payload[field], `/new/${status}.png`, 'saves trimmed path');
+}
+elements.get('reset').listeners.click();
+for (const field of Object.values(imageFields)) assert.strictEqual(uiMessages.at(-1).payload[field], '');
 
 // --- Plugin runtime with fake Stream Deck + DARTS ---
 assert.strictEqual(normalizeBaseUrl(''), 'http://127.0.0.1:8766');

@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const {
     ACTIONS, TIMING, applySnapshot, beginCommand, createModel, expirePending,
-    failCommand, keyStatus, markOffline, renderKeySvg, svgToImage,
+    failCommand, imagePathFor, keyStatus, markOffline, normalizeSettings, renderKeySvg, svgToImage,
 } = require('./state');
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8766';
@@ -222,8 +222,12 @@ class DartsPlugin {
         const entry = this.contexts.get(context);
         if (!entry) return;
         const status = keyStatus(this.model, entry.control, this.now());
-        const icon = this.iconFor(typeof entry.settings.icon === 'string' ? entry.settings.icon.trim() : '');
-        const image = svgToImage(renderKeySvg(entry.control, status, entry.settings, icon));
+        const settings = normalizeSettings(entry.control, entry.settings);
+        let image = this.iconFor(imagePathFor(status, settings));
+        if (!image) {
+            const icon = this.iconFor(settings.icon);
+            image = svgToImage(renderKeySvg(entry.control, status, entry.settings, icon));
+        }
         if (image === entry.lastImage) return;
         entry.lastImage = image;
         this.send({ event: 'setImage', context, payload: { image, target: 0 } });

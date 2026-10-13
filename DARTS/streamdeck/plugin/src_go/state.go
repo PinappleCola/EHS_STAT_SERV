@@ -92,6 +92,13 @@ type KeySettings struct {
 	ColorOffline string `json:"colorOffline,omitempty"`
 	ColorNoMap   string `json:"colorNoMap,omitempty"`
 	Icon         string `json:"icon,omitempty"`
+	ImageOn      string `json:"imageOn,omitempty"`
+	ImageOff     string `json:"imageOff,omitempty"`
+	ImagePending string `json:"imagePending,omitempty"`
+	ImageError   string `json:"imageError,omitempty"`
+	ImageOffline string `json:"imageOffline,omitempty"`
+	ImageNoMap   string `json:"imageNoMap,omitempty"`
+	ImageStale   string `json:"imageStale,omitempty"`
 }
 
 type NormalizedSettings struct {
@@ -102,6 +109,34 @@ type NormalizedSettings struct {
 	ColorOffline string
 	ColorNoMap   string
 	Icon         string
+	ImageOn      string
+	ImageOff     string
+	ImagePending string
+	ImageError   string
+	ImageOffline string
+	ImageNoMap   string
+	ImageStale   string
+}
+
+func (s NormalizedSettings) ImagePath(status string) string {
+	switch status {
+	case "on":
+		return s.ImageOn
+	case "off":
+		return s.ImageOff
+	case "pending":
+		return s.ImagePending
+	case "error":
+		return s.ImageError
+	case "offline":
+		return s.ImageOffline
+	case "no_map":
+		return s.ImageNoMap
+	case "stale":
+		return s.ImageStale
+	default:
+		return ""
+	}
 }
 
 func (s NormalizedSettings) GetColor(key string) string {
@@ -150,6 +185,13 @@ func NormalizeSettings(control string, settings KeySettings) NormalizedSettings 
 		ColorOffline: normColor(settings.ColorOffline, DefaultColors["colorOffline"]),
 		ColorNoMap:   normColor(settings.ColorNoMap, DefaultColors["colorNoMap"]),
 		Icon:         strings.TrimSpace(settings.Icon),
+		ImageOn:      strings.TrimSpace(settings.ImageOn),
+		ImageOff:     strings.TrimSpace(settings.ImageOff),
+		ImagePending: strings.TrimSpace(settings.ImagePending),
+		ImageError:   strings.TrimSpace(settings.ImageError),
+		ImageOffline: strings.TrimSpace(settings.ImageOffline),
+		ImageNoMap:   strings.TrimSpace(settings.ImageNoMap),
+		ImageStale:   strings.TrimSpace(settings.ImageStale),
 	}
 }
 

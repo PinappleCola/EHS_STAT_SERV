@@ -85,7 +85,7 @@ The current MAP, IFR, and VFR keys follow the **Confirmed Toggle** archetype.
 - **SVG Data URI**: Rendered dynamically into `data:image/svg+xml;charset=utf8,<svg>...`.
 
 ### 4.2 Replaceable Artwork & Custom Icons
-- **Decoupled from Logic**: Icons and visual assets are strictly cosmetic overlays. Swapping or replacing image assets does not alter button state logic or command handling.
+- **Decoupled from Logic**: Icons and visual assets are strictly cosmetic. Swapping or replacing image assets does not alter button state logic or command handling.
 - **Icon Placement**:
   - Centered at `x="44"`, `y="18"`, `width="56"`, `height="56"`.
   - Configurable per-key via Property Inspector (`ui/settings.html`), supporting absolute path or base64 data URI.
@@ -93,6 +93,25 @@ The current MAP, IFR, and VFR keys follow the **Confirmed Toggle** archetype.
   - `key.png` (72×72) and `key@2x.png` (144×144): Default fallback graphic used by Stream Deck prior to plugin connection, aligned with `#CBD5E1` neutral offline style.
   - `action.png` / `action@2x.png`: Action palette icons.
   - `plugin.png` / `plugin@2x.png`: Plugin catalog icon.
+
+### 4.3 Per-State Full-Key Images
+- Each MAP / IFR / VFR key can optionally set an absolute local file path for each status:
+
+  | Status | Settings key |
+  |---|---|
+  | `on` | `imageOn` |
+  | `off` | `imageOff` |
+  | `pending` | `imagePending` |
+  | `error` | `imageError` |
+  | `offline` | `imageOffline` |
+  | `no_map` | `imageNoMap` |
+  | `stale` | `imageStale` |
+
+- A successfully loaded image is sent directly as the full, edge-to-edge key face, replacing the generated SVG entirely (including its colours, label, status text, and single `icon` overlay). Artwork should ideally be **144×144 px**.
+- An empty path or a failed load falls back to the existing generated SVG with all configured colours, label, and optional `icon` overlay preserved.
+- Supported formats are **PNG, JPG/JPEG, GIF, and SVG**, maximum **512 KB** per file, using the same loader and shared path cache as `icon`. Receiving updated key settings clears the cache so images are re-read.
+- Routine pending toggles still retain the last confirmed ON/OFF face; configuring `imagePending` does not enable the suppressed WAIT graphic. Command dispatch, confirmation timing, and alerts remain unchanged.
+- Configure these paths in the Property Inspector's **Per-state images** section. Settings are per key, so different keys can use different artwork.
 
 ---
 
