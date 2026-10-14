@@ -397,6 +397,18 @@ def extract_icao_address(message_hex):
 
     return None
 
+def decode_legacy_altitude(message_hex, df_int):
+    if pms is None:
+        return None
+    try:
+        if df_int in (17, 18):
+            return pms.adsb.altitude(message_hex)
+        if df_int == 20:
+            return pms.common.altcode(message_hex)
+    except Exception:
+        pass
+    return None
+
 def wrong_status(payload_int, status_bit, start_bit, bit_length):
     status = (payload_int >> (55 - status_bit)) & 0x1
     mask = (1 << bit_length) - 1
@@ -1520,7 +1532,17 @@ except ImportError:
             def __init__(self): pass
             def decode(self, payload, timestamp=None):
                 icao = extract_icao_address(payload)
-                return {"icao": icao} if icao else {}
+                if not icao:
+                    return {}
+                result = {"icao": icao}
+                try:
+                    df_int = int(payload[:2], 16) >> 3
+                except Exception:
+                    return result
+                altitude = decode_legacy_altitude(payload, df_int)
+                if altitude is not None:
+                    result["altitude"] = altitude
+                return result
 
 # --- Configuration ---
 RUNTIME_CONFIG = load_runtime_config()
