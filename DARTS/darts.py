@@ -2147,10 +2147,13 @@ def get_trail_config_snapshot():
 # --- BARE-METAL CPR MATH ENGINE (NO DEPS) ---
 # ==========================================
 def cpr_nl(lat):
-    if abs(lat) >= 87.0: return 1
+    lat = abs(lat)
+    if lat == 0.0: return 59
+    if lat == 87.0: return 2
+    if lat > 87.0: return 1
     try:
         val = 1.0 - (1.0 - math.cos(math.pi / 30.0)) / (math.cos(math.radians(lat)) ** 2)
-        if val < 0: val = 0
+        val = max(-1.0, min(1.0, val))
         return max(1, math.floor(2 * math.pi / math.acos(val)))
     except Exception: return 1
 
@@ -2192,6 +2195,8 @@ def bare_metal_cpr_global(even_mb_bin, odd_mb_bin, use_odd):
             lat_even -= 360.0
         if lat_odd >= 270.0:
             lat_odd -= 360.0
+        if not (-90.0 <= lat_even <= 90.0 and -90.0 <= lat_odd <= 90.0):
+            return None
         if cpr_nl(lat_even) != cpr_nl(lat_odd):
             return None
 
@@ -2201,7 +2206,7 @@ def bare_metal_cpr_global(even_mb_bin, odd_mb_bin, use_odd):
         m = math.floor(even_lon * (nl - 1) - odd_lon * nl + 0.5)
         lon_fraction = odd_lon if use_odd else even_lon
         lon = (360.0 / ni) * ((m % ni) + lon_fraction)
-        if lon > 180.0:
+        if lon >= 180.0:
             lon -= 360.0
 
         if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
@@ -2212,19 +2217,24 @@ def bare_metal_cpr_global(even_mb_bin, odd_mb_bin, use_odd):
 
 
 def decode_global_cpr_position(icao, mb_bin, is_odd, timestamp=None):
-    timestamp = time.time() if timestamp is None else timestamp
+    timestamp = time.monotonic() if timestamp is None else timestamp
     parity = "odd" if is_odd else "even"
     other_parity = "even" if is_odd else "odd"
     with cpr_position_lock:
         frames = cpr_position_cache.setdefault(icao, {})
+        if parity in frames and timestamp < frames[parity][1]:
+            return None
         frames[parity] = (mb_bin, timestamp)
         other_frame = frames.get(other_parity)
-        if other_frame is None or abs(timestamp - other_frame[1]) > 10.0:
-            frames.pop(other_parity, None)
+        if other_frame is None:
+            return None
+        if abs(timestamp - other_frame[1]) > 10.0:
+            frames.pop(other_parity if timestamp > other_frame[1] else parity)
             return None
         even_frame = frames["even"][0]
         odd_frame = frames["odd"][0]
-        return bare_metal_cpr_global(even_frame, odd_frame, is_odd)
+        use_odd = is_odd if timestamp >= other_frame[1] else not is_odd
+        return bare_metal_cpr_global(even_frame, odd_frame, use_odd)
 
 # ==========================================
 # --- MASSIVE TACTICAL AIRLINE REGISTRY  ---
@@ -4519,7 +4529,7 @@ def process_frame(frame):
                     elif 5 <= tc <= 8:
                         update_aircraft(icao, "air_ground", "GROUND")
 
-                    elif 9 <= tc <= 18:
+                    elif 9 <= tc <= 18 or 20 <= tc <= 22:
                         update_aircraft(icao, "air_ground", "AIR")
                         try:
                             is_odd = mb_bin[21] == "1"
