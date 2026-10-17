@@ -1991,10 +1991,6 @@ def run_http_server():
     except OSError as e:
         print(f"{ANSI.RED}[DARTS] HTTP API server failed to start on port {HTTP_PORT}: {e}{ANSI.RESET}")
 
-# --- Reference Coordinates for Local CPR Decoding (Sydney, NSW) ---
-RECEIVER_LAT = -33.8688
-RECEIVER_LON = 151.2093
-
 # --- Bare-Metal ICAO 6-Bit Alphabet ---
 ICAO_ALPHABET = "#ABCDEFGHIJKLMNOPQRSTUVWXYZ#####_###############0123456789######"
 
@@ -2180,6 +2176,55 @@ def bare_metal_cpr_local(mb_bin, is_odd, lat_ref, lon_ref):
         return round(lat, 4), round(lon, 4)
     except Exception:
         return None
+
+
+def bare_metal_cpr_global(even_mb_bin, odd_mb_bin, use_odd):
+    try:
+        even_lat = int(even_mb_bin[22:39], 2) / 131072.0
+        even_lon = int(even_mb_bin[39:56], 2) / 131072.0
+        odd_lat = int(odd_mb_bin[22:39], 2) / 131072.0
+        odd_lon = int(odd_mb_bin[39:56], 2) / 131072.0
+
+        j = math.floor(59 * even_lat - 60 * odd_lat + 0.5)
+        lat_even = 6.0 * ((j % 60) + even_lat)
+        lat_odd = (360.0 / 59.0) * ((j % 59) + odd_lat)
+        if lat_even >= 270.0:
+            lat_even -= 360.0
+        if lat_odd >= 270.0:
+            lat_odd -= 360.0
+        if cpr_nl(lat_even) != cpr_nl(lat_odd):
+            return None
+
+        lat = lat_odd if use_odd else lat_even
+        nl = cpr_nl(lat)
+        ni = max(nl - int(use_odd), 1)
+        m = math.floor(even_lon * (nl - 1) - odd_lon * nl + 0.5)
+        lon_fraction = odd_lon if use_odd else even_lon
+        lon = (360.0 / ni) * ((m % ni) + lon_fraction)
+        if lon > 180.0:
+            lon -= 360.0
+
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            return None
+        return round(lat, 4), round(lon, 4)
+    except Exception:
+        return None
+
+
+def decode_global_cpr_position(icao, mb_bin, is_odd, timestamp=None):
+    timestamp = time.time() if timestamp is None else timestamp
+    parity = "odd" if is_odd else "even"
+    other_parity = "even" if is_odd else "odd"
+    with cpr_position_lock:
+        frames = cpr_position_cache.setdefault(icao, {})
+        frames[parity] = (mb_bin, timestamp)
+        other_frame = frames.get(other_parity)
+        if other_frame is None or abs(timestamp - other_frame[1]) > 10.0:
+            frames.pop(other_parity, None)
+            return None
+        even_frame = frames["even"][0]
+        odd_frame = frames["odd"][0]
+        return bare_metal_cpr_global(even_frame, odd_frame, is_odd)
 
 # ==========================================
 # --- MASSIVE TACTICAL AIRLINE REGISTRY  ---
@@ -2553,6 +2598,8 @@ historical_state = {}
 comm_d_buffer = {}  
 fms_intent_cache = {} 
 state_lock = threading.Lock()
+cpr_position_cache = {}
+cpr_position_lock = threading.Lock()
 pipeline = PipeDecoder()
 log_queue = queue.Queue()
 LOG_QUEUE_WARN_THRESHOLD = 50000
@@ -4476,7 +4523,7 @@ def process_frame(frame):
                         update_aircraft(icao, "air_ground", "AIR")
                         try:
                             is_odd = mb_bin[21] == "1"
-                            pos = bare_metal_cpr_local(mb_bin, is_odd, RECEIVER_LAT, RECEIVER_LON)
+                            pos = decode_global_cpr_position(icao, mb_bin, is_odd)
                             if pos:
                                 update_aircraft(icao, "lat", pos[0])
                                 update_aircraft(icao, "lon", pos[1])
