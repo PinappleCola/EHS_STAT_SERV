@@ -95,6 +95,16 @@ python darts.py
 
 ---
 
+## Notes / Follow-ups
+
+- **Windows asyncio deprecation warning**
+  - `DARTS/darts.py` currently calls `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())`.
+  - This produces deprecation warnings on newer Python versions and may be removed in Python 3.16.
+  - Need to verify whether DARTS still depends on the Windows selector event loop before removing or replacing it.
+  - Likely fix: remove the global policy override unless a specific Windows-only async issue still requires it.
+
+---
+
 ## Interfaces
 
 | Interface | Default address | Description |
@@ -143,7 +153,7 @@ gap/jump markers and unknown airborne altitude break the chain. Exact duplicates
 and zero-length segments are omitted.
 
 Coordinates are `[longitude, latitude, z]`: `z` is barometric **pressure altitude**
-converted from feet to metres (rounded to 0.1 m), **not ellipsoidal height**.
+converted from feet to metres (rounded to 0.1 m), **not** ellipsoidal height.
 Ground is zero; valid negative altitude is preserved. Flat properties carry
 start-sample historical telemetry, never current live-state backfills. Track
 expires after 8 seconds; heading and other telemetry expire after 12 seconds.
@@ -171,14 +181,13 @@ elapsed whole minutes, padded to four digits and capped at 9999. Empty manual
 exports use the requested start and duration `0000`.
 
 Automatic files have an `AUTO_` prefix and go in `DARTS/AUTO_3DSPAT_SAVES/`.
-Both directories are created automatically and ignored by Git.
-The trail database (`DARTS/data/trails.db` by default) contains `export_log` and
-a persistent serial counter shared by manual/automatic exports. Serials start
-at `0000`, increment transactionally, and wrap after `FFFF` with a warning.
-Every attempt is logged (`ok`, `empty`, or `error`); empty automatic windows
-write no file and consume no serial. Failed attempts may consume a serial.
-Skipped automatic attempts use audit serial `-1` and an empty `serial_hex`;
-they do not advance the counter.
+Both directories are created automatically and ignored by Git. The trail database
+(`DARTS/data/trails.db` by default) contains `export_log` and a persistent serial
+counter shared by manual/automatic exports. Serials start at `0000`, increment
+transactionally, and wrap after `FFFF` with a warning. Every attempt is logged
+(`ok`, `empty`, or `error`); empty automatic windows write no file and consume no
+serial. Failed attempts may consume a serial. Skipped automatic attempts use audit
+serial `-1` and an empty `serial_hex`; they do not advance the counter.
 
 Daily export configuration (preserved when receiver settings are saved):
 
