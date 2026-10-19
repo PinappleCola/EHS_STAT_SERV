@@ -4,7 +4,7 @@ const path = require('path');
 const vm = require('vm');
 
 const liveMap = fs.readFileSync(path.join(__dirname, '..', 'live_map.html'), 'utf8');
-for (const [, script] of liveMap.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)) {
+for (const [, script] of liveMap.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
     new vm.Script(script);
 }
 const css = liveMap.match(/<style>([\s\S]*?)<\/style>/)[1];
