@@ -143,6 +143,80 @@ assert.ok(!hud.classes.has('osd-hidden'));
 remote('unknown');
 assert.strictEqual(element('btn-network').className, 'btn-action btn-toggle');
 
+class KeyboardTarget {
+    constructor(tagName = 'DIV', parent = null, isContentEditable = false) {
+        Object.assign(this, { tagName, parent, isContentEditable });
+    }
+    closest(selector) {
+        assert.strictEqual(selector, 'input, textarea, select');
+        return ['INPUT', 'TEXTAREA', 'SELECT'].includes(this.tagName) ? this : this.parent?.closest(selector);
+    }
+}
+context.Element = KeyboardTarget;
+context.measureActive = false;
+let keydown;
+context.document.addEventListener = (type, listener) => {
+    assert.strictEqual(type, 'keydown');
+    keydown = listener;
+};
+const keyboardStart = liveMap.indexOf("        document.addEventListener('keydown', (e) => {");
+const keyboardEnd = liveMap.indexOf('        function openTagConfig()', keyboardStart);
+assert.ok(keyboardStart >= 0 && keyboardEnd > keyboardStart);
+vm.runInNewContext(liveMap.slice(keyboardStart, keyboardEnd), context);
+function press(key, overrides = {}) {
+    const event = {
+        key, target: new KeyboardTarget(), defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; },
+        ...overrides,
+    };
+    keydown(event);
+    return event;
+}
+for (const key of ['m', 'M', 'n', 'N']) {
+    for (const overrides of [
+        { repeat: true }, { ctrlKey: true }, { altKey: true }, { metaKey: true },
+        { defaultPrevented: true }, { isComposing: true },
+        ...['INPUT', 'TEXTAREA', 'SELECT'].map(tag => ({ target: new KeyboardTarget(tag) })),
+        { target: new KeyboardTarget('OPTION', new KeyboardTarget('SELECT')) },
+        { target: new KeyboardTarget('DIV', null, true) },
+        { target: new KeyboardTarget('SPAN', null, true) },
+    ]) {
+        const count = reports.length;
+        const event = press(key, overrides);
+        assert.strictEqual(reports.length, count, `${key} must ignore ${JSON.stringify(overrides)}`);
+        assert.strictEqual(event.defaultPrevented, !!overrides.defaultPrevented, 'ignored shortcuts keep their default behavior');
+    }
+}
+assert.strictEqual(press('m').defaultPrevented, true);
+assert.strictEqual(reports.at(-1).state.osdVisible, false);
+assert.ok(hud.classes.has('osd-hidden'));
+assert.strictEqual(press('M', { shiftKey: true }).defaultPrevented, true);
+assert.strictEqual(reports.at(-1).state.osdVisible, true);
+assert.ok(!hud.classes.has('osd-hidden'));
+assert.strictEqual(press('n').defaultPrevented, true);
+assert.strictEqual(reports.at(-1).state.nightMode, true);
+assert.strictEqual(reports.at(-1).state.osdVisible, false);
+assert.strictEqual(reports.at(-1).state.activeSpan, '30m');
+assert.strictEqual(press('N', { shiftKey: true }).defaultPrevented, true);
+assert.strictEqual(reports.at(-1).state.nightMode, false);
+assert.strictEqual(reports.at(-1).state.osdVisible, true);
+assert.strictEqual(reports.at(-1).state.activeSpan, '1h');
+assert.deepStrictEqual([context.trailMin.value, context.trailMax.value], ['1380.0', '1440.0']);
+const reportCount = reports.length;
+assert.strictEqual(press('x').defaultPrevented, false);
+assert.strictEqual(reports.length, reportCount);
+context.measureActive = true;
+context.measureEnd = {};
+context.measureEndEntityId = 'ABC123';
+let measureCancelled = false;
+context.cancelMeasure = () => { measureCancelled = true; };
+assert.strictEqual(press('Escape', { repeat: true, ctrlKey: true }).defaultPrevented, false);
+assert.strictEqual(context.measureEnd, null);
+assert.strictEqual(context.measureEndEntityId, null);
+press('Escape');
+assert.strictEqual(measureCancelled, true);
+assert.strictEqual(reports.length, reportCount, 'Escape must not toggle UI state');
+
 // The map reports its authoritative MAP/IFR/VFR state (and echoes request IDs).
 reports.length = 0;
 context.ws.onmessage({ data: JSON.stringify({ type: 'ui_command', command: 'toggle_ifr', request_id: 'sd-42' }) });

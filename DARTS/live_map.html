@@ -2907,6 +2907,19 @@
                     else { cancelMeasure(); }
                 }
             }
+            if (e.defaultPrevented || e.repeat || e.isComposing) return;
+            if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+            const key = e.key.toLowerCase();
+            if (key !== 'm' && key !== 'n') return;
+
+            const target = e.target;
+            if (target instanceof Element &&
+                (target.closest('input, textarea, select') || target.isContentEditable)) return;
+
+            e.preventDefault();
+            if (key === 'm') toggleOsd();
+            else toggleNightMode();
         });
 
         function openTagConfig() {
