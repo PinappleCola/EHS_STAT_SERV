@@ -62,6 +62,29 @@ try:
 except ImportError:
     pms = None
 
+DEFAULT_DATA_TAG_STYLE = {
+    "font_family": "B612 Mono",
+    "font_size_px": 11,
+    "text_colour": None,
+}
+
+
+def normalize_data_tag_style(raw):
+    style = dict(DEFAULT_DATA_TAG_STYLE)
+    if not isinstance(raw, dict):
+        return style
+    family = raw.get("font_family")
+    if isinstance(family, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9 _-]{0,99}", family.strip()):
+        style["font_family"] = family.strip()
+    size = raw.get("font_size_px")
+    if isinstance(size, (int, float)) and not isinstance(size, bool) and 8 <= size <= 32 and math.isfinite(size):
+        style["font_size_px"] = size
+    colour = raw.get("text_colour")
+    if isinstance(colour, str) and re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", colour):
+        style["text_colour"] = colour
+    return style
+
+
 def load_runtime_config():
     # Use OS-appropriate default serial ports so the app works out-of-the-box on
     # both Windows (COMx) and Linux/Raspberry Pi (ADSBee 1090 is a USB CDC device
@@ -129,6 +152,7 @@ def load_runtime_config():
     if config.get("rx_mode") not in ("A", "B", "DUAL"):
         config["rx_mode"] = "A"
 
+    config["data_tag_style"] = normalize_data_tag_style(config.get("data_tag_style"))
     return config
 
 # --- Windows ANSI Compatibility Hook ---
@@ -1751,6 +1775,8 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(FIELD_REGISTRY)
         elif path == "/api/map-data":
             self._send_json(get_map_data_snapshot())
+        elif path == "/api/data-tag-style":
+            self._send_json(normalize_data_tag_style(RUNTIME_CONFIG.get("data_tag_style")))
         elif path in ("/", "/map"):
             self._serve_text_file(LIVE_MAP_PATH, content_type="text/html; charset=utf-8")
         elif path == "/grid":

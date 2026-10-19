@@ -1292,6 +1292,64 @@
         let osdVisible = true;
         let exportState = 'idle';
         let exportProgress = null;
+        // --- Aircraft data-tag styling (runtime_config.json) ---
+        const DEFAULT_DATA_TAG_STYLE = { font_family: 'B612 Mono', font_size_px: 11, text_colour: null };
+        let dataTagStyle = { ...DEFAULT_DATA_TAG_STYLE };
+
+        function normalizeDataTagStyle(raw) {
+            const style = { ...DEFAULT_DATA_TAG_STYLE };
+            if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return style;
+            if (typeof raw.font_family === 'string' && /^[A-Za-z][A-Za-z0-9 _-]{0,99}$/.test(raw.font_family.trim())) {
+                style.font_family = raw.font_family.trim();
+            }
+            if (typeof raw.font_size_px === 'number' && Number.isFinite(raw.font_size_px) && raw.font_size_px >= 8 && raw.font_size_px <= 32) {
+                style.font_size_px = raw.font_size_px;
+            }
+            if (typeof raw.text_colour === 'string' && [4, 7].includes(raw.text_colour.length) && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(raw.text_colour)) {
+                style.text_colour = raw.text_colour;
+            }
+            return style;
+        }
+
+        function measureDataTag(ctx, lines, isSelected) {
+            const scale = dataTagStyle.font_size_px / 11;
+            const weight = isSelected ? 'bold ' : '';
+            const fallback = `${weight}${dataTagStyle.font_size_px}px 'B612 Mono', 'Consolas', monospace`;
+            const family = ['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui'].includes(dataTagStyle.font_family)
+                ? dataTagStyle.font_family : `'${dataTagStyle.font_family}'`;
+            // Reset first: canvas ignores invalid fonts rather than clearing its previous state.
+            ctx.font = fallback;
+            ctx.font = `${weight}${dataTagStyle.font_size_px}px ${family}, 'B612 Mono', 'Consolas', monospace`;
+            const font = ctx.font;
+            let width = 0, ascent = 0, descent = 0;
+            lines.forEach(line => {
+                const metrics = ctx.measureText(line);
+                width = Math.max(width, metrics.width);
+                ascent = Math.max(ascent, metrics.actualBoundingBoxAscent || 0);
+                descent = Math.max(descent, metrics.actualBoundingBoxDescent || 0);
+            });
+            const padX = 6 * scale, padY = 7 * scale;
+            const lineHeight = Math.max(11.5 * scale, ascent + descent + 0.5 * scale);
+            const baseline = Math.max(7 * scale, ascent - padY);
+            return {
+                font, padX, padY, lineHeight, baseline,
+                width: Math.ceil(width + padX * 2 + 2),
+                height: Math.ceil(Math.max(lines.length * lineHeight + padY * 2,
+                    padY + baseline + (lines.length - 1) * lineHeight + descent + padY)),
+            };
+        }
+
+        function dataTagTextColour(entry, plane, isSelected, hasActiveRa) {
+            if ((entry.key === 'squawk' && ['7500', '7600', '7700'].includes(plane.squawk)) ||
+                (entry.key === 'tcas_ra' && hasActiveRa)) return '#ef4444';
+            if (isSelected) return '#ffffff';
+            return dataTagStyle.text_colour || (plane.is_coasting ? 'rgba(148, 163, 184, 0.9)' : '#38bdf8');
+        }
+
+        fetch(`${HTTP_API}/api/data-tag-style`).then(response => response.ok ? response.json() : null)
+            .then(config => { dataTagStyle = normalizeDataTagStyle(config); })
+            .catch(error => console.warn('Data tag style config unavailable:', error));
+
         let nightBrightness = { brightness_map: 0.4, brightness_elements: 0.4, brightness_trails: 0.4 };
         fetch(`${HTTP_API}/api/night-config`).then(response => response.ok ? response.json() : null).then(config => {
             if (!config) return;
@@ -2465,13 +2523,10 @@
                             if (lines.length === 0) return;
                             
                             // Measure content to dynamically size box
-                            rCtx.font = isSelected ? "bold 11px 'B612 Mono', 'Consolas', monospace" : "11px 'B612 Mono', 'Consolas', monospace";
-                            const lineHeight = 11.5;
-                            const padX = 6, padY = 7;
-                            let maxTextW = 0;
-                            lines.forEach(line => { const w = rCtx.measureText(line).width; if (w > maxTextW) maxTextW = w; });
-                            const tagW = Math.ceil(maxTextW + padX * 2 + 2);
-                            const tagH = Math.ceil(lines.length * lineHeight + padY * 2);
+                            const tagLayout = measureDataTag(rCtx, lines, isSelected);
+                            const { padX, padY, lineHeight, baseline } = tagLayout;
+                            const tagW = tagLayout.width;
+                            const tagH = tagLayout.height;
 
                             let tagX = pt.x + 12; let tagY = pt.y - (tagH/2);
                             let attempts = 0; let isDisplaced = false; let angle = 0; let radius = 45;
@@ -2498,13 +2553,11 @@
                                 rCtx.beginPath(); rCtx.roundRect(tagX, tagY, tagW, tagH, 4); rCtx.fill(); rCtx.stroke();
                             }
                             
-                            rCtx.font = isSelected ? "bold 11px 'B612 Mono', 'Consolas', monospace" : "11px 'B612 Mono', 'Consolas', monospace";
-                            const textColor = isSelected ? '#ffffff' : (p.is_coasting ? 'rgba(148, 163, 184, 0.9)' : '#38bdf8');
+                            rCtx.font = tagLayout.font;
                             
                             lineEntries.forEach((entry, idx) => {
-                                if ((entry.key === 'squawk' && ['7500', '7600', '7700'].includes(p.squawk)) || (entry.key === 'tcas_ra' && hasActiveRa)) { rCtx.fillStyle = '#ef4444'; }
-                                else { rCtx.fillStyle = textColor; }
-                                rCtx.fillText(entry.text, tagX + padX, tagY + padY + 7 + (idx * lineHeight));
+                                rCtx.fillStyle = dataTagTextColour(entry, p, isSelected, hasActiveRa);
+                                rCtx.fillText(entry.text, tagX + padX, tagY + padY + baseline + (idx * lineHeight));
                             });
                         }
                     }

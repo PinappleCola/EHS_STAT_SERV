@@ -150,6 +150,41 @@ See `DARTS/SOUND_FILES/README.md` for the current ID map and duplicate-file beha
 All keys can also be overridden with environment variables:
 `EHS_PORT`, `EHS_BAUD`, `EHS_WS_HOST`, `EHS_WS_PORT`, `EHS_HTTP_PORT`, `EHS_RECEIVER_ID`.
 
+### Aircraft DATA TAG appearance
+
+Edit the nested `data_tag_style` object in `DARTS/runtime_config.json`, for example:
+
+```json
+"data_tag_style": {
+    "font_family": "Courier New",
+    "font_size_px": 16,
+    "text_colour": "#ffd166"
+}
+```
+
+- `font_family`: one installed font family name (not a CSS font declaration or
+  comma-separated list), 1–100 ASCII letters/digits/spaces/underscores/hyphens,
+  starting with a letter. Default: `"B612 Mono"`. The browser uses the named
+  font if available, then B612 Mono, Consolas, and monospace. Generic families
+  such as `"monospace"` and `"sans-serif"` are also supported. This setting does
+  not download additional fonts.
+- `font_size_px`: a finite JSON number from **8 to 32** inclusive; fractional
+  sizes are supported. Default: `11`. Line spacing, padding, and tag boxes scale
+  with size and measured text; selected tags remain bold.
+- `text_colour`: an opaque hex colour, either `"#RGB"` or `"#RRGGBB"`, or `null`
+  (default). A colour overrides normal cyan and coasting grey **tag text only**.
+  Selected tags stay white; emergency squawk and active TCAS RA fields stay red,
+  taking precedence even on selected tags. Symbols, boxes, leader lines, trails,
+  other map labels, the grid, and Stream Deck are unaffected.
+
+Missing/invalid settings fall back independently to their defaults; missing or
+malformed files use defaults. With `text_colour: null`, all existing status
+colours are retained. Restart DARTS after editing the JSON, then refresh the map
+browser. The map reads the validated settings from `GET /api/data-tag-style`
+on page load; an unavailable/malformed API response also leaves safe defaults.
+Receiver configuration saves preserve these settings. No localStorage edits
+are needed.
+
 ---
 
 ## 3D trail exports (Kepler.gl)
