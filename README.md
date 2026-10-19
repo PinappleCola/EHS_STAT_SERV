@@ -158,7 +158,9 @@ Edit the nested `data_tag_style` object in `DARTS/runtime_config.json`, for exam
 "data_tag_style": {
     "font_family": "Courier New",
     "font_size_px": 16,
-    "text_colour": "#ffd166"
+    "text_colour": null,
+    "active_text_colour": "#ffd166",
+    "inactive_text_colour": "#94a3b8"
 }
 ```
 
@@ -171,15 +173,25 @@ Edit the nested `data_tag_style` object in `DARTS/runtime_config.json`, for exam
 - `font_size_px`: a finite JSON number from **8 to 32** inclusive; fractional
   sizes are supported. Default: `11`. Line spacing, padding, and tag boxes scale
   with size and measured text; selected tags remain bold.
-- `text_colour`: an opaque hex colour, either `"#RGB"` or `"#RRGGBB"`, or `null`
-  (default). A colour overrides normal cyan and coasting grey **tag text only**.
+- `active_text_colour` / `inactive_text_colour`: independently set **tag text only**
+  using opaque hex colours (`"#RGB"` or `"#RRGGBB"`), or `null` (default).
+  Aircraft become non-active at **10 seconds or more since last_seen**, and return
+  to active on a fresh update. The separate five-second symbol/trail coasting
+  behavior is unchanged.
+- `text_colour`: legacy active-colour fallback, with the same hex validation.
+  Active text uses `active_text_colour`, then `text_colour`, then the original
+  cyan (`#38bdf8`). Inactive text uses `inactive_text_colour`, then the original
+  grey (`rgba(148, 163, 184, 0.9)`), **never** the legacy colour. The shipped JSON
+  explicitly uses cyan and opaque grey (`#94a3b8`); remove or set the active
+  override to `null` to use a legacy `text_colour` setting.
   Selected tags stay white; emergency squawk and active TCAS RA fields stay red,
   taking precedence even on selected tags. Symbols, boxes, leader lines, trails,
   other map labels, the grid, and Stream Deck are unaffected.
 
 Missing/invalid settings fall back independently to their defaults; missing or
-malformed files use defaults. With `text_colour: null`, all existing status
-colours are retained. Restart DARTS after editing the JSON, then refresh the map
+malformed files use defaults. For each colour, `null`, missing, or invalid values
+mean no override and follow the fallback order above, without discarding other
+valid settings. Restart DARTS after editing the JSON, then refresh the map
 browser. The map reads the validated settings from `GET /api/data-tag-style`
 on page load; an unavailable/malformed API response also leaves safe defaults.
 Receiver configuration saves preserve these settings. No localStorage edits

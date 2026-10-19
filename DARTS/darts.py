@@ -66,6 +66,8 @@ DEFAULT_DATA_TAG_STYLE = {
     "font_family": "B612 Mono",
     "font_size_px": 11,
     "text_colour": None,
+    "active_text_colour": None,
+    "inactive_text_colour": None,
 }
 
 
@@ -79,9 +81,10 @@ def normalize_data_tag_style(raw):
     size = raw.get("font_size_px")
     if isinstance(size, (int, float)) and not isinstance(size, bool) and 8 <= size <= 32 and math.isfinite(size):
         style["font_size_px"] = size
-    colour = raw.get("text_colour")
-    if isinstance(colour, str) and re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", colour):
-        style["text_colour"] = colour
+    for key in ("text_colour", "active_text_colour", "inactive_text_colour"):
+        colour = raw.get(key)
+        if isinstance(colour, str) and re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", colour):
+            style[key] = colour
     return style
 
 
@@ -5197,6 +5200,7 @@ async def broadcast_state(websocket):
                             
                         coast_threshold = 5.0
                         plane["is_coasting"] = age > coast_threshold
+                        plane["data_tag_inactive"] = age >= 10.0
                         plane["is_identing"] = (now - data["ident_time"]) < 18
                         
                         # Canonical display heading arbitration

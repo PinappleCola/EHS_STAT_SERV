@@ -1293,7 +1293,10 @@
         let exportState = 'idle';
         let exportProgress = null;
         // --- Aircraft data-tag styling (runtime_config.json) ---
-        const DEFAULT_DATA_TAG_STYLE = { font_family: 'B612 Mono', font_size_px: 11, text_colour: null };
+        const DEFAULT_DATA_TAG_STYLE = {
+            font_family: 'B612 Mono', font_size_px: 11, text_colour: null,
+            active_text_colour: null, inactive_text_colour: null,
+        };
         let dataTagStyle = { ...DEFAULT_DATA_TAG_STYLE };
 
         function normalizeDataTagStyle(raw) {
@@ -1305,8 +1308,10 @@
             if (typeof raw.font_size_px === 'number' && Number.isFinite(raw.font_size_px) && raw.font_size_px >= 8 && raw.font_size_px <= 32) {
                 style.font_size_px = raw.font_size_px;
             }
-            if (typeof raw.text_colour === 'string' && [4, 7].includes(raw.text_colour.length) && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(raw.text_colour)) {
-                style.text_colour = raw.text_colour;
+            for (const key of ['text_colour', 'active_text_colour', 'inactive_text_colour']) {
+                if (typeof raw[key] === 'string' && [4, 7].includes(raw[key].length) && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(raw[key])) {
+                    style[key] = raw[key];
+                }
             }
             return style;
         }
@@ -1343,7 +1348,11 @@
             if ((entry.key === 'squawk' && ['7500', '7600', '7700'].includes(plane.squawk)) ||
                 (entry.key === 'tcas_ra' && hasActiveRa)) return '#ef4444';
             if (isSelected) return '#ffffff';
-            return dataTagStyle.text_colour || (plane.is_coasting ? 'rgba(148, 163, 184, 0.9)' : '#38bdf8');
+            // The server classifies before rounding age or replacing farewell display text.
+            const inactive = typeof plane.data_tag_inactive === 'boolean' ? plane.data_tag_inactive :
+                (typeof plane.age === 'number' && Number.isFinite(plane.age) && plane.age >= 10);
+            return inactive ? (dataTagStyle.inactive_text_colour || 'rgba(148, 163, 184, 0.9)') :
+                (dataTagStyle.active_text_colour || dataTagStyle.text_colour || '#38bdf8');
         }
 
         fetch(`${HTTP_API}/api/data-tag-style`).then(response => response.ok ? response.json() : null)

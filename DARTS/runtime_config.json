@@ -14,7 +14,9 @@
     "data_tag_style": {
         "font_family": "B612 Mono",
         "font_size_px": 11,
-        "text_colour": null
+        "text_colour": null,
+        "active_text_colour": "#38bdf8",
+        "inactive_text_colour": "#94a3b8"
     },
     "receiver_a": {
         "port": "COM5",

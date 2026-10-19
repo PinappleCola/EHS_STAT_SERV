@@ -8,8 +8,14 @@ const start = liveMap.indexOf('        // --- Aircraft data-tag styling');
 const end = liveMap.indexOf('        let nightBrightness', start);
 assert.ok(start >= 0 && end > start);
 const source = liveMap.slice(start, end);
-const defaults = { font_family: 'B612 Mono', font_size_px: 11, text_colour: null };
-const custom = { font_family: 'Courier New', font_size_px: 22, text_colour: '#ffd166' };
+const defaults = {
+    font_family: 'B612 Mono', font_size_px: 11, text_colour: null,
+    active_text_colour: null, inactive_text_colour: null,
+};
+const custom = {
+    font_family: 'Courier New', font_size_px: 22, text_colour: '#ffd166',
+    active_text_colour: '#AbC', inactive_text_colour: '#789abc',
+};
 
 async function load(fetch) {
     const context = vm.createContext({ fetch, HTTP_API: 'http://localhost:8766', console: { warn() {} } });
@@ -39,6 +45,8 @@ const state = context => JSON.parse(vm.runInContext('JSON.stringify(dataTagStyle
         font_family: ['null', '""', '12', '"Arial, serif"', '"A; 40px serif"', JSON.stringify('A'.repeat(101))],
         font_size_px: ['null', '"16"', 'true', '7', '33', 'NaN', 'Infinity'],
         text_colour: ['"red"', '"currentColor"', '"#abcd"', '"#xyz"', '"#abc\\n"', '123'],
+        active_text_colour: ['null', '"red"', '"#abcd"', '"#xyz"', '"#abc\\n"', '123', 'true'],
+        inactive_text_colour: ['null', '"red"', '"#abcd"', '"#xyz"', '"#abc\\n"', '123', 'true'],
     })) {
         for (const value of invalidValues) {
             const raw = `{...${JSON.stringify(custom)}, ${key}: ${value}}`;
@@ -78,16 +86,44 @@ const state = context => JSON.parse(vm.runInContext('JSON.stringify(dataTagStyle
     assert.ok(large.padY + large.baseline + 2 * large.lineHeight + 22 * 0.2 < large.height);
     const colour = (key, plane = {}, selected = false, ra = false) =>
         vm.runInContext(`dataTagTextColour({key: '${key}'}, ${JSON.stringify(plane)}, ${selected}, ${ra})`, context);
-    assert.strictEqual(colour('callsign'), '#ffd166');
-    assert.strictEqual(colour('callsign', { is_coasting: true }), '#ffd166');
-    assert.strictEqual(colour('callsign', {}, true), '#ffffff');
-    for (const squawk of ['7500', '7600', '7700']) {
-        assert.strictEqual(colour('squawk', { squawk }, true), '#ef4444');
+    assert.strictEqual(colour('callsign'), '#AbC');
+    assert.strictEqual(colour('callsign', { is_coasting: true, age: 6 }), '#AbC');
+    for (const [age, expected] of [[9.999, '#AbC'], [10, '#789abc'], [10.01, '#789abc'], [0, '#AbC']]) {
+        assert.strictEqual(colour('callsign', { age }), expected);
+        assert.strictEqual(colour('callsign', { age, data_tag_inactive: age >= 10 }), expected);
     }
-    assert.strictEqual(colour('tcas_ra', {}, true, true), '#ef4444');
+    assert.strictEqual(colour('callsign', { data_tag_inactive: false, age: 9, _latency: { state_age: 10 } }), '#AbC');
+    const farewellAge = "<span class='empty-datum'>----</span><span style='display:none;'>";
+    assert.strictEqual(colour('callsign', { age: farewellAge, data_tag_inactive: true }), '#789abc');
+    for (const age of [null, '10', '----', farewellAge, {}, [], -1]) {
+        assert.strictEqual(colour('callsign', { age, data_tag_inactive: 'true' }), '#AbC');
+    }
+    for (const age of ['NaN', 'Infinity', '-Infinity']) {
+        assert.strictEqual(vm.runInContext(`dataTagTextColour({key: 'callsign'}, {age: ${age}}, false, false)`, context), '#AbC');
+    }
+    assert.strictEqual(colour('callsign', {}, true), '#ffffff');
+    for (const data_tag_inactive of [false, true]) {
+        assert.strictEqual(colour('callsign', { data_tag_inactive }, true), '#ffffff');
+        for (const selected of [false, true]) {
+            for (const squawk of ['7500', '7600', '7700']) {
+                assert.strictEqual(colour('squawk', { squawk, data_tag_inactive }, selected), '#ef4444');
+            }
+            assert.strictEqual(colour('tcas_ra', { data_tag_inactive }, selected, true), '#ef4444');
+        }
+    }
+    assert.strictEqual(colour('tcas_ra', { age: 10 }, false, false), '#789abc');
+    assert.strictEqual(colour('squawk', { squawk: '1234' }), '#AbC');
+    for (const invalid of ['null', '"bad"', 'undefined']) {
+        vm.runInContext(`dataTagStyle = normalizeDataTagStyle({
+            text_colour: '#ffd166', active_text_colour: ${invalid}, inactive_text_colour: ${invalid}
+        })`, context);
+        assert.strictEqual(colour('callsign'), '#ffd166');
+        assert.strictEqual(colour('callsign', { age: 10 }), 'rgba(148, 163, 184, 0.9)');
+    }
     vm.runInContext('dataTagStyle = {...DEFAULT_DATA_TAG_STYLE}', context);
     assert.strictEqual(colour('callsign'), '#38bdf8');
-    assert.strictEqual(colour('callsign', { is_coasting: true }), 'rgba(148, 163, 184, 0.9)');
+    assert.strictEqual(colour('callsign', { is_coasting: true }), '#38bdf8');
+    assert.strictEqual(colour('callsign', { age: 10 }), 'rgba(148, 163, 184, 0.9)');
 
     // Extreme glyph metrics must expand line spacing and bounds, not clip/overlap.
     ctx.measureText = () => ({ width: 100, actualBoundingBoxAscent: 30, actualBoundingBoxDescent: 10 });
@@ -115,7 +151,7 @@ const state = context => JSON.parse(vm.runInContext('JSON.stringify(dataTagStyle
     vm.runInContext(`(() => { ${drawSource} })()`, context);
     assert.strictEqual(draws.length, 2);
     assert.ok(draws.every(draw => draw.font.startsWith("22px 'Courier New'")));
-    assert.deepStrictEqual(draws.map(draw => draw.colour), ['#ffd166', '#ef4444']);
+    assert.deepStrictEqual(draws.map(draw => draw.colour), ['#AbC', '#ef4444']);
     assert.ok(draws[1].y - draws[0].y >= 40);
     assert.strictEqual(context.occupiedRects[0].w, ctx.box[2]);
     assert.strictEqual(context.occupiedRects[0].h, ctx.box[3]);
