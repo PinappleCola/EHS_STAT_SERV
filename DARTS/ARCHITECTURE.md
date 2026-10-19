@@ -155,3 +155,5 @@ Displayed alongside separation measurements with exact Δt value.
 3. **No position extrapolation**: Aircraft positions are displayed only at last-received coordinates. During data gaps, aircraft appear stationary rather than continuing on predicted path. This is intentional for a surveillance display but may confuse operators unfamiliar with the system.
 
 4. **Trail-line regression coverage gap**: Trail continuity now depends on `gapBreak` markers in the frontend render path, but there is no dedicated automated frontend test harness for `live_map.html` logic. Future work should add repeatable replay/scenario tests (including disappear/reappear at large time windows) to reduce reliance on manual validation and to better separate real defects from automated-review false positives.
+
+5. **Windows asyncio event-loop policy follow-up**: `DARTS/darts.py` currently sets `WindowsSelectorEventLoopPolicy()`. Verify whether DARTS still requires this policy and confirm the deprecation status for supported Python versions before changing it; the setup guide should not be used as a place to track this implementation question.

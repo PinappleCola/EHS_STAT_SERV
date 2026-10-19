@@ -95,22 +95,10 @@ Stream Deck App ⇄ Native Plugin Binary ──HTTP POST /api/ui-command──�
 
 ---
 
-## Install Method 1: Double-Click Installer (Primary)
-
 ## Automated Windows Development & Testing Workflow
 
-For testing new commits, avoiding folder confusion, and automating plugin deployment and rollback on Windows, use the repository's helper launcher:
-
-```powershell
-# From the repository root in PowerShell:
-.\tools\dev.ps1 setup    # One-time setup: establish authoritative repo and plugin paths
-.\tools\dev.ps1 status   # Inspect deployed version, commit SHA, and detect stray folders
-.\tools\dev.ps1 test     # Run all regression tests on current or target commit
-.\tools\dev.ps1 deploy   # Safely backup and deploy to Stream Deck AppData
-.\tools\dev.ps1 rollback # Instantly restore the last known good build
-```
-
-See the complete guide in [DEV_WORKFLOW.md](../../../DEV_WORKFLOW.md).
+Use the repository's [Windows development workflow](../../../DEV_WORKFLOW.md) for
+testing commits, deploying the plugin, diagnostics, and rollback.
 
 ---
 
@@ -314,27 +302,10 @@ Clicking any DARTS key in the Stream Deck software opens its Property Inspector:
 
 ## Reproducible Build & Packaging Pipeline
 
-Building from source requires **Go 1.22+** and **Node.js**:
-
-```sh
-cd DARTS/streamdeck/plugin
-npm ci
-npm run build
-npm run validate
-npm run pack
-```
-
-- **`npm run build`** (`node build.js`):
-  Compiles standalone binaries from `src_go/`:
-  - `bin/darts-plugin.exe`: Windows amd64 compiled with `CGO_ENABLED=0 -ldflags="-s -w"`.
-  - `bin/darts-plugin`: macOS universal Mach-O binary containing both `amd64` and `arm64` slices.
-  - Dependencies are vendored in `src_go/vendor/` and compile 100% offline.
-- **`npm run validate`** (`npm test && streamdeck validate com.pineapplecola.darts.sdPlugin`):
-  Executes the regression test suite and runs Elgato's official manifest schema validator.
-- **`npm run pack`** (`streamdeck pack com.pineapplecola.darts.sdPlugin --output dist --force`):
-  Builds, validates, and packages the distribution bundle at `dist/com.pineapplecola.darts.streamDeckPlugin`.
-- The prebuilt installer is version-controlled at `DARTS/streamdeck/plugin/dist/com.pineapplecola.darts.streamDeckPlugin`.
-- See [`BUILD.md`](BUILD.md) for full developer details and cross-compilation internals.
+For prerequisites, build/validation/packaging commands, and cross-compilation
+details, see the dedicated [build and packaging guide](BUILD.md). The prebuilt
+installer is version-controlled at
+`DARTS/streamdeck/plugin/dist/com.pineapplecola.darts.streamDeckPlugin`.
 
 ---
 
