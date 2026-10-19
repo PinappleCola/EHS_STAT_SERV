@@ -73,6 +73,10 @@
         
         .map-select { background-color: rgba(15, 23, 42, 0.9); color: #f8fafc; border-color: #475569; outline: none; appearance: none; padding: 0 25px 0 10px; }
         .map-select:hover { background-color: #1e293b; border-color: #64748b; }
+        .map-visual-control { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75em; color: #94a3b8; }
+        .map-visual-control input[type=range] { width: 100px; accent-color: #38bdf8; }
+        .map-visual-control output { min-width: 4ch; font-variant-numeric: tabular-nums; }
+        .map-visual-control input:focus-visible, #btn-mono-map:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
         .btn-toggle { background-color: rgba(15, 23, 42, 0.9); border-color: #475569; }
         .btn-toggle.active,
         .hud-panel.controls .btn-rx-mode.selected {
@@ -197,10 +201,19 @@
             padding: 2px 6px !important;
         }
         .leaflet-control-attribution a { color: #7dd3fc !important; }
-        .leaflet-tile-pane { filter: brightness(var(--night-map-brightness, 1)); }
+        .leaflet-tile-pane {
+            filter: var(--map-mono-filter, brightness(1)) brightness(calc(var(--map-brightness-user, 1) * var(--night-map-brightness, 1)));
+        }
     </style>
 </head>
 <body>
+    <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" focusable="false" style="position: absolute;">
+        <defs>
+            <filter id="map-mono-filter" color-interpolation-filters="sRGB">
+                <feColorMatrix id="map-mono-matrix" type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0"/>
+            </filter>
+        </defs>
+    </svg>
 
     <div class="hud-top">
         <div class="hud-panel controls">
@@ -230,6 +243,14 @@
                 <option value="esri-imagery">ESRI SATELLITE</option>
             </select>
             
+            <label class="map-visual-control" for="map-brightness">MAP BRIGHTNESS
+                <input id="map-brightness" type="range" min="0" max="200" step="1" value="100">
+                <output id="map-brightness-value" for="map-brightness">100%</output>
+            </label>
+            <button id="btn-mono-map" class="btn-action btn-toggle" type="button" aria-pressed="false">MONO MAP</button>
+            <label class="map-visual-control" for="map-mono-color">MONO COLOR
+                <input id="map-mono-color" class="elem-colour-swatch" type="color" value="#ffffff" title="Map-only monochrome tint">
+            </label>
             <button id="btn-network" class="btn-action btn-toggle">MAP TOGGLE</button>
             <button id="btn-db" class="btn-action btn-action-alt">ELEMENT MANAGER</button>
             <button id="btn-elem-toggle" class="btn-action btn-toggle" title="Show/hide all map elements">ELEMENT TOGGLE</button>
@@ -1145,6 +1166,39 @@
             }
             populateDbTable();
         };
+
+        // --- Map-only visual controls (independent of night mode and basemap instances) ---
+        const mapVisualState = { brightness: 1, monoEnabled: false, monoColor: '#ffffff' };
+        const mapBrightnessInput = document.getElementById('map-brightness');
+        const mapBrightnessValue = document.getElementById('map-brightness-value');
+        const monoMapButton = document.getElementById('btn-mono-map');
+        const monoMapColor = document.getElementById('map-mono-color');
+
+        function updateMapVisuals() {
+            const rgb = [1, 3, 5].map(offset => parseInt(mapVisualState.monoColor.slice(offset, offset + 2), 16) / 255);
+            // Scale grayscale luminance by the selected RGB tint, retaining map shading.
+            const matrix = rgb.flatMap(channel => [0.2126 * channel, 0.7152 * channel, 0.0722 * channel, 0, 0]);
+            document.getElementById('map-mono-matrix').setAttribute('values', [...matrix, 0, 0, 0, 1, 0].join(' '));
+            document.documentElement.style.setProperty('--map-mono-filter', mapVisualState.monoEnabled ? 'url(#map-mono-filter)' : 'brightness(1)');
+            document.documentElement.style.setProperty('--map-brightness-user', mapVisualState.brightness);
+            mapBrightnessValue.textContent = `${Math.round(mapVisualState.brightness * 100)}%`;
+            monoMapButton.classList.toggle('active', mapVisualState.monoEnabled);
+            monoMapButton.setAttribute('aria-pressed', String(mapVisualState.monoEnabled));
+        }
+
+        mapBrightnessInput.addEventListener('input', () => {
+            mapVisualState.brightness = Number(mapBrightnessInput.value) / 100;
+            updateMapVisuals();
+        });
+        monoMapButton.addEventListener('click', () => {
+            mapVisualState.monoEnabled = !mapVisualState.monoEnabled;
+            updateMapVisuals();
+        });
+        monoMapColor.addEventListener('input', () => {
+            mapVisualState.monoColor = monoMapColor.value;
+            updateMapVisuals();
+        });
+        updateMapVisuals();
 
         // --- Element Toggle (show/hide all elements) ---
         let elementsHidden = false;
