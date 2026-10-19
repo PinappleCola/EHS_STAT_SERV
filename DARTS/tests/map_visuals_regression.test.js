@@ -4,9 +4,10 @@ const path = require('path');
 const vm = require('vm');
 
 const liveMap = fs.readFileSync(path.join(__dirname, '..', 'live_map.html'), 'utf8');
-for (const [, script] of liveMap.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
-    new vm.Script(script);
-}
+const scriptStart = liveMap.indexOf('    <script>');
+const scriptEnd = liveMap.indexOf('</script>', scriptStart);
+assert.ok(scriptStart >= 0 && scriptEnd > scriptStart);
+new vm.Script(liveMap.slice(scriptStart + '    <script>'.length, scriptEnd));
 const css = liveMap.match(/<style>([\s\S]*?)<\/style>/)[1];
 const visualRules = [...css.matchAll(/([^{}]+)\{([^{}]*--(?:map-mono-filter|map-brightness-user|night-map-brightness)[^{}]*)\}/g)];
 assert.strictEqual(visualRules.length, 1, 'visual filters must have a single tile-only target');
