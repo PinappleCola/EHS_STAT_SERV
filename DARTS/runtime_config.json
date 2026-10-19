@@ -11,6 +11,11 @@
     "brightness_map": 0.4,
     "brightness_elements": 0.4,
     "brightness_trails": 0.4,
+    "data_tag_style": {
+        "font_family": "B612 Mono",
+        "font_size_px": 11,
+        "text_colour": null
+    },
     "receiver_a": {
         "port": "COM5",
         "baud": 115200,
