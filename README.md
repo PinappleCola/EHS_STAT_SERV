@@ -163,9 +163,9 @@ frame in the console and highlights the coordinate string used for that marker.
 Adjust the marker-label font scale with `vdl2_position_label_scale` in
 `DARTS/runtime_config.json` (default `1`, accepted range `0.5`–`3`). Coordinates
 use degrees and tenths of minutes; restart DARTS after changing the setting.
-Only the latest report per aircraft is shown, for ten minutes from its payload
-UTC report time (dated relative to the capture timestamp). Reports with bad
-ACARS CRCs, incomplete messages, or invalid coordinates are not plotted.
+Fixes remain visible for ten minutes from their payload UTC report time (dated
+relative to the capture timestamp). Reports with bad ACARS CRCs, incomplete
+messages, or invalid coordinates are not plotted.
 These markers are independent of ADS-B positions and do not alter its tracks.
 
 ## Configuration (`DARTS/runtime_config.json`)
