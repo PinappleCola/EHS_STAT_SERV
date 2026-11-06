@@ -47,11 +47,15 @@ def parse_poss_report(record):
         return None
     if reported_at.timestamp() > capture + 60:
         return None
+    coordinate_text = match[0].split(",", 1)[0]
     return {
         "icao": icao.upper(),
         "lat": -lat if ns == "S" else lat,
         "lon": -lon if ew == "W" else lon,
         "report_time": reported_at.timestamp(),
+        "message_type": f'{acars["label"]}/{acars["sublabel"]} POS',
+        "coordinate_text": coordinate_text,
+        "record": record,
     }
 
 
@@ -64,6 +68,7 @@ class Vdl2JsonFeed:
             "pending": b"",
             "identity": None,
             "frames": [],
+            "frame_coordinates": [],
             "error": "",
             "invalid_lines": 0,
             "last_frame_time": None,
@@ -81,6 +86,7 @@ class Vdl2JsonFeed:
                     "pending": b"",
                     "identity": None,
                     "frames": [],
+                    "frame_coordinates": [],
                     "error": "",
                     "invalid_lines": 0,
                     "last_frame_time": None,
@@ -121,10 +127,21 @@ class Vdl2JsonFeed:
                         state["frames"] = state["frames"][-100:]
                         state["last_frame_time"] = time.time()
                         position = parse_poss_report(frame)
+                        state["frame_coordinates"].append(
+                            position["coordinate_text"] if position else None
+                        )
+                        state["frame_coordinates"] = state["frame_coordinates"][-100:]
                         if position:
-                            previous = state["positions"].get(position["icao"])
-                            if previous is None or position["report_time"] > previous["report_time"]:
-                                state["positions"][position["icao"]] = position
+                            key = (position["icao"], position["message_type"])
+                            history = state["positions"].setdefault(key, [])
+                            duplicate = any(
+                                item["report_time"] == position["report_time"]
+                                and item["coordinate_text"] == position["coordinate_text"]
+                                for item in history
+                            )
+                            if not duplicate:
+                                history.append(position)
+                                history.sort(key=lambda item: item["report_time"])
                     state["error"] = ""
                 except OSError as exc:
                     state["error"] = str(exc)
@@ -133,8 +150,14 @@ class Vdl2JsonFeed:
 
             now = time.time()
             state["positions"] = {
-                icao: position for icao, position in state["positions"].items()
-                if 0 <= now - position["report_time"] < 600
+                key: [
+                    position for position in history
+                    if 0 <= now - position["report_time"] < 600
+                ]
+                for key, history in state["positions"].items()
+            }
+            state["positions"] = {
+                key: history for key, history in state["positions"].items() if history
             }
             return {
                 "path": path,
@@ -144,5 +167,8 @@ class Vdl2JsonFeed:
                 "invalid_lines": state["invalid_lines"],
                 "last_frame_time": state["last_frame_time"],
                 "frames": list(state["frames"]),
-                "positions": list(state["positions"].values()),
+                "frame_coordinates": list(state["frame_coordinates"]),
+                "positions": [
+                    position for history in state["positions"].values() for position in history
+                ],
             }

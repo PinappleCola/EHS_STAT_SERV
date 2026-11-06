@@ -115,6 +115,7 @@ def load_runtime_config():
         "brightness_map": 0.4,
         "brightness_elements": 0.4,
         "brightness_trails": 0.4,
+        "vdl2_position_label_scale": 1,
     }
 
     try:
@@ -1815,7 +1816,14 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                 "receiver_b": RECEIVER_B_CONFIG,
             })
         elif path == "/api/vdl2-config":
-            self._send_json({"json_path": RUNTIME_CONFIG.get("vdl2_json_path", "")})
+            label_scale = RUNTIME_CONFIG.get("vdl2_position_label_scale", 1)
+            if (isinstance(label_scale, bool) or not isinstance(label_scale, (int, float))
+                    or not math.isfinite(label_scale) or not 0.5 <= label_scale <= 3):
+                label_scale = 1
+            self._send_json({
+                "json_path": RUNTIME_CONFIG.get("vdl2_json_path", ""),
+                "position_label_scale": label_scale,
+            })
         elif path == "/api/vdl2-feed":
             self._send_json(get_vdl2_feed_snapshot())
         elif path == "/api/rx-status":

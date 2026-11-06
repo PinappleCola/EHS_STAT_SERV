@@ -81,19 +81,13 @@ context.sample = {
         },
     },
 };
-const rendered = vm.runInContext('formatVdl2Frame(sample)', context);
-assert.match(rendered, /^\[2026-11-06 04:04:26 GMT\] \[136\.975\] \[-2\.9\/-27\.0 dBFS\] \[24\.1 dB\] \[-1\.4 ppm\]/);
-assert.match(rendered, /7C7A48 \(Aircraft, Airborne\) -> 10AD4A \(Ground station\): Command/);
-assert.match(rendered, /AVLC type: I sseq: 1 rseq: 2 poll: 0/);
-assert.match(rendered, / ACARS:\n  Reg: \.VH-YFU Flight: VA0328/);
-assert.match(rendered, /Mode: 2 Label: SA Blk id: 0 More: 0 Ack: ! Msg num: M27A/);
-assert.match(rendered, /0E20410452S/);
-
 context.sample.vdl2.avlc.acars.msg_text = 'A'.repeat(500) + '\r\n  Second line\n\rThird line';
-const fullText = vm.runInContext('formatVdl2Frame(sample)', context);
-assert.ok(fullText.includes('A'.repeat(500)), 'long payloads must not be truncated');
-assert.ok(fullText.includes('\n     Second line\n   Third line'), 'line breaks and indentation must be preserved');
-assert.ok(!fullText.includes('\r'));
+context.sample.vdl2.avlc.acars.extra_payload = { detail: 'not omitted' };
+vm.runInContext('latestVdl2Frames = [sample]', context);
+context.lastAircraftList = [{ icao: '7c7a48', data_tag_inactive: false }];
+vm.runInContext('renderVdl2Frames()', context);
+assert.ok(element('vdl2-frame-output').textContent.includes('"extra_payload"'));
+assert.ok(element('vdl2-frame-output').textContent.includes('A'.repeat(500)), 'long payloads must not be truncated');
 
 context.sample.vdl2.avlc = {
     src: { addr: '7CF836', type: 'Aircraft', status: 'Airborne' },
@@ -101,6 +95,7 @@ context.sample.vdl2.avlc = {
     frame_type: 'U', cmd: 'XID', pf: true,
     xid: {
         type_descr: 'Link Establishment',
+        raw_extension: 'all fields are displayed',
         pub_params: [{ name: 'param_set_id', value: '8885:1993' }],
         vdl_params: [
             { name: 'dst_airport', value: 'YAMB' },
@@ -108,11 +103,6 @@ context.sample.vdl2.avlc = {
         ],
     },
 };
-const xidText = vm.runInContext('formatVdl2Frame(sample)', context);
-assert.match(xidText, /AVLC type: U \(XID\) P\/F: 1/);
-assert.match(xidText, / XID: Link Establishment\n  Public params:/);
-assert.match(xidText, /Destination airport: YAMB/);
-assert.match(xidText, /Aircraft location: -33\.6, 150\.9 \| 4000 ft/);
 
 vm.runInContext('latestVdl2Frames = [sample]', context);
 context.lastAircraftList = [{ icao: '7cf836', data_tag_inactive: false }];
@@ -120,7 +110,8 @@ vm.runInContext('renderVdl2Frames()', context);
 let highlights = element('vdl2-frame-output').children.filter(child => child.className === 'vdl2-active-icao');
 assert.strictEqual(highlights.length, 1);
 assert.strictEqual(highlights[0].textContent, '7CF836');
-assert.strictEqual(element('vdl2-frame-output').textContent, xidText);
+assert.ok(element('vdl2-frame-output').textContent.includes('"raw_extension": "all fields are displayed"'));
+assert.ok(element('vdl2-frame-output').textContent.includes('"ac_location"'));
 context.lastAircraftList[0].data_tag_inactive = true;
 vm.runInContext('renderVdl2Frames()', context);
 assert.ok(!element('vdl2-frame-output').children.some(child => child.className));
@@ -149,13 +140,54 @@ context.drawing = {
     fillText(...args) { drawCalls.push(['label', ...args]); },
 };
 vm.runInContext("vdl2Positions = [{icao: '7C7A49', lat: -32.7, lon: 149.4, report_time: 1000}]; drawVdl2Positions(drawing, 0, 0, 1, 1599000)", context);
-assert.strictEqual(drawCalls.length, 2);
+assert.strictEqual(drawCalls.length, 3);
 assert.strictEqual(drawCalls[1][1], '7C7A49');
+assert.strictEqual(drawCalls[2][1], 'VDL2 POS');
+assert.strictEqual(drawCalls[2][3] - drawCalls[1][3], 14);
+assert.strictEqual(context.drawing.font, "11px 'B612 Mono', Consolas, monospace");
+assert.strictEqual(vm.runInContext('findVdl2PositionAt(149.4, -32.7).icao', context), '7C7A49');
+vm.runInContext('vdl2PositionLabelScale = 2; drawVdl2Positions(drawing, 0, 0, 1, 1599000)', context);
+assert.strictEqual(context.drawing.font, "22px 'B612 Mono', Consolas, monospace");
+drawCalls.length = 0;
 vm.runInContext('drawVdl2Positions(drawing, 0, 0, 1, 1600000)', context);
-assert.strictEqual(drawCalls.length, 2, 'positions expire at exactly ten minutes');
+assert.strictEqual(drawCalls.length, 0, 'positions expire at exactly ten minutes');
+
+context.positionRecord = {
+    vdl2: {
+        t: { sec: 1793938360 },
+        avlc: {
+            src: { addr: '7C7A49', type: 'Aircraft' },
+            cr: 'Command',
+            frame_type: 'I',
+            acars: {
+                label: 'H1',
+                sublabel: 'M1',
+                msg_text: 'POSS32433E149269,SPLIZ,041237,390,',
+            },
+        },
+    },
+};
+vm.runInContext("position = {icao: '7C7A49', message_type: 'H1/M1 POS', coordinate_text: 'POSS32433E149269', record: positionRecord}; showVdl2Position(position)", context);
+assert.ok(element('vdl2-frame-output').textContent.includes('POSS32433E149269,SPLIZ,041237,390,'));
+assert.strictEqual(element('vdl2-feed-status').textContent, 'Selected · 7C7A49 · H1/M1 POS');
+const coordinateHighlight = element('vdl2-frame-output').children.find(child => child.className === 'vdl2-position-coordinates');
+assert.ok(coordinateHighlight);
+assert.strictEqual(coordinateHighlight.textContent, 'POSS32433E149269');
+
+vm.runInContext("selectedVdl2Position = null; latestVdl2Frames = [positionRecord]; latestVdl2Coordinates = ['POSS32433E149269']; renderVdl2Frames()", context);
+assert.strictEqual(element('vdl2-frame-output').textContent, JSON.stringify(context.positionRecord, null, 2),
+    'coordinate highlighting must preserve the entire stream payload');
+assert.strictEqual(element('vdl2-frame-output').children.filter(
+    child => child.className === 'vdl2-position-coordinates'
+).length, 1, 'the stream must highlight validated position coordinates');
+vm.runInContext('latestVdl2Coordinates = [null]; renderVdl2Frames()', context);
+assert.ok(!element('vdl2-frame-output').children.some(
+    child => child.className === 'vdl2-position-coordinates'
+), 'coordinate-like text not accepted by the backend must not highlight');
+
 element('btn-vdl2-toggle').click();
 assert.strictEqual(element('vdl2-console').style.display, 'none');
 vm.runInContext('drawVdl2Positions(drawing, 0, 0, 1, 1000000)', context);
-assert.strictEqual(drawCalls.length, 2, 'hidden layer must not draw positions');
+assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
 
 console.log('vdl2_console_regression: OK');

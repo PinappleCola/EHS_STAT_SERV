@@ -172,6 +172,7 @@
         #vdl2-feed-status { color: #cbd5e1; font-weight: normal; text-align: right; overflow-wrap: anywhere; }
         #vdl2-frame-output { margin: 0; padding: 8px 10px; overflow: auto; color: #cbd5e1; font-size: 0.72em; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
         .vdl2-active-icao { color: #4ade80; background: rgba(74, 222, 128, 0.12); font-weight: bold; }
+        .vdl2-position-coordinates { color: #0f172a; background: #facc15; font-weight: bold; }
         .vdl2-config-status { color: #94a3b8; font-size: 0.75em; overflow-wrap: anywhere; }
 
 
@@ -742,6 +743,10 @@
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const config = await response.json();
                 document.getElementById('vdl2-json-path').value = config.json_path || '';
+                if (Number.isFinite(config.position_label_scale) &&
+                    config.position_label_scale >= 0.5 && config.position_label_scale <= 3) {
+                    vdl2PositionLabelScale = config.position_label_scale;
+                }
             } catch (error) {
                 document.getElementById('vdl2-config-status').textContent = `Unable to load VDL2 configuration: ${error.message}`;
             }
@@ -768,146 +773,148 @@
             }
         }
 
-        function formatVdl2Frame(record) {
-            const frame = record && record.vdl2;
-            if (!frame) return '';
-            const avlc = frame.avlc || {};
-            const src = avlc.src || {};
-            const dst = avlc.dst || {};
-            const captureDate = Number.isFinite(frame.t?.sec) ? new Date(frame.t.sec * 1000) : null;
-            const timestamp = captureDate && Number.isFinite(captureDate.getTime())
-                ? captureDate.toISOString().slice(0, 19).replace('T', ' ')
-                : '---- -- -- --:--:--';
-            const decimal = value => Number.isFinite(value) ? value.toFixed(1) : '--';
-            const frequency = Number.isFinite(frame.freq) ? (frame.freq / 1e6).toFixed(3) : '--';
-            const snr = Number.isFinite(frame.sig_level) && Number.isFinite(frame.noise_level)
-                ? frame.sig_level - frame.noise_level : null;
-            const address = endpoint => {
-                const description = [endpoint.type, endpoint.status].filter(Boolean).join(', ');
-                return `${endpoint.addr || '?'}${description ? ` (${description})` : ''}`;
-            };
-            const lines = [
-                `[${timestamp} GMT] [${frequency}] [${decimal(frame.sig_level)}/${decimal(frame.noise_level)} dBFS] [${decimal(snr)} dB] [${decimal(frame.freq_skew)} ppm]`,
-                `${address(src)} -> ${address(dst)}: ${avlc.cr || '?'}`,
-            ];
-            if (avlc.frame_type === 'I') {
-                lines.push(`AVLC type: I sseq: ${avlc.sseq ?? '?'} rseq: ${avlc.rseq ?? '?'} poll: ${typeof avlc.poll === 'boolean' ? Number(avlc.poll) : '?'}`);
-            } else if (avlc.frame_type === 'U') {
-                lines.push(`AVLC type: U (${avlc.cmd || '?'}) P/F: ${typeof avlc.pf === 'boolean' ? Number(avlc.pf) : '?'}`);
-            } else {
-                lines.push(`AVLC type: ${avlc.frame_type || '?'}${avlc.cmd ? ` (${avlc.cmd})` : ''}`);
-            }
-            if (avlc.acars) {
-                const acars = avlc.acars;
-                lines.push(
-                    ' ACARS:',
-                    `  Reg: ${acars.reg || '?'} Flight: ${acars.flight || '?'}`,
-                    `  Mode: ${acars.mode || '?'} Label: ${acars.label || '?'} Blk id: ${acars.blk_id ?? '?'} More: ${typeof acars.more === 'boolean' ? Number(acars.more) : '?'} Ack: ${acars.ack || '?'} Msg num: ${acars.msg_num || '?'}${acars.msg_num_seq || ''}`,
-                );
-                if (acars.sublabel) lines.push(`  Sublabel: ${acars.sublabel}`);
-                if (acars.mfi) lines.push(`  MFI: ${acars.mfi}`);
-                if (typeof acars.msg_text === 'string' && acars.msg_text.length) {
-                    const text = acars.msg_text.replace(/\r\n|\n\r|\r/g, '\n');
-                    lines.push('  Message:', ...text.split('\n').map(line => `   ${line}`));
-                }
-                if (acars['media-adv']?.current_link) {
-                    const advisory = acars['media-adv'];
-                    const link = advisory.current_link;
-                    const linkTime = link.time;
-                    const time = linkTime && [linkTime.hour, linkTime.min, linkTime.sec].every(Number.isFinite)
-                        ? ` at ${[linkTime.hour, linkTime.min, linkTime.sec].map(value => String(value).padStart(2, '0')).join(':')} UTC` : '';
-                    lines.push(
-                        `  Media Advisory${advisory.version !== undefined ? `, version ${advisory.version}` : ''}:`,
-                        `   Link ${link.descr || link.code || 'unknown'}${typeof link.established === 'boolean' ? (link.established ? ' established' : ' not established') : ''}${time}`,
-                    );
-                    if (Array.isArray(advisory.links_avail)) {
-                        lines.push(`   Available links: ${advisory.links_avail.map(item => item.descr || item.code || 'unknown').join(', ')}`);
-                    }
-                }
-            } else if (avlc.xid) {
-                const xid = avlc.xid;
-                lines.push(` XID: ${xid.type_descr || xid.type || 'unknown'}`);
-                for (const [key, heading] of [['pub_params', 'Public params'], ['vdl_params', 'VDL params']]) {
-                    if (!Array.isArray(xid[key]) || !xid[key].length) continue;
-                    lines.push(`  ${heading}:`);
-                    for (const param of xid[key]) {
-                        const name = param.name === 'dst_airport' ? 'Destination airport'
-                            : param.name === 'ac_location' ? 'Aircraft location'
-                            : String(param.name || 'Parameter').replace(/_/g, ' ');
-                        let value = typeof param.value === 'string' ? param.value : JSON.stringify(param.value);
-                        if (param.name === 'ac_location' && param.value?.loc) {
-                            const location = param.value.loc;
-                            value = `${location.lat}, ${location.lon}${Number.isFinite(param.value.alt) ? ` | ${param.value.alt} ft` : ''}`;
-                        }
-                        lines.push(`   ${name}: ${value}`);
-                    }
-                }
-            }
-            return lines.join('\n');
-        }
-
         let latestVdl2Frames = [];
+        let latestVdl2Coordinates = [];
         let vdl2Positions = [];
         let vdl2LayerVisible = false;
+        let vdl2PositionLabelScale = 1;
+        let vdl2PositionHitboxes = [];
+        let selectedVdl2Position = null;
         function drawVdl2Positions(context, centerX, centerY, ppd, now) {
+            vdl2PositionHitboxes = [];
             if (!vdl2LayerVisible) return;
+            const groups = new Map();
+            for (const position of vdl2Positions) {
+                const key = `${position.icao}|${position.message_type || 'VDL2 POS'}`;
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(position);
+            }
             context.save();
-            context.globalAlpha = 1;
             context.shadowBlur = 0;
             context.strokeStyle = '#67e8f9';
             context.fillStyle = '#67e8f9';
             context.lineWidth = 1.5;
-            context.font = "11px 'B612 Mono', Consolas, monospace";
             context.textAlign = 'left';
             context.textBaseline = 'middle';
-            for (const position of vdl2Positions) {
-                const age = now / 1000 - position.report_time;
-                if (!Number.isFinite(age) || age < 0 || age >= 600 ||
-                    !Number.isFinite(position.lat) || !Number.isFinite(position.lon)) continue;
-                const point = getCanvasPoint(position.lat, position.lon, centerX, centerY, ppd);
-                context.strokeRect(point.x - 8, point.y - 5, 16, 10);
-                context.beginPath();
-                context.moveTo(point.x - 8, point.y - 5);
-                context.lineTo(point.x, point.y + 1);
-                context.lineTo(point.x + 8, point.y - 5);
-                context.stroke();
-                context.fillText(position.icao, point.x + 12, point.y);
+            context.font = `${11 * vdl2PositionLabelScale}px 'B612 Mono', Consolas, monospace`;
+            for (const history of groups.values()) {
+                history.sort((a, b) => a.report_time - b.report_time);
+                const visible = history.filter(position => {
+                    const age = now / 1000 - position.report_time;
+                    return Number.isFinite(age) && age >= 0 && age < 600 &&
+                        Number.isFinite(position.lat) && Number.isFinite(position.lon);
+                });
+                const points = visible.map(position => ({
+                    position,
+                    point: getCanvasPoint(position.lat, position.lon, centerX, centerY, ppd),
+                }));
+                for (let index = 1; index < points.length; index++) {
+                    const previous = points[index - 1];
+                    const current = points[index];
+                    context.globalAlpha = Math.max(0.08, 1 - (now / 1000 - current.position.report_time) / 600);
+                    context.beginPath();
+                    context.moveTo(previous.point.x, previous.point.y);
+                    context.lineTo(current.point.x, current.point.y);
+                    context.stroke();
+                }
+                points.forEach(({ position, point }, index) => {
+                    const age = now / 1000 - position.report_time;
+                    context.globalAlpha = Math.max(0.12, 1 - age / 600);
+                    context.strokeRect(point.x - 8, point.y - 5, 16, 10);
+                    context.beginPath();
+                    context.moveTo(point.x - 8, point.y - 5);
+                    context.lineTo(point.x, point.y + 1);
+                    context.lineTo(point.x + 8, point.y - 5);
+                    context.stroke();
+                    vdl2PositionHitboxes.push({ x: point.x, y: point.y, position });
+                    if (index === points.length - 1) {
+                        context.globalAlpha = 1;
+                        context.fillText(position.icao, point.x + 12, point.y);
+                        context.fillText(position.message_type || 'VDL2 POS',
+                            point.x + 12, point.y + 14 * vdl2PositionLabelScale);
+                    }
+                });
             }
             context.restore();
         }
-        function renderVdl2Frames() {
-            const activeIcaos = new Set(lastAircraftList.filter(plane =>
-                plane.data_tag_inactive === false ||
-                (typeof plane.data_tag_inactive !== 'boolean' && Number.isFinite(plane.age) && plane.age < 10)
-            ).map(plane => String(plane.icao || '').toUpperCase()));
-            const fragment = document.createDocumentFragment();
-            latestVdl2Frames.forEach((record, index) => {
-                const formatted = formatVdl2Frame(record);
-                if (index) fragment.appendChild(document.createTextNode('\n\n'));
-                const avlc = record.vdl2?.avlc || {};
-                const addressLineStart = formatted.indexOf('\n') + 1;
-                const arrow = formatted.indexOf(' -> ', addressLineStart);
-                const candidates = [
-                    { endpoint: avlc.src, start: addressLineStart },
-                    { endpoint: avlc.dst, start: arrow < 0 ? -1 : arrow + 4 },
-                ];
-                let cursor = 0;
-                for (const { endpoint, start } of candidates) {
-                    const icao = endpoint?.addr;
-                    if (start < 0 || endpoint?.type !== 'Aircraft' || typeof icao !== 'string' ||
-                        !/^[0-9a-f]{6}$/i.test(icao) || !activeIcaos.has(icao.toUpperCase())) continue;
-                    fragment.appendChild(document.createTextNode(formatted.slice(cursor, start)));
-                    const span = document.createElement('span');
-                    span.className = 'vdl2-active-icao';
-                    span.title = 'Active ADS-B track on map';
-                    span.textContent = icao;
-                    fragment.appendChild(span);
-                    cursor = start + icao.length;
+        function findVdl2PositionAt(x, y) {
+            let closest = null;
+            let minDistance = 14;
+            for (const hitbox of vdl2PositionHitboxes) {
+                const distance = Math.hypot(hitbox.x - x, hitbox.y - y);
+                if (distance <= minDistance) {
+                    minDistance = distance;
+                    closest = hitbox.position;
                 }
-                fragment.appendChild(document.createTextNode(formatted.slice(cursor)));
-            });
+            }
+            return closest;
+        }
+        function showVdl2Position(position) {
+            selectedVdl2Position = position;
+            renderVdl2Frames();
+            document.getElementById('vdl2-feed-status').textContent =
+                `Selected · ${position.icao} · ${position.message_type || 'VDL2 POS'}`;
+        }
+        function appendVdl2Record(fragment, record, coordinateText) {
+            const json = JSON.stringify(record, null, 2);
+            const highlights = [];
+            if (coordinateText) {
+                const messageKey = json.indexOf('"msg_text":');
+                const index = messageKey >= 0 ? json.indexOf(coordinateText, messageKey) : -1;
+                if (index >= 0) {
+                    highlights.push({
+                        start: index,
+                        end: index + coordinateText.length,
+                        className: 'vdl2-position-coordinates',
+                    });
+                }
+            } else {
+                const avlc = record.vdl2?.avlc || {};
+                const activeIcaos = new Set(lastAircraftList.filter(plane =>
+                    plane.data_tag_inactive === false ||
+                    (typeof plane.data_tag_inactive !== 'boolean' && Number.isFinite(plane.age) && plane.age < 10)
+                ).map(plane => String(plane.icao || '').toUpperCase()));
+                for (const [name, endpoint] of [['src', avlc.src], ['dst', avlc.dst]]) {
+                    const icao = endpoint?.addr;
+                    if (endpoint?.type !== 'Aircraft' || typeof icao !== 'string' ||
+                        !/^[0-9a-f]{6}$/i.test(icao) || !activeIcaos.has(icao.toUpperCase())) continue;
+                    const endpointStart = json.indexOf(`"${name}"`);
+                    const endpointKey = json.indexOf('"addr"', endpointStart);
+                    const addressIndex = json.indexOf(JSON.stringify(icao), endpointKey);
+                    if (endpointStart >= 0 && endpointKey >= 0 && addressIndex >= 0) {
+                        highlights.push({
+                            start: addressIndex + 1,
+                            end: addressIndex + 1 + icao.length,
+                            className: 'vdl2-active-icao',
+                        });
+                    }
+                }
+            }
+            highlights.sort((a, b) => a.start - b.start);
+            let cursor = 0;
+            for (const highlight of highlights) {
+                if (highlight.start < cursor) continue;
+                fragment.appendChild(document.createTextNode(json.slice(cursor, highlight.start)));
+                const span = document.createElement('span');
+                span.className = highlight.className;
+                span.textContent = json.slice(highlight.start, highlight.end);
+                fragment.appendChild(span);
+                cursor = highlight.end;
+            }
+            fragment.appendChild(document.createTextNode(json.slice(cursor)));
+        }
+        function renderVdl2Frames() {
+            const fragment = document.createDocumentFragment();
             const output = document.getElementById('vdl2-frame-output');
             const scrollTop = output.scrollTop;
+            const records = selectedVdl2Position
+                ? [selectedVdl2Position.record]
+                : latestVdl2Frames;
+            records.forEach((record, index) => {
+                if (index) fragment.appendChild(document.createTextNode('\n\n'));
+                appendVdl2Record(fragment, record,
+                    selectedVdl2Position?.coordinate_text || latestVdl2Coordinates[index]);
+            });
             output.replaceChildren(fragment);
             output.scrollTop = scrollTop;
         }
@@ -926,18 +933,24 @@
                 if (!feed.configured) {
                     latestVdl2Frames = [];
                     vdl2Positions = [];
+                    selectedVdl2Position = null;
                     status.textContent = 'Not configured';
                     output.textContent = 'Set the JSON path in DECODER MNGR to start reading new frames.';
                 } else if (feed.error) {
                     latestVdl2Frames = [];
+                    selectedVdl2Position = null;
                     status.textContent = 'FILE ERROR';
                     output.textContent = `Unable to read ${feed.path}\n${feed.error}`;
                 } else {
                     vdl2Positions = Array.isArray(feed.positions) ? feed.positions : [];
-                    status.textContent = `Watching · ${feed.frames.length} frames${feed.invalid_lines ? ` · ${feed.invalid_lines} invalid lines` : ''}`;
+                    status.textContent = selectedVdl2Position
+                        ? `Selected · ${selectedVdl2Position.icao} · ${selectedVdl2Position.message_type || 'VDL2 POS'}`
+                        : `Watching · ${feed.frames.length} frames${feed.invalid_lines ? ` · ${feed.invalid_lines} invalid lines` : ''}`;
                     latestVdl2Frames = feed.frames.slice(-60);
+                    latestVdl2Coordinates = Array.isArray(feed.frame_coordinates)
+                        ? feed.frame_coordinates.slice(-60) : [];
                     if (latestVdl2Frames.length) renderVdl2Frames();
-                    else output.textContent = 'Connected. Waiting for new JSON frames...';
+                    else if (!selectedVdl2Position) output.textContent = 'Connected. Waiting for new JSON frames...';
                 }
                 if (output.textContent !== lastVdl2ConsoleText) {
                     output.scrollTop = output.scrollHeight;
@@ -1843,6 +1856,13 @@
             isDragging = false;
             const dist = Math.hypot(e.clientX - dragStartPos.x, e.clientY - dragStartPos.y);
             if (dist < 5) {
+                if (vdl2LayerVisible) {
+                    const position = findVdl2PositionAt(e.clientX, e.clientY);
+                    if (position) {
+                        showVdl2Position(position);
+                        return;
+                    }
+                }
                 if (!measureActive && e.ctrlKey && hoveredEntity && entityCache[hoveredEntity]) {
                     const anchor = entityCache[hoveredEntity];
                     measureActive = true;
