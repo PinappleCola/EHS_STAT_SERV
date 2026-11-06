@@ -162,6 +162,19 @@ The same toggle shows cyan envelope markers for validated H1/M1 `POSS` position
 reports, labeled with the ICAO and message type. Each ICAO/message type keeps a
 10-minute history with a fading trail; a selected message box follows its envelope
 as the map moves and closes when the fix expires or the VDL2 layer is hidden.
+Validated ADS-C Basic Reports on the same layer use a small aircraft silhouette
+at the reported latitude/longitude, rotated to the valid true-track value when
+available. Its ICAO and `ADS-C BASIC` label use the same data-tag styling; when
+track is unavailable, the map uses a point marker rather than implying direction.
+VDL2 markers also support the map's measurement tool: Ctrl-click a marker to
+start a measurement, then Ctrl-click another marker, waypoint, or aircraft to
+lock the other endpoint. Hovering previews a snapped measurement; an ordinary
+click still opens the message popup.
+The VDL2 console adds the extracted position and true track to the report and
+colors those values yellow by default. Set `vdl2_position_data_colour` in
+`DARTS/runtime_config.json` to an opaque `#RGB` or `#RRGGBB` color to change it,
+then restart DARTS. Only complete CRC-valid ADS-C reports with valid coordinates
+are plotted; the marker uses the VDL2 frame capture time.
 The console, marker labels, and message boxes use the aircraft data-tag font.
 The console scale defaults to `1`. Adjust the marker-label and message-box scale with `vdl2_position_label_scale` in
 `DARTS/runtime_config.json` (default `1`, accepted range `0.5`–`3`). Coordinates

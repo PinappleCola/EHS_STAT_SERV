@@ -174,6 +174,7 @@
         #vdl2-message-popup { display: none; position: absolute; z-index: 61; margin: 0; padding: 8px; max-width: min(360px, calc(100vw - 24px)); max-height: 180px; overflow: auto; background: rgba(2, 6, 23, 0.96); color: #cbd5e1; border: 1px solid #67e8f9; border-radius: 4px; font-family: var(--vdl2-font-family, 'B612 Mono', 'Consolas', monospace); font-size: calc(var(--vdl2-font-size, 11px) * var(--vdl2-message-scale, 1)); line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
         .vdl2-active-icao { color: #4ade80; background: rgba(74, 222, 128, 0.12); font-weight: bold; }
         .vdl2-position-coordinates { color: #0f172a; background: #facc15; font-weight: bold; }
+        .vdl2-position-data { color: var(--vdl2-position-data-colour, #ffff00); font-weight: bold; }
         .vdl2-config-status { color: #94a3b8; font-size: 0.75em; overflow-wrap: anywhere; }
 
 
@@ -748,8 +749,12 @@
                 if (Number.isFinite(config.position_label_scale) &&
                     config.position_label_scale >= 0.5 && config.position_label_scale <= 3) {
                     vdl2PositionLabelScale = config.position_label_scale;
-                    applyVdl2TextStyle();
                 }
+                if (typeof config.position_data_colour === 'string' &&
+                    /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(config.position_data_colour)) {
+                    vdl2PositionDataColour = config.position_data_colour;
+                }
+                applyVdl2TextStyle();
             } catch (error) {
                 document.getElementById('vdl2-config-status').textContent = `Unable to load VDL2 configuration: ${error.message}`;
             }
@@ -776,7 +781,7 @@
             }
         }
 
-        function formatVdl2Frame(record) {
+        function formatVdl2Frame(record, adscPosition) {
             const frame = record && record.vdl2;
             if (!frame) return '';
             const avlc = frame.avlc || {};
@@ -832,6 +837,12 @@
                         lines.push(`   Available links: ${advisory.links_avail.map(item => item.descr || item.code || 'unknown').join(', ')}`);
                     }
                 }
+                if (adscPosition) {
+                    const coordinates = `${adscPosition.lat.toFixed(6)}, ${adscPosition.lon.toFixed(6)}`;
+                    const track = Number.isFinite(adscPosition.true_track_deg)
+                        ? ` | True track: ${adscPosition.true_track_deg.toFixed(1)}\u00b0T` : '';
+                    lines.push(` ADS-C Basic Report: Position: ${coordinates}${track}`);
+                }
             } else if (avlc.xid) {
                 const xid = avlc.xid;
                 lines.push(` XID: ${xid.type_descr || xid.type || 'unknown'}`);
@@ -856,13 +867,52 @@
 
         let latestVdl2Frames = [];
         let latestVdl2Coordinates = [];
+        let latestVdl2AdsC = [];
         let vdl2Positions = [];
         let vdl2LayerVisible = false;
         let vdl2PositionLabelScale = 1;
+        let vdl2PositionDataColour = '#ffff00';
         let vdl2PositionHitboxes = [];
         let selectedVdl2Position = null;
+        function drawVdl2Aircraft(context, x, y, track) {
+            if (!Number.isFinite(track)) {
+                context.beginPath();
+                context.arc(x, y, 4, 0, Math.PI * 2);
+                context.fill();
+                return;
+            }
+            context.save();
+            context.translate(x, y);
+            context.rotate(track * Math.PI / 180);
+            context.beginPath();
+            context.moveTo(0, -9);
+            context.lineTo(2, -2);
+            context.lineTo(7, 3);
+            context.lineTo(7, 5);
+            context.lineTo(1, 3);
+            context.lineTo(1, 8);
+            context.lineTo(4, 10);
+            context.lineTo(4, 11);
+            context.lineTo(0, 10);
+            context.lineTo(-4, 11);
+            context.lineTo(-4, 10);
+            context.lineTo(-1, 8);
+            context.lineTo(-1, 3);
+            context.lineTo(-7, 5);
+            context.lineTo(-7, 3);
+            context.lineTo(-2, -2);
+            context.closePath();
+            context.fill();
+            context.restore();
+        }
+        function vdl2PositionEntityId(position) {
+            return `VDL2_${position.message_type}_${position.icao}_${position.report_time}_${position.lat}_${position.lon}`;
+        }
         function drawVdl2Positions(context, centerX, centerY, ppd, now) {
             vdl2PositionHitboxes = [];
+            Object.keys(entityCache).forEach(id => {
+                if (id.startsWith('VDL2_')) delete entityCache[id];
+            });
             if (!vdl2LayerVisible) return;
             const groups = new Map();
             for (const position of vdl2Positions) {
@@ -901,13 +951,28 @@
                 points.forEach(({ position, point }, index) => {
                     const age = now / 1000 - position.report_time;
                     context.globalAlpha = Math.max(0.12, 1 - age / 600);
-                    context.strokeRect(point.x - 8, point.y - 5, 16, 10);
-                    context.beginPath();
-                    context.moveTo(point.x - 8, point.y - 5);
-                    context.lineTo(point.x, point.y + 1);
-                    context.lineTo(point.x + 8, point.y - 5);
-                    context.stroke();
+                    if (position.message_type === 'ADS-C BASIC') {
+                        drawVdl2Aircraft(context, point.x, point.y, position.true_track_deg);
+                    } else {
+                        context.strokeRect(point.x - 8, point.y - 5, 16, 10);
+                        context.beginPath();
+                        context.moveTo(point.x - 8, point.y - 5);
+                        context.lineTo(point.x, point.y + 1);
+                        context.lineTo(point.x + 8, point.y - 5);
+                        context.stroke();
+                    }
                     vdl2PositionHitboxes.push({ x: point.x, y: point.y, position });
+                    const entityId = vdl2PositionEntityId(position);
+                    entityCache[entityId] = {
+                        lat: position.lat,
+                        lon: position.lon,
+                        alt: 'GROUND',
+                        _latency: { state_age: age },
+                        _isWaypoint: false,
+                        _isVdl2Position: true,
+                        _lastPosSeenMs: now,
+                    };
+                    renderHitboxes.push({ id: entityId, x: point.x, y: point.y });
                     if (index === points.length - 1) {
                         context.globalAlpha = 1;
                         context.fillText(position.icao, point.x + 12, point.y);
@@ -974,8 +1039,8 @@
             popup.style.left = `${Math.max(12, Math.min(hitbox.x + 20, window.innerWidth - popup.offsetWidth - 12))}px`;
             popup.style.top = `${Math.max(12, Math.min(hitbox.y + 20, window.innerHeight - popup.offsetHeight - 12))}px`;
         }
-        function appendVdl2Record(fragment, record, coordinateText) {
-            const formatted = formatVdl2Frame(record);
+        function appendVdl2Record(fragment, record, coordinateText, adscPosition) {
+            const formatted = formatVdl2Frame(record, adscPosition);
             const highlights = [];
             if (coordinateText) {
                 const messageKey = formatted.indexOf('  Message:\n');
@@ -1015,6 +1080,19 @@
                     }
                 }
             }
+            if (adscPosition) {
+                const values = [
+                    `${adscPosition.lat.toFixed(6)}, ${adscPosition.lon.toFixed(6)}`,
+                    ...(Number.isFinite(adscPosition.true_track_deg)
+                        ? [`${adscPosition.true_track_deg.toFixed(1)}\u00b0T`] : []),
+                ];
+                for (const value of values) {
+                    const start = formatted.lastIndexOf(value);
+                    if (start >= 0) {
+                        highlights.push({ start, end: start + value.length, className: 'vdl2-position-data' });
+                    }
+                }
+            }
             appendVdl2Text(fragment, formatted, highlights);
         }
         function appendVdl2Text(fragment, formatted, highlights) {
@@ -1038,7 +1116,7 @@
             latestVdl2Frames.forEach((record, index) => {
                 if (index) fragment.appendChild(document.createTextNode('\n\n'));
                 appendVdl2Record(fragment, record,
-                    latestVdl2Coordinates[index]);
+                    latestVdl2Coordinates[index], latestVdl2AdsC[index]);
             });
             output.replaceChildren(fragment);
             output.scrollTop = scrollTop;
@@ -1057,12 +1135,14 @@
                 const output = document.getElementById('vdl2-frame-output');
                 if (!feed.configured) {
                     latestVdl2Frames = [];
+                    latestVdl2AdsC = [];
                     vdl2Positions = [];
                     selectedVdl2Position = null;
                     status.textContent = 'Not configured';
                     output.textContent = 'Set the JSON path in DECODER MNGR to start reading new frames.';
                 } else if (feed.error) {
                     latestVdl2Frames = [];
+                    latestVdl2AdsC = [];
                     selectedVdl2Position = null;
                     status.textContent = 'FILE ERROR';
                     output.textContent = `Unable to read ${feed.path}\n${feed.error}`;
@@ -1072,6 +1152,8 @@
                     latestVdl2Frames = feed.frames.slice(-60);
                     latestVdl2Coordinates = Array.isArray(feed.frame_coordinates)
                         ? feed.frame_coordinates.slice(-60) : [];
+                    latestVdl2AdsC = Array.isArray(feed.frame_ads_c)
+                        ? feed.frame_ads_c.slice(-60) : [];
                     if (latestVdl2Frames.length) renderVdl2Frames();
                     else output.textContent = 'Connected. Waiting for new JSON frames...';
                 }
@@ -1081,6 +1163,7 @@
                 }
             } catch (error) {
                 latestVdl2Frames = [];
+                latestVdl2AdsC = [];
                 selectedVdl2Position = null;
                 document.getElementById('vdl2-feed-status').textContent = 'API OFFLINE';
                 document.getElementById('vdl2-frame-output').textContent = `VDL2 feed request failed: ${error.message}`;
@@ -1703,6 +1786,7 @@
             style.setProperty('--vdl2-font-size', `${dataTagStyle.font_size_px}px`);
             style.setProperty('--vdl2-console-scale', '1');
             style.setProperty('--vdl2-message-scale', String(vdl2PositionLabelScale));
+            style.setProperty('--vdl2-position-data-colour', vdl2PositionDataColour);
         }
 
         function normalizeDataTagStyle(raw) {
@@ -1983,8 +2067,10 @@
             }
             
             let closest = null; let minD = 18;
-            renderHitboxes.forEach(hit => { 
-                const d = Math.hypot(hit.x - e.clientX, hit.y - e.clientY); 
+            const vdl2Hit = findVdl2PositionAt(e.clientX, e.clientY);
+            if (vdl2Hit) closest = vdl2PositionEntityId(vdl2Hit);
+            else renderHitboxes.forEach(hit => {
+                const d = Math.hypot(hit.x - e.clientX, hit.y - e.clientY);
                 if (d < minD) { minD = d; closest = hit.id; }
             });
             
@@ -1998,10 +2084,16 @@
                 if (vdl2LayerVisible) {
                     const position = findVdl2PositionAt(e.clientX, e.clientY);
                     if (position) {
-                        showVdl2Position(position);
-                        return;
+                        if (e.ctrlKey) {
+                            showVdl2Position(null);
+                            hoveredEntity = vdl2PositionEntityId(position);
+                        } else {
+                            showVdl2Position(position);
+                            return;
+                        }
+                    } else {
+                        showVdl2Position(null);
                     }
-                    showVdl2Position(null);
                 }
                 if (!measureActive && e.ctrlKey && hoveredEntity && entityCache[hoveredEntity]) {
                     const anchor = entityCache[hoveredEntity];

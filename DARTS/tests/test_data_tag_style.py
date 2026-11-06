@@ -76,6 +76,50 @@ class DataTagStyleTests(unittest.TestCase):
                         config_path.write_text(content)
                         self.assertEqual(DARTS.load_runtime_config()["data_tag_style"], expected)
 
+    def test_vdl2_position_data_colour_defaults_validation_and_api(self):
+        self.assertEqual(
+            DARTS.normalize_vdl2_position_data_colour(None), "#ffff00"
+        )
+        self.assertEqual(
+            DARTS.normalize_vdl2_position_data_colour("#AbC"), "#AbC"
+        )
+        for invalid in ("yellow", "#abcd", "#12xz00", {}, True):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(
+                    DARTS.normalize_vdl2_position_data_colour(invalid), "#ffff00"
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "runtime_config.json"
+            with mock.patch.object(DARTS, "CONFIG_PATH", str(config_path)), \
+                    mock.patch.dict(DARTS.os.environ, {}, clear=True):
+                config_path.write_text('{"vdl2_position_data_colour":"#ffcc00"}')
+                self.assertEqual(
+                    DARTS.load_runtime_config()["vdl2_position_data_colour"], "#ffcc00"
+                )
+                config_path.write_text('{"vdl2_position_data_colour":"invalid"}')
+                self.assertEqual(
+                    DARTS.load_runtime_config()["vdl2_position_data_colour"], "#ffff00"
+                )
+
+        with mock.patch.object(DARTS, "RUNTIME_CONFIG", {
+            "vdl2_json_path": "", "vdl2_position_label_scale": 1,
+            "vdl2_position_data_colour": "#ffcc00",
+        }):
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DARTS.DARTSAPIHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+            try:
+                connection.request("GET", "/api/vdl2-config")
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.read())["position_data_colour"], "#ffcc00")
+            finally:
+                connection.close()
+                server.shutdown()
+                server.server_close()
+
     def test_http_style_and_receiver_save_preservation(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "runtime_config.json"

@@ -60,6 +60,13 @@ WAYPOINT_GEOJSON_PATHS = {
     "UNCLASSIFIED": os.path.join(BASE_DIR, "waypoints_unclassified.geojson"),
 }
 AUDIT_GEOJSON_PATH = os.path.join(BASE_DIR, "audit_points.geojson")
+DEFAULT_VDL2_POSITION_DATA_COLOUR = "#ffff00"
+
+
+def normalize_vdl2_position_data_colour(raw):
+    if isinstance(raw, str) and re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", raw):
+        return raw
+    return DEFAULT_VDL2_POSITION_DATA_COLOUR
 
 try:
     import pyModeS as pms
@@ -116,6 +123,7 @@ def load_runtime_config():
         "brightness_elements": 0.4,
         "brightness_trails": 0.4,
         "vdl2_position_label_scale": 1,
+        "vdl2_position_data_colour": DEFAULT_VDL2_POSITION_DATA_COLOUR,
     }
 
     try:
@@ -161,6 +169,9 @@ def load_runtime_config():
         config["rx_mode"] = "A"
 
     config["data_tag_style"] = normalize_data_tag_style(config.get("data_tag_style"))
+    config["vdl2_position_data_colour"] = normalize_vdl2_position_data_colour(
+        config.get("vdl2_position_data_colour")
+    )
     return config
 
 # --- Windows ANSI Compatibility Hook ---
@@ -1823,6 +1834,9 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({
                 "json_path": RUNTIME_CONFIG.get("vdl2_json_path", ""),
                 "position_label_scale": label_scale,
+                "position_data_colour": normalize_vdl2_position_data_colour(
+                    RUNTIME_CONFIG.get("vdl2_position_data_colour")
+                ),
             })
         elif path == "/api/vdl2-feed":
             self._send_json(get_vdl2_feed_snapshot())

@@ -78,6 +78,27 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
         record["vdl2"]["avlc"]["acars"]["msg_text"] = "POSS32600E149269,SPLIZ,041237,390,"
         self.assertIsNone(DARTS.parse_poss_report(record))
 
+    def test_adsc_basic_report_position_and_true_track(self):
+        record = self._adsc_record()
+        position = DARTS.parse_adsc_basic_report(record)
+        self.assertEqual(position["icao"], "888168")
+        self.assertEqual(position["lat"], -33.638077)
+        self.assertEqual(position["lon"], 150.827522)
+        self.assertEqual(position["true_track_deg"], 313.417969)
+        self.assertEqual(position["message_type"], "ADS-C BASIC")
+        self.assertEqual(position["report_time"], 1793927332.0)
+        self.assertIs(position["record"], record)
+
+        invalid = copy.deepcopy(record)
+        invalid["vdl2"]["avlc"]["acars"]["arinc622"]["adsc"]["tags"][1]["earth_ref_data"]["true_trk_valid"] = False
+        self.assertIsNone(DARTS.parse_adsc_basic_report(invalid)["true_track_deg"])
+        invalid = copy.deepcopy(record)
+        invalid["vdl2"]["avlc"]["acars"]["arinc622"]["adsc"]["tags"][0]["basic_report"]["lat"] = 91
+        self.assertIsNone(DARTS.parse_adsc_basic_report(invalid))
+        invalid = copy.deepcopy(record)
+        invalid["vdl2"]["avlc"]["acars"]["crc_ok"] = False
+        self.assertIsNone(DARTS.parse_adsc_basic_report(invalid))
+
     @staticmethod
     def _position_record():
         return {"vdl2": {
@@ -86,6 +107,30 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
                 "src": {"addr": "7c7a49", "type": "Aircraft"},
                 "acars": {"label": "H1", "sublabel": "M1", "err": False, "crc_ok": True,
                           "more": False, "msg_text": "POSS32433E149269,SPLIZ,041237,390,"},
+            },
+        }}
+
+    @staticmethod
+    def _adsc_record():
+        return {"vdl2": {
+            "t": {"sec": 1793927332},
+            "avlc": {
+                "src": {"addr": "888168", "type": "Aircraft"},
+                "acars": {
+                    "label": "B6", "err": False, "crc_ok": True, "more": False,
+                    "arinc622": {
+                        "crc_ok": True,
+                        "adsc": {"err": False, "tags": [
+                            {"basic_report": {
+                                "lat": -33.638077, "lon": 150.827522,
+                                "alt": 11592, "pos_accuracy_nm": 0.05,
+                            }},
+                            {"earth_ref_data": {
+                                "true_trk_deg": 313.417969, "true_trk_valid": True,
+                            }},
+                        ]},
+                    },
+                },
             },
         }}
 
@@ -139,6 +184,22 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
         self.assertEqual(snapshot["invalid_lines"], 1)
         cleared = self.feed.snapshot("")
         self.assertEqual(cleared["frame_coordinates"], [])
+        self.assertEqual(cleared["frame_ads_c"], [])
+
+    def test_adsc_reports_are_added_to_vdl2_positions_and_console_metadata(self):
+        record = self._adsc_record()
+        with patch.object(DARTS.time, "time", return_value=record["vdl2"]["t"]["sec"]):
+            self.feed.snapshot(str(self.feed_path))
+            with self.feed_path.open("a") as feed:
+                feed.write(json.dumps(record) + "\n")
+            snapshot = self.feed.snapshot(str(self.feed_path))
+        self.assertEqual(snapshot["frame_ads_c"], [{
+            "icao": "888168", "lat": -33.638077, "lon": 150.827522,
+            "true_track_deg": 313.417969,
+        }])
+        self.assertEqual(len(snapshot["positions"]), 1)
+        self.assertEqual(snapshot["positions"][0]["message_type"], "ADS-C BASIC")
+        self.assertEqual(snapshot["positions"][0]["true_track_deg"], 313.417969)
 
 
 if __name__ == "__main__":
