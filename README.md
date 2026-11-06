@@ -136,6 +136,31 @@ See `DARTS/SOUND_FILES/README.md` for the current ID map and duplicate-file beha
 
 ---
 
+## VDL2 live console
+
+In the live map, open **DECODER MNGR**, enter the full path to DumpVDL2's
+newline-delimited JSON file under **VDL2 JSON FEED**, and select **SAVE**.
+The path is persisted as `vdl2_json_path`. Use **VDL MODE 2** to show or hide the
+foreground console; reading continues while it is hidden.
+
+The reader starts at the end of the file and polls for newly appended frames
+once per second. The console shows the latest 60 frames in a DumpVDL2-style
+layout: UTC date/time, MHz frequency, signal/noise in dBFS, their difference
+in dB, frequency skew in ppm, addressing, AVLC details, and ACARS or XID
+sections. ACARS text is displayed in full with its line breaks preserved;
+frames are not deduplicated or reassembled by DARTS. File errors and counts
+of invalid JSON lines are displayed in the console status.
+Aircraft ICAO addresses are highlighted green when they match an active
+ADS-B track in the map's live aircraft list (not limited to the viewport).
+Highlights follow the map's active/inactive classification and clear when
+the ADS-B WebSocket disconnects; ground-station addresses are not highlighted.
+The same toggle shows cyan envelope markers with ICAO labels for validated
+H1/M1 `POSS` position reports. Coordinates use degrees and tenths of minutes.
+Only the latest report per aircraft is shown, for ten minutes from its payload
+UTC report time (dated relative to the capture timestamp). Reports with bad
+ACARS CRCs, incomplete messages, or invalid coordinates are not plotted.
+These markers are independent of ADS-B positions and do not alter its tracks.
+
 ## Configuration (`DARTS/runtime_config.json`)
 
 | Key | Default (Windows) | Default (Pi/Linux) | Description |

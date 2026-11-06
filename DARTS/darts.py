@@ -27,6 +27,10 @@ import http.server
 import uuid
 from urllib.parse import urlparse, parse_qs
 try:
+    from vdl2_feed import Vdl2JsonFeed
+except ImportError:
+    from DARTS.vdl2_feed import Vdl2JsonFeed
+try:
     from trail_export3d import TRAIL_TELEMETRY_COLUMNS, Export3DStore, build_geojson3d, stream_geojson3d, parse_daily_time, run_daily_exports, next_scheduled_run, previous_scheduled_run
 except ImportError:
     from DARTS.trail_export3d import TRAIL_TELEMETRY_COLUMNS, Export3DStore, build_geojson3d, stream_geojson3d, parse_daily_time, run_daily_exports, next_scheduled_run, previous_scheduled_run
@@ -1602,6 +1606,11 @@ RECEIVER_ID = RUNTIME_CONFIG["receiver_id"]
 RX_MODE = RUNTIME_CONFIG["rx_mode"]
 RECEIVER_A_CONFIG = RUNTIME_CONFIG["receiver_a"]
 RECEIVER_B_CONFIG = RUNTIME_CONFIG["receiver_b"]
+VDL2_FEED = Vdl2JsonFeed()
+
+
+def get_vdl2_feed_snapshot():
+    return VDL2_FEED.snapshot(RUNTIME_CONFIG.get("vdl2_json_path", ""))
 
 # ==========================================
 # --- DARTS HTTP API SERVER (field registry + grid config) ---
@@ -1805,6 +1814,10 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                 "receiver_a": RECEIVER_A_CONFIG,
                 "receiver_b": RECEIVER_B_CONFIG,
             })
+        elif path == "/api/vdl2-config":
+            self._send_json({"json_path": RUNTIME_CONFIG.get("vdl2_json_path", "")})
+        elif path == "/api/vdl2-feed":
+            self._send_json(get_vdl2_feed_snapshot())
         elif path == "/api/rx-status":
             now = time.time()
             status_out = {}
@@ -1912,6 +1925,27 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
             colour_b = max(0, min(255, colour_b))
             save_audit_point_config(point_name, outer_nm, inner_nm, colour_r, colour_g, colour_b)
             self._send_json({"ok": True, "point_name": point_name})
+        elif path == "/api/vdl2-config":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(length).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                self._send_json({"error": "Invalid JSON"}, status=400)
+                return
+            json_path = data.get("json_path") if isinstance(data, dict) else None
+            if not isinstance(json_path, str) or len(json_path) > 2048:
+                self._send_json({"error": "json_path must be a string of at most 2048 characters"}, status=400)
+                return
+            old_path = RUNTIME_CONFIG.get("vdl2_json_path", "")
+            RUNTIME_CONFIG["vdl2_json_path"] = json_path.strip()
+            try:
+                with open(CONFIG_PATH, "w") as config_file:
+                    json.dump(RUNTIME_CONFIG, config_file, indent=4)
+            except OSError as exc:
+                RUNTIME_CONFIG["vdl2_json_path"] = old_path
+                self._send_json({"error": f"Failed to persist VDL2 path: {exc}"}, status=500)
+                return
+            self._send_json({"ok": True, "json_path": RUNTIME_CONFIG["vdl2_json_path"]})
         elif path == "/api/rx-config":
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -1921,7 +1955,7 @@ class DARTSAPIHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"error": "Invalid JSON"}, status=400)
                 return
 
-            global RX_MODE, RECEIVER_A_CONFIG, RECEIVER_B_CONFIG, RUNTIME_CONFIG
+            global RX_MODE, RECEIVER_A_CONFIG, RECEIVER_B_CONFIG
 
             new_mode = data.get("rx_mode", RX_MODE)
             if new_mode not in ("A", "B", "DUAL"):
