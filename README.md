@@ -144,13 +144,15 @@ The path is persisted as `vdl2_json_path`. Use **VDL MODE 2** to show or hide th
 foreground console; reading continues while it is hidden.
 
 The reader starts at the end of the file and polls for newly appended frames
-once per second. The console shows the latest 60 decoded JSON records in full,
-including all fields and complete payload strings. Clicking a position shows
-the complete decoded JSON record that supplied that fix, with the position
-coordinate highlighted. The live stream also highlights coordinate strings
+once per second. The console shows the latest 60 frames in a compact
+DumpVDL2-style layout with readable ACARS/XID details and complete message text.
+Clicking an envelope toggles a small floating box beside it containing only
+its ACARS message, with the coordinate string used for the fix highlighted.
+Click the same envelope again or elsewhere on the map to dismiss it; the live
+console continues displaying the stream independently. The live stream highlights coordinate strings
 accepted by the position parser, even after the associated marker expires.
-This is the complete decoded JSON, not the original
-radio-frame bytes. Frames are not deduplicated or reassembled by DARTS. File
+The source is decoded JSON, not the original radio-frame bytes.
+Frames are not deduplicated or reassembled by DARTS. File
 errors and counts of invalid JSON lines are displayed in the console status.
 Aircraft ICAO addresses are highlighted green when they match an active
 ADS-B track in the map's live aircraft list (not limited to the viewport).
@@ -158,9 +160,10 @@ Highlights follow the map's active/inactive classification and clear when
 the ADS-B WebSocket disconnects; ground-station addresses are not highlighted.
 The same toggle shows cyan envelope markers for validated H1/M1 `POSS` position
 reports, labeled with the ICAO and message type. Each ICAO/message type keeps a
-10-minute history with a fading trail; clicking a fix displays its complete VDL2
-frame in the console and highlights the coordinate string used for that marker.
-Adjust the marker-label font scale with `vdl2_position_label_scale` in
+10-minute history with a fading trail; a selected message box follows its envelope
+as the map moves and closes when the fix expires or the VDL2 layer is hidden.
+The console, marker labels, and message boxes use the aircraft data-tag font.
+The console scale defaults to `1`. Adjust the marker-label and message-box scale with `vdl2_position_label_scale` in
 `DARTS/runtime_config.json` (default `1`, accepted range `0.5`–`3`). Coordinates
 use degrees and tenths of minutes; restart DARTS after changing the setting.
 Fixes remain visible for ten minutes from their payload UTC report time (dated

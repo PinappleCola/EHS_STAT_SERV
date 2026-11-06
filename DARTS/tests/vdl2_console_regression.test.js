@@ -19,6 +19,8 @@ function element(id) {
             style: { display: 'none' },
             scrollTop: 0,
             scrollHeight: 0,
+            offsetWidth: 240,
+            offsetHeight: 80,
             addEventListener(type, listener) { this[type] = listener; },
             setAttribute(name, value) { this[name] = value; },
             classList: { toggle(name, active) { active ? classes.add(name) : classes.delete(name); } },
@@ -34,16 +36,27 @@ function element(id) {
 
 const context = vm.createContext({
     document: {
+        documentElement: { style: { setProperty() {} } },
         getElementById: element,
         createDocumentFragment: () => ({ children: [], appendChild(child) { this.children.push(child); } }),
         createTextNode: text => ({ textContent: text }),
         createElement: () => ({ textContent: '', className: '' }),
     },
     lastAircraftList: [],
+    window: { innerWidth: 800, innerHeight: 600 },
+    dataTagStyle: { font_family: 'B612 Mono', font_size_px: 11 },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     setInterval() {},
     console,
 });
+vm.runInContext(liveMap.slice(
+    liveMap.indexOf('        function setDataTagFont('),
+    liveMap.indexOf('        function measureDataTag('),
+), context);
+vm.runInContext(liveMap.slice(
+    liveMap.indexOf('        function applyVdl2TextStyle('),
+    liveMap.indexOf('        function normalizeDataTagStyle('),
+), context);
 const source = liveMap.slice(
     liveMap.indexOf('        async function loadVdl2Config()'),
     liveMap.indexOf('        // Init on load, then poll status every 500ms'),
@@ -86,7 +99,11 @@ context.sample.vdl2.avlc.acars.extra_payload = { detail: 'not omitted' };
 vm.runInContext('latestVdl2Frames = [sample]', context);
 context.lastAircraftList = [{ icao: '7c7a48', data_tag_inactive: false }];
 vm.runInContext('renderVdl2Frames()', context);
-assert.ok(element('vdl2-frame-output').textContent.includes('"extra_payload"'));
+assert.ok(element('vdl2-frame-output').textContent.includes('Reg: .VH-YFU Flight: VA0328'));
+assert.ok(element('vdl2-frame-output').textContent.includes('  Message:\n   ' + 'A'.repeat(500)));
+assert.ok(element('vdl2-frame-output').textContent.includes('\n     Second line\n   Third line'));
+assert.ok(!element('vdl2-frame-output').textContent.includes('"extra_payload"'));
+assert.ok(!element('vdl2-frame-output').textContent.startsWith('{'), 'frames use the compact console format');
 assert.ok(element('vdl2-frame-output').textContent.includes('A'.repeat(500)), 'long payloads must not be truncated');
 
 context.sample.vdl2.avlc = {
@@ -110,8 +127,9 @@ vm.runInContext('renderVdl2Frames()', context);
 let highlights = element('vdl2-frame-output').children.filter(child => child.className === 'vdl2-active-icao');
 assert.strictEqual(highlights.length, 1);
 assert.strictEqual(highlights[0].textContent, '7CF836');
-assert.ok(element('vdl2-frame-output').textContent.includes('"raw_extension": "all fields are displayed"'));
-assert.ok(element('vdl2-frame-output').textContent.includes('"ac_location"'));
+assert.ok(element('vdl2-frame-output').textContent.includes('Destination airport: YAMB'));
+assert.ok(element('vdl2-frame-output').textContent.includes('Aircraft location: -33.6, 150.9 | 4000 ft'));
+assert.ok(!element('vdl2-frame-output').textContent.includes('"raw_extension"'));
 context.lastAircraftList[0].data_tag_inactive = true;
 vm.runInContext('renderVdl2Frames()', context);
 assert.ok(!element('vdl2-frame-output').children.some(child => child.className));
@@ -144,10 +162,14 @@ assert.strictEqual(drawCalls.length, 3);
 assert.strictEqual(drawCalls[1][1], '7C7A49');
 assert.strictEqual(drawCalls[2][1], 'VDL2 POS');
 assert.strictEqual(drawCalls[2][3] - drawCalls[1][3], 14);
-assert.strictEqual(context.drawing.font, "11px 'B612 Mono', Consolas, monospace");
+assert.strictEqual(context.drawing.font, "11px 'B612 Mono', 'B612 Mono', 'Consolas', monospace");
 assert.strictEqual(vm.runInContext('findVdl2PositionAt(149.4, -32.7).icao', context), '7C7A49');
 vm.runInContext('vdl2PositionLabelScale = 2; drawVdl2Positions(drawing, 0, 0, 1, 1599000)', context);
-assert.strictEqual(context.drawing.font, "22px 'B612 Mono', Consolas, monospace");
+assert.strictEqual(context.drawing.font, "22px 'B612 Mono', 'B612 Mono', 'Consolas', monospace");
+context.dataTagStyle = { font_family: 'Courier New', font_size_px: 16 };
+vm.runInContext('vdl2PositionLabelScale = 1; drawVdl2Positions(drawing, 0, 0, 1, 1599000)', context);
+assert.strictEqual(context.drawing.font, "16px 'Courier New', 'B612 Mono', 'Consolas', monospace",
+    'VDL2 labels use the aircraft data-tag font and size at scale 1');
 drawCalls.length = 0;
 vm.runInContext('drawVdl2Positions(drawing, 0, 0, 1, 1600000)', context);
 assert.strictEqual(drawCalls.length, 0, 'positions expire at exactly ten minutes');
@@ -167,16 +189,52 @@ context.positionRecord = {
         },
     },
 };
-vm.runInContext("position = {icao: '7C7A49', message_type: 'H1/M1 POS', coordinate_text: 'POSS32433E149269', record: positionRecord}; showVdl2Position(position)", context);
-assert.ok(element('vdl2-frame-output').textContent.includes('POSS32433E149269,SPLIZ,041237,390,'));
-assert.strictEqual(element('vdl2-feed-status').textContent, 'Selected · 7C7A49 · H1/M1 POS');
-const coordinateHighlight = element('vdl2-frame-output').children.find(child => child.className === 'vdl2-position-coordinates');
+const consoleTextBeforeSelection = element('vdl2-frame-output').textContent;
+element('vdl2-feed-status').textContent = 'Watching';
+vm.runInContext("position = {icao: '7C7A49', message_type: 'H1/M1 POS', report_time: 1000, coordinate_text: 'POSS32433E149269', record: positionRecord}; vdl2PositionHitboxes = [{x: 149.4, y: 32.7, position}]; showVdl2Position(position)", context);
+assert.strictEqual(element('vdl2-frame-output').textContent, consoleTextBeforeSelection);
+assert.strictEqual(element('vdl2-feed-status').textContent, 'Watching');
+assert.strictEqual(element('vdl2-message-popup').textContent, 'POSS32433E149269,SPLIZ,041237,390,');
+assert.strictEqual(element('vdl2-message-popup').style.display, 'block');
+assert.strictEqual(element('vdl2-message-popup').style.left, '169.4px');
+const coordinateHighlight = element('vdl2-message-popup').children.find(child => child.className === 'vdl2-position-coordinates');
 assert.ok(coordinateHighlight);
 assert.strictEqual(coordinateHighlight.textContent, 'POSS32433E149269');
+vm.runInContext('showVdl2Position({...position})', context);
+assert.strictEqual(element('vdl2-message-popup').style.display, 'none', 'clicking the same fix toggles off');
+vm.runInContext('showVdl2Position(position); showVdl2Position(null)', context);
+assert.strictEqual(element('vdl2-message-popup').style.display, 'none', 'clicking away clears selection');
+vm.runInContext('showVdl2Position(position); vdl2PositionHitboxes[0].x = 790; vdl2PositionHitboxes[0].y = 590; updateVdl2MessagePopup()', context);
+assert.strictEqual(element('vdl2-message-popup').style.left, '548px', 'popup stays within the viewport');
+assert.strictEqual(element('vdl2-message-popup').style.top, '508px');
+vm.runInContext('vdl2PositionHitboxes = []; updateVdl2MessagePopup()', context);
+assert.strictEqual(element('vdl2-message-popup').style.display, 'none', 'expired fixes dismiss the popup');
+const mouseHandlers = {};
+Object.assign(context, {
+    rCanvas: { addEventListener(name, handler) { mouseHandlers[name] = handler; } },
+    isDragging: false, dragStartPos: { x: 149.4, y: 32.7 },
+    measureActive: false, hoveredEntity: null, lockedEntity: null, secondaryEntity: null,
+});
+vm.runInContext(liveMap.slice(
+    liveMap.indexOf("        rCanvas.addEventListener('mouseup'"),
+    liveMap.indexOf("        rCanvas.addEventListener('mouseleave'"),
+), context);
+vm.runInContext('vdl2PositionHitboxes = [{x: 149.4, y: 32.7, position}]', context);
+mouseHandlers.mouseup({ clientX: 149.4, clientY: 32.7 });
+assert.strictEqual(element('vdl2-message-popup').style.display, 'block');
+mouseHandlers.mouseup({ clientX: 149.4, clientY: 32.7 });
+assert.strictEqual(element('vdl2-message-popup').style.display, 'none');
+mouseHandlers.mouseup({ clientX: 149.4, clientY: 32.7 });
+context.dragStartPos = { x: 400, y: 300 };
+mouseHandlers.mouseup({ clientX: 400, clientY: 300 });
+assert.strictEqual(element('vdl2-message-popup').style.display, 'none', 'map background click dismisses the message');
+assert.strictEqual(element('vdl2-frame-output').textContent, consoleTextBeforeSelection,
+    'real envelope clicks never replace the console stream');
 
 vm.runInContext("selectedVdl2Position = null; latestVdl2Frames = [positionRecord]; latestVdl2Coordinates = ['POSS32433E149269']; renderVdl2Frames()", context);
-assert.strictEqual(element('vdl2-frame-output').textContent, JSON.stringify(context.positionRecord, null, 2),
-    'coordinate highlighting must preserve the entire stream payload');
+assert.ok(element('vdl2-frame-output').textContent.includes('7C7A49 (Aircraft) -> ?: Command'));
+assert.ok(element('vdl2-frame-output').textContent.includes('  Message:\n   POSS32433E149269,SPLIZ,041237,390,'),
+    'coordinate highlighting must preserve the formatted ACARS message');
 assert.strictEqual(element('vdl2-frame-output').children.filter(
     child => child.className === 'vdl2-position-coordinates'
 ).length, 1, 'the stream must highlight validated position coordinates');
@@ -185,9 +243,40 @@ assert.ok(!element('vdl2-frame-output').children.some(
     child => child.className === 'vdl2-position-coordinates'
 ), 'coordinate-like text not accepted by the backend must not highlight');
 
+vm.runInContext('showVdl2Position(position)', context);
 element('btn-vdl2-toggle').click();
 assert.strictEqual(element('vdl2-console').style.display, 'none');
+assert.strictEqual(element('vdl2-message-popup').style.display, 'none', 'hiding VDL2 clears its selected message');
 vm.runInContext('drawVdl2Positions(drawing, 0, 0, 1, 1000000)', context);
 assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
 
-console.log('vdl2_console_regression: OK');
+(async () => {
+    const properties = {};
+    context.document.documentElement.style.setProperty = (name, value) => { properties[name] = value; };
+    vm.runInContext('vdl2PositionLabelScale = 1; applyVdl2TextStyle()', context);
+    assert.strictEqual(properties['--vdl2-console-scale'], '1');
+    assert.strictEqual(properties['--vdl2-message-scale'], '1');
+    assert.strictEqual(properties['--vdl2-font-size'], '16px');
+    assert.strictEqual(properties['--vdl2-font-family'], "'Courier New', 'B612 Mono', 'Consolas', monospace");
+
+    context.HTTP_API = 'http://localhost:8766';
+    context.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            configured: true, frames: [context.sample, context.positionRecord],
+            positions: [context.position], frame_coordinates: [null, 'POSS32433E149269'],
+        }),
+    });
+    vm.runInContext('vdl2LayerVisible = true; vdl2PositionHitboxes = [{x: 149.4, y: 32.7, position}]; showVdl2Position(position)', context);
+    await vm.runInContext('pollVdl2Feed()', context);
+    assert.ok(element('vdl2-frame-output').textContent.includes('Destination airport: YAMB'),
+        'the console keeps showing other frames while an envelope is selected');
+    assert.ok(element('vdl2-frame-output').textContent.includes('  Message:\n   POSS32433E149269'));
+    assert.strictEqual(element('vdl2-feed-status').textContent, 'Watching · 2 frames');
+    assert.strictEqual(element('vdl2-message-popup').style.display, 'block');
+    assert.strictEqual(element('vdl2-message-popup').textContent, 'POSS32433E149269,SPLIZ,041237,390,');
+    context.fetch = async () => ({ ok: true, json: async () => ({ configured: false }) });
+    await vm.runInContext('pollVdl2Feed()', context);
+    assert.strictEqual(element('vdl2-message-popup').style.display, 'none');
+    console.log('vdl2_console_regression: OK');
+})().catch(error => { console.error(error); process.exitCode = 1; });
