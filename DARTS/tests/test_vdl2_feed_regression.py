@@ -68,6 +68,9 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(position["lat"], -(32 + 43.3 / 60))
         self.assertAlmostEqual(position["lon"], 149 + 26.9 / 60)
         self.assertEqual(position["icao"], "7C7A49")
+        self.assertEqual(position["message_type"], "H1/M1 POS")
+        self.assertEqual(position["coordinate_text"], "POSS32433E149269")
+        self.assertIs(position["record"], record)
         for field, value in [("crc_ok", False), ("more", True), ("label", "DF")]:
             invalid = copy.deepcopy(record)
             invalid["vdl2"]["avlc"]["acars"][field] = value
@@ -100,7 +103,9 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
             older["vdl2"]["avlc"]["acars"]["msg_text"] = "POSS31091E150442,RUPOG,041200,370,"
             with self.feed_path.open("a") as feed:
                 feed.write(json.dumps(older) + "\n")
-            self.assertEqual(self.feed.snapshot(str(self.feed_path))["positions"][0]["report_time"], report_time)
+            history = self.feed.snapshot(str(self.feed_path))["positions"]
+            self.assertEqual(len(history), 2)
+            self.assertEqual(max(item["report_time"] for item in history), report_time)
         with patch.object(DARTS.time, "time", return_value=report_time + 599):
             self.assertEqual(len(self.feed.snapshot(str(self.feed_path))["positions"]), 1)
         with patch.object(DARTS.time, "time", return_value=report_time + 600):
@@ -115,6 +120,25 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
         self.assertEqual(position["report_time"], midnight.timestamp() - 20)
         self.assertGreater(position["lat"], 0)
         self.assertLess(position["lon"], 0)
+
+    def test_stream_coordinate_metadata_preserves_full_records_and_alignment(self):
+        record = self._position_record()
+        invalid = copy.deepcopy(record)
+        invalid["vdl2"]["avlc"]["acars"]["crc_ok"] = False
+        self.feed.snapshot(str(self.feed_path))
+        records = [record, invalid] * 53
+        with self.feed_path.open("a") as feed:
+            for item in records:
+                feed.write(json.dumps(item) + "\n")
+            feed.write("invalid-json\n")
+        snapshot = self.feed.snapshot(str(self.feed_path))
+        self.assertEqual(snapshot["frames"], records[-100:])
+        self.assertEqual(
+            snapshot["frame_coordinates"], ["POSS32433E149269", None] * 50
+        )
+        self.assertEqual(snapshot["invalid_lines"], 1)
+        cleared = self.feed.snapshot("")
+        self.assertEqual(cleared["frame_coordinates"], [])
 
 
 if __name__ == "__main__":
