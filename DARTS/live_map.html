@@ -131,12 +131,12 @@
         /* RX Config Modal */
         #rx-config-modal {
             display: none; position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
-            width: 480px; background: rgba(15, 23, 42, 0.97); backdrop-filter: blur(8px);
+            width: 480px; max-height: calc(100vh - 100px); background: rgba(15, 23, 42, 0.97); backdrop-filter: blur(8px);
             border: 1px solid #38bdf8; border-radius: 6px; z-index: 200;
             box-shadow: 0 15px 40px rgba(0,0,0,0.95); flex-direction: column; pointer-events: auto;
         }
         .rx-modal-header { background: #0369a1; padding: 10px 15px; font-weight: bold; color: white; display: flex; justify-content: space-between; align-items: center; border-radius: 5px 5px 0 0; }
-        .rx-modal-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+        .rx-modal-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
         .rx-receiver-block { border: 1px solid #1e293b; border-radius: 4px; padding: 12px; background: rgba(3,7,18,0.6); }
         .rx-receiver-title { font-size: 0.85em; font-weight: bold; color: #38bdf8; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
         .rx-module-name { margin-left: auto; color: #cbd5e1; font-size: 0.86em; max-width: 225px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -162,6 +162,17 @@
         .rx-console-title { margin-bottom: 8px; }
         .rx-console-label-select { max-width: 80px; }
         .rx-console-output { background:#020617; color:#cbd5e1; border:1px solid #334155; border-radius:3px; padding:8px; min-height:86px; max-height:160px; overflow:auto; font-size:0.74em; line-height:1.35; white-space:pre-wrap; }
+        #vdl2-console {
+            display: none; position: absolute; right: 12px; bottom: 12px; width: min(620px, calc(100vw - 24px));
+            max-height: min(42vh, 360px); z-index: 60; background: rgba(2, 6, 23, 0.92);
+            border: 1px solid #0e7490; border-radius: 5px; box-shadow: 0 8px 24px rgba(0,0,0,0.75);
+            pointer-events: auto; overflow: hidden; flex-direction: column;
+        }
+        .vdl2-console-header { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; color: #67e8f9; background: rgba(8, 47, 73, 0.9); font-size: 0.78em; font-weight: bold; }
+        #vdl2-feed-status { color: #cbd5e1; font-weight: normal; text-align: right; overflow-wrap: anywhere; }
+        #vdl2-frame-output { margin: 0; padding: 8px 10px; overflow: auto; color: #cbd5e1; font-size: 0.72em; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .vdl2-active-icao { color: #4ade80; background: rgba(74, 222, 128, 0.12); font-weight: bold; }
+        .vdl2-config-status { color: #94a3b8; font-size: 0.75em; overflow-wrap: anywhere; }
 
 
 
@@ -256,6 +267,7 @@
             <button id="btn-elem-toggle" class="btn-action btn-toggle" title="Show/hide all map elements">ELEMENT TOGGLE</button>
             <button id="btn-ifr-toggle" class="btn-action btn-toggle">IFR</button>
             <button id="btn-vfr-toggle" class="btn-action btn-toggle">VFR</button>
+            <button id="btn-vdl2-toggle" class="btn-action btn-toggle" aria-pressed="false" title="Show live DumpVDL2 JSON frames">VDL MODE 2</button>
             <button id="btn-airspace-toggle" class="btn-action btn-toggle">AIRSPACE</button>
             <button id="btn-audit-layer-toggle" class="btn-action btn-toggle">AUDIT LAYER</button>
             <button id="btn-elem-refresh" class="btn-action btn-action-alt" title="Reload all GeoJSON map sources">ELEMENT REFRESH</button>
@@ -340,6 +352,15 @@
                     <div id="rx-console-output" class="rx-console-output">Ready.</div>
                 </div>
             </div>
+            <div class="rx-receiver-block">
+                <div class="rx-receiver-title">VDL2 JSON FEED</div>
+                <div class="rx-input-row">
+                    <span class="rx-input-label" style="width:60px;">FILE</span>
+                    <input id="vdl2-json-path" class="rx-input" type="text" placeholder="C:\path\to\vdl2_data.json">
+                    <button class="btn-rx-connect" onclick="saveVdl2Config()">SAVE</button>
+                </div>
+                <div id="vdl2-config-status" class="vdl2-config-status">Configure the live DumpVDL2 JSON file to begin tailing new frames.</div>
+            </div>
         </div>
     </div>
 
@@ -409,6 +430,13 @@
 
     <div id="map-container"></div>
     <canvas id="radar-canvas"></canvas>
+    <div id="vdl2-console" aria-live="polite">
+        <div class="vdl2-console-header">
+            <span>VDL2 LIVE FRAME CONSOLE</span>
+            <span id="vdl2-feed-status">Not configured</span>
+        </div>
+        <pre id="vdl2-frame-output">Set the JSON path in DECODER MNGR to start reading new frames.</pre>
+    </div>
 
     <script>
         const statusText = document.getElementById('status-text');
@@ -708,8 +736,238 @@
             } catch(e) { /* server not yet up */ }
         }
 
+        async function loadVdl2Config() {
+            try {
+                const response = await fetch(`${HTTP_API}/api/vdl2-config`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const config = await response.json();
+                document.getElementById('vdl2-json-path').value = config.json_path || '';
+            } catch (error) {
+                document.getElementById('vdl2-config-status').textContent = `Unable to load VDL2 configuration: ${error.message}`;
+            }
+        }
+
+        async function saveVdl2Config() {
+            const input = document.getElementById('vdl2-json-path');
+            const status = document.getElementById('vdl2-config-status');
+            status.textContent = 'Saving...';
+            try {
+                const response = await fetch(`${HTTP_API}/api/vdl2-config`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ json_path: input.value.trim() }),
+                });
+                const result = await response.json();
+                if (!response.ok || result.error) throw new Error(result.error || `HTTP ${response.status}`);
+                status.textContent = result.json_path
+                    ? 'Saved. New frames will appear as DumpVDL2 appends them.'
+                    : 'VDL2 file path cleared.';
+                await pollVdl2Feed();
+            } catch (error) {
+                status.textContent = `Save failed: ${error.message}`;
+            }
+        }
+
+        function formatVdl2Frame(record) {
+            const frame = record && record.vdl2;
+            if (!frame) return '';
+            const avlc = frame.avlc || {};
+            const src = avlc.src || {};
+            const dst = avlc.dst || {};
+            const captureDate = Number.isFinite(frame.t?.sec) ? new Date(frame.t.sec * 1000) : null;
+            const timestamp = captureDate && Number.isFinite(captureDate.getTime())
+                ? captureDate.toISOString().slice(0, 19).replace('T', ' ')
+                : '---- -- -- --:--:--';
+            const decimal = value => Number.isFinite(value) ? value.toFixed(1) : '--';
+            const frequency = Number.isFinite(frame.freq) ? (frame.freq / 1e6).toFixed(3) : '--';
+            const snr = Number.isFinite(frame.sig_level) && Number.isFinite(frame.noise_level)
+                ? frame.sig_level - frame.noise_level : null;
+            const address = endpoint => {
+                const description = [endpoint.type, endpoint.status].filter(Boolean).join(', ');
+                return `${endpoint.addr || '?'}${description ? ` (${description})` : ''}`;
+            };
+            const lines = [
+                `[${timestamp} GMT] [${frequency}] [${decimal(frame.sig_level)}/${decimal(frame.noise_level)} dBFS] [${decimal(snr)} dB] [${decimal(frame.freq_skew)} ppm]`,
+                `${address(src)} -> ${address(dst)}: ${avlc.cr || '?'}`,
+            ];
+            if (avlc.frame_type === 'I') {
+                lines.push(`AVLC type: I sseq: ${avlc.sseq ?? '?'} rseq: ${avlc.rseq ?? '?'} poll: ${typeof avlc.poll === 'boolean' ? Number(avlc.poll) : '?'}`);
+            } else if (avlc.frame_type === 'U') {
+                lines.push(`AVLC type: U (${avlc.cmd || '?'}) P/F: ${typeof avlc.pf === 'boolean' ? Number(avlc.pf) : '?'}`);
+            } else {
+                lines.push(`AVLC type: ${avlc.frame_type || '?'}${avlc.cmd ? ` (${avlc.cmd})` : ''}`);
+            }
+            if (avlc.acars) {
+                const acars = avlc.acars;
+                lines.push(
+                    ' ACARS:',
+                    `  Reg: ${acars.reg || '?'} Flight: ${acars.flight || '?'}`,
+                    `  Mode: ${acars.mode || '?'} Label: ${acars.label || '?'} Blk id: ${acars.blk_id ?? '?'} More: ${typeof acars.more === 'boolean' ? Number(acars.more) : '?'} Ack: ${acars.ack || '?'} Msg num: ${acars.msg_num || '?'}${acars.msg_num_seq || ''}`,
+                );
+                if (acars.sublabel) lines.push(`  Sublabel: ${acars.sublabel}`);
+                if (acars.mfi) lines.push(`  MFI: ${acars.mfi}`);
+                if (typeof acars.msg_text === 'string' && acars.msg_text.length) {
+                    const text = acars.msg_text.replace(/\r\n|\n\r|\r/g, '\n');
+                    lines.push('  Message:', ...text.split('\n').map(line => `   ${line}`));
+                }
+                if (acars['media-adv']?.current_link) {
+                    const advisory = acars['media-adv'];
+                    const link = advisory.current_link;
+                    const linkTime = link.time;
+                    const time = linkTime && [linkTime.hour, linkTime.min, linkTime.sec].every(Number.isFinite)
+                        ? ` at ${[linkTime.hour, linkTime.min, linkTime.sec].map(value => String(value).padStart(2, '0')).join(':')} UTC` : '';
+                    lines.push(
+                        `  Media Advisory${advisory.version !== undefined ? `, version ${advisory.version}` : ''}:`,
+                        `   Link ${link.descr || link.code || 'unknown'}${typeof link.established === 'boolean' ? (link.established ? ' established' : ' not established') : ''}${time}`,
+                    );
+                    if (Array.isArray(advisory.links_avail)) {
+                        lines.push(`   Available links: ${advisory.links_avail.map(item => item.descr || item.code || 'unknown').join(', ')}`);
+                    }
+                }
+            } else if (avlc.xid) {
+                const xid = avlc.xid;
+                lines.push(` XID: ${xid.type_descr || xid.type || 'unknown'}`);
+                for (const [key, heading] of [['pub_params', 'Public params'], ['vdl_params', 'VDL params']]) {
+                    if (!Array.isArray(xid[key]) || !xid[key].length) continue;
+                    lines.push(`  ${heading}:`);
+                    for (const param of xid[key]) {
+                        const name = param.name === 'dst_airport' ? 'Destination airport'
+                            : param.name === 'ac_location' ? 'Aircraft location'
+                            : String(param.name || 'Parameter').replace(/_/g, ' ');
+                        let value = typeof param.value === 'string' ? param.value : JSON.stringify(param.value);
+                        if (param.name === 'ac_location' && param.value?.loc) {
+                            const location = param.value.loc;
+                            value = `${location.lat}, ${location.lon}${Number.isFinite(param.value.alt) ? ` | ${param.value.alt} ft` : ''}`;
+                        }
+                        lines.push(`   ${name}: ${value}`);
+                    }
+                }
+            }
+            return lines.join('\n');
+        }
+
+        let latestVdl2Frames = [];
+        let vdl2Positions = [];
+        let vdl2LayerVisible = false;
+        function drawVdl2Positions(context, centerX, centerY, ppd, now) {
+            if (!vdl2LayerVisible) return;
+            context.save();
+            context.globalAlpha = 1;
+            context.shadowBlur = 0;
+            context.strokeStyle = '#67e8f9';
+            context.fillStyle = '#67e8f9';
+            context.lineWidth = 1.5;
+            context.font = "11px 'B612 Mono', Consolas, monospace";
+            context.textAlign = 'left';
+            context.textBaseline = 'middle';
+            for (const position of vdl2Positions) {
+                const age = now / 1000 - position.report_time;
+                if (!Number.isFinite(age) || age < 0 || age >= 600 ||
+                    !Number.isFinite(position.lat) || !Number.isFinite(position.lon)) continue;
+                const point = getCanvasPoint(position.lat, position.lon, centerX, centerY, ppd);
+                context.strokeRect(point.x - 8, point.y - 5, 16, 10);
+                context.beginPath();
+                context.moveTo(point.x - 8, point.y - 5);
+                context.lineTo(point.x, point.y + 1);
+                context.lineTo(point.x + 8, point.y - 5);
+                context.stroke();
+                context.fillText(position.icao, point.x + 12, point.y);
+            }
+            context.restore();
+        }
+        function renderVdl2Frames() {
+            const activeIcaos = new Set(lastAircraftList.filter(plane =>
+                plane.data_tag_inactive === false ||
+                (typeof plane.data_tag_inactive !== 'boolean' && Number.isFinite(plane.age) && plane.age < 10)
+            ).map(plane => String(plane.icao || '').toUpperCase()));
+            const fragment = document.createDocumentFragment();
+            latestVdl2Frames.forEach((record, index) => {
+                const formatted = formatVdl2Frame(record);
+                if (index) fragment.appendChild(document.createTextNode('\n\n'));
+                const avlc = record.vdl2?.avlc || {};
+                const addressLineStart = formatted.indexOf('\n') + 1;
+                const arrow = formatted.indexOf(' -> ', addressLineStart);
+                const candidates = [
+                    { endpoint: avlc.src, start: addressLineStart },
+                    { endpoint: avlc.dst, start: arrow < 0 ? -1 : arrow + 4 },
+                ];
+                let cursor = 0;
+                for (const { endpoint, start } of candidates) {
+                    const icao = endpoint?.addr;
+                    if (start < 0 || endpoint?.type !== 'Aircraft' || typeof icao !== 'string' ||
+                        !/^[0-9a-f]{6}$/i.test(icao) || !activeIcaos.has(icao.toUpperCase())) continue;
+                    fragment.appendChild(document.createTextNode(formatted.slice(cursor, start)));
+                    const span = document.createElement('span');
+                    span.className = 'vdl2-active-icao';
+                    span.title = 'Active ADS-B track on map';
+                    span.textContent = icao;
+                    fragment.appendChild(span);
+                    cursor = start + icao.length;
+                }
+                fragment.appendChild(document.createTextNode(formatted.slice(cursor)));
+            });
+            const output = document.getElementById('vdl2-frame-output');
+            const scrollTop = output.scrollTop;
+            output.replaceChildren(fragment);
+            output.scrollTop = scrollTop;
+        }
+
+        let vdl2PollInFlight = false;
+        let lastVdl2ConsoleText = '';
+        async function pollVdl2Feed() {
+            if (vdl2PollInFlight) return;
+            vdl2PollInFlight = true;
+            try {
+                const response = await fetch(`${HTTP_API}/api/vdl2-feed`, { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const feed = await response.json();
+                const status = document.getElementById('vdl2-feed-status');
+                const output = document.getElementById('vdl2-frame-output');
+                if (!feed.configured) {
+                    latestVdl2Frames = [];
+                    vdl2Positions = [];
+                    status.textContent = 'Not configured';
+                    output.textContent = 'Set the JSON path in DECODER MNGR to start reading new frames.';
+                } else if (feed.error) {
+                    latestVdl2Frames = [];
+                    status.textContent = 'FILE ERROR';
+                    output.textContent = `Unable to read ${feed.path}\n${feed.error}`;
+                } else {
+                    vdl2Positions = Array.isArray(feed.positions) ? feed.positions : [];
+                    status.textContent = `Watching · ${feed.frames.length} frames${feed.invalid_lines ? ` · ${feed.invalid_lines} invalid lines` : ''}`;
+                    latestVdl2Frames = feed.frames.slice(-60);
+                    if (latestVdl2Frames.length) renderVdl2Frames();
+                    else output.textContent = 'Connected. Waiting for new JSON frames...';
+                }
+                if (output.textContent !== lastVdl2ConsoleText) {
+                    output.scrollTop = output.scrollHeight;
+                    lastVdl2ConsoleText = output.textContent;
+                }
+            } catch (error) {
+                latestVdl2Frames = [];
+                document.getElementById('vdl2-feed-status').textContent = 'API OFFLINE';
+                document.getElementById('vdl2-frame-output').textContent = `VDL2 feed request failed: ${error.message}`;
+            } finally {
+                vdl2PollInFlight = false;
+            }
+        }
+
+        function toggleVdl2Console() {
+            const button = document.getElementById('btn-vdl2-toggle');
+            const consolePanel = document.getElementById('vdl2-console');
+            const visible = consolePanel.style.display === 'flex';
+            vdl2LayerVisible = !visible;
+            consolePanel.style.display = visible ? 'none' : 'flex';
+            button.classList.toggle('active', !visible);
+            button.setAttribute('aria-pressed', String(!visible));
+        }
+        document.getElementById('btn-vdl2-toggle').addEventListener('click', toggleVdl2Console);
+
         // Init on load, then poll status every 500ms
         initRxConfig();
+        loadVdl2Config();
+        pollVdl2Feed();
+        setInterval(pollVdl2Feed, 1000);
         loadAltitudeColourLookup();
         setInterval(pollRxStatus, 500);
 
@@ -2307,6 +2565,7 @@
 
                 // Draw audit circles around AUDIT-type points
                 if (!elementsHidden && !hiddenMapSources.audit_points) drawAuditCircles(rCtx, R_CX, R_CY, ppd);
+                drawVdl2Positions(rCtx, R_CX, R_CY, ppd, renderTime);
 
                 const centerProj = getCanvasPoint(REF_LAT, REF_LON, R_CX, R_CY, ppd);
                 rCtx.shadowBlur = 10; rCtx.shadowColor = '#f43f5e'; rCtx.fillStyle = '#f43f5e';
@@ -2853,7 +3112,12 @@
             loadMapData();
             reportUiState();
         };
-        ws.onclose = () => { statusText.innerText = 'OFFLINE - CONSOLE DETACHED'; statusText.className = 'offline'; };
+        ws.onclose = () => {
+            statusText.innerText = 'OFFLINE - CONSOLE DETACHED';
+            statusText.className = 'offline';
+            lastAircraftList = [];
+            if (latestVdl2Frames.length) renderVdl2Frames();
+        };
         setInterval(reportUiState, 2000);
 
         ws.onmessage = (event) => {
@@ -2903,6 +3167,7 @@
                 
                 let aircraftList = Array.isArray(parsedData.airframes) ? parsedData.airframes : (Array.isArray(parsedData) ? parsedData : []);
                 lastAircraftList = aircraftList; 
+                if (latestVdl2Frames.length) renderVdl2Frames();
                 const now = Date.now();
 
                 aircraftList.forEach(p => {
