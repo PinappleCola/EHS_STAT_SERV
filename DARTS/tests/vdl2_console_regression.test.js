@@ -43,6 +43,8 @@ const context = vm.createContext({
         createElement: () => ({ textContent: '', className: '' }),
     },
     lastAircraftList: [],
+    entityCache: {},
+    renderHitboxes: [],
     window: { innerWidth: 800, innerHeight: 600 },
     dataTagStyle: { font_family: 'B612 Mono', font_size_px: 11 },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
@@ -154,6 +156,9 @@ context.getCanvasPoint = (lat, lon) => ({ x: lon, y: lat });
 const drawCalls = [];
 context.drawing = {
     save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+    translate(...args) { drawCalls.push(['translate', ...args]); },
+    rotate(angle) { drawCalls.push(['rotate', angle]); },
+    closePath() {}, fill() {}, arc() {},
     strokeRect(...args) { drawCalls.push(['envelope', ...args]); },
     fillText(...args) { drawCalls.push(['label', ...args]); },
 };
@@ -164,6 +169,12 @@ assert.strictEqual(drawCalls[2][1], 'VDL2 POS');
 assert.strictEqual(drawCalls[2][3] - drawCalls[1][3], 14);
 assert.strictEqual(context.drawing.font, "11px 'B612 Mono', 'B612 Mono', 'Consolas', monospace");
 assert.strictEqual(vm.runInContext('findVdl2PositionAt(149.4, -32.7).icao', context), '7C7A49');
+drawCalls.length = 0;
+vm.runInContext("vdl2Positions = [{icao: '888168', lat: -33.638077, lon: 150.827522, true_track_deg: 313.417969, message_type: 'ADS-C BASIC', report_time: 1000}]; drawVdl2Positions(drawing, 0, 0, 1, 1599000)", context);
+assert.ok(drawCalls.some(call => call[0] === 'rotate' && Math.abs(call[1] - 313.417969 * Math.PI / 180) < 1e-10),
+    'ADS-C aircraft silhouette rotates to the reported true track');
+assert.ok(drawCalls.some(call => call[0] === 'translate' && call[1] === 150.827522 && call[2] === -33.638077));
+assert.ok(drawCalls.some(call => call[0] === 'label' && call[1] === 'ADS-C BASIC'));
 vm.runInContext('vdl2PositionLabelScale = 2; drawVdl2Positions(drawing, 0, 0, 1, 1599000)', context);
 assert.strictEqual(context.drawing.font, "22px 'B612 Mono', 'B612 Mono', 'Consolas', monospace");
 context.dataTagStyle = { font_family: 'Courier New', font_size_px: 16 };
@@ -214,7 +225,12 @@ Object.assign(context, {
     rCanvas: { addEventListener(name, handler) { mouseHandlers[name] = handler; } },
     isDragging: false, dragStartPos: { x: 149.4, y: 32.7 },
     measureActive: false, hoveredEntity: null, lockedEntity: null, secondaryEntity: null,
+    measureStartEntityId: null, measureEndEntityId: null, renderHitboxes: [], entityCache: {},
 });
+vm.runInContext(liveMap.slice(
+    liveMap.indexOf("        rCanvas.addEventListener('mousemove'"),
+    liveMap.indexOf("        rCanvas.addEventListener('mouseup'"),
+), context);
 vm.runInContext(liveMap.slice(
     liveMap.indexOf("        rCanvas.addEventListener('mouseup'"),
     liveMap.indexOf("        rCanvas.addEventListener('mouseleave'"),
@@ -230,6 +246,38 @@ mouseHandlers.mouseup({ clientX: 400, clientY: 300 });
 assert.strictEqual(element('vdl2-message-popup').style.display, 'none', 'map background click dismisses the message');
 assert.strictEqual(element('vdl2-frame-output').textContent, consoleTextBeforeSelection,
     'real envelope clicks never replace the console stream');
+
+vm.runInContext("vdl2LayerVisible = true; vdl2Positions = [{icao: '888168', lat: -33.638077, lon: 150.827522, true_track_deg: 313.417969, message_type: 'ADS-C BASIC', report_time: 1599}]; renderHitboxes = []; drawVdl2Positions(drawing, 0, 0, 1, 1600000)", context);
+const adscId = 'VDL2_ADS-C BASIC_888168_1599_-33.638077_150.827522';
+assert.ok(vm.runInContext(`Boolean(entityCache['${adscId}'] && renderHitboxes.some(hit => hit.id === '${adscId}'))`, context),
+    'ADS-C markers are registered as measurement hitboxes');
+context.isDragging = false;
+context.dragStartPos = { x: 150.827522, y: -33.638077 };
+mouseHandlers.mousemove({ clientX: 150.827522, clientY: -33.638077 });
+assert.strictEqual(context.hoveredEntity, adscId);
+mouseHandlers.mouseup({ clientX: 150.827522, clientY: -33.638077, ctrlKey: true });
+assert.strictEqual(context.measureActive, true, 'Ctrl-clicking an ADS-C marker starts measurement');
+assert.strictEqual(context.measureStartEntityId, adscId);
+context.renderHitboxes = [{ id: 'WPT_TEST', x: 180, y: -30 }];
+context.entityCache.WPT_TEST = { lat: -30, lon: 180, alt: 'GROUND', _isWaypoint: true };
+mouseHandlers.mousemove({ clientX: 180, clientY: -30 });
+context.dragStartPos = { x: 180, y: -30 };
+mouseHandlers.mouseup({ clientX: 180, clientY: -30, ctrlKey: true });
+assert.strictEqual(context.measureEndEntityId, 'WPT_TEST',
+    'measurement can run from an ADS-C report to a waypoint');
+context.measureActive = false;
+context.measureStartEntityId = null;
+context.measureEndEntityId = null;
+context.renderHitboxes = [{ id: 'WPT_TEST', x: 180, y: -30 }];
+mouseHandlers.mousemove({ clientX: 180, clientY: -30 });
+context.dragStartPos = { x: 180, y: -30 };
+mouseHandlers.mouseup({ clientX: 180, clientY: -30, ctrlKey: true });
+mouseHandlers.mousemove({ clientX: 150.827522, clientY: -33.638077 });
+context.dragStartPos = { x: 150.827522, y: -33.638077 };
+mouseHandlers.mouseup({ clientX: 150.827522, clientY: -33.638077, ctrlKey: true });
+assert.strictEqual(context.measureStartEntityId, 'WPT_TEST');
+assert.strictEqual(context.measureEndEntityId, adscId,
+    'measurement can run from a waypoint to an ADS-C report');
 
 vm.runInContext("selectedVdl2Position = null; latestVdl2Frames = [positionRecord]; latestVdl2Coordinates = ['POSS32433E149269']; renderVdl2Frames()", context);
 assert.ok(element('vdl2-frame-output').textContent.includes('7C7A49 (Aircraft) -> ?: Command'));
@@ -247,6 +295,7 @@ vm.runInContext('showVdl2Position(position)', context);
 element('btn-vdl2-toggle').click();
 assert.strictEqual(element('vdl2-console').style.display, 'none');
 assert.strictEqual(element('vdl2-message-popup').style.display, 'none', 'hiding VDL2 clears its selected message');
+drawCalls.length = 0;
 vm.runInContext('drawVdl2Positions(drawing, 0, 0, 1, 1000000)', context);
 assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
 
@@ -258,6 +307,19 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
     assert.strictEqual(properties['--vdl2-message-scale'], '1');
     assert.strictEqual(properties['--vdl2-font-size'], '16px');
     assert.strictEqual(properties['--vdl2-font-family'], "'Courier New', 'B612 Mono', 'Consolas', monospace");
+    assert.strictEqual(properties['--vdl2-position-data-colour'], '#ffff00');
+
+    context.positionAdsC = {
+        icao: '888168', lat: -33.638077, lon: 150.827522, true_track_deg: 313.417969,
+    };
+    vm.runInContext("latestVdl2Frames = [{vdl2:{t:{sec:1793927332},avlc:{src:{addr:'888168',type:'Aircraft'},acars:{label:'B6',msg_text:'ADS-C decoded'}}}}]; latestVdl2Coordinates = [null]; latestVdl2AdsC = [positionAdsC]; renderVdl2Frames()", context);
+    const positionDataSpans = element('vdl2-frame-output').children.filter(
+        child => child.className === 'vdl2-position-data'
+    );
+    assert.strictEqual(positionDataSpans.length, 2, 'ADS-C position and valid true track are colored in the console');
+    assert.strictEqual(positionDataSpans[0].textContent, '-33.638077, 150.827522');
+    assert.strictEqual(positionDataSpans[1].textContent, '313.4°T');
+    assert.ok(element('vdl2-frame-output').textContent.includes('ADS-C Basic Report: Position: -33.638077, 150.827522 | True track: 313.4°T'));
 
     context.HTTP_API = 'http://localhost:8766';
     context.fetch = async () => ({
@@ -265,6 +327,7 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
         json: async () => ({
             configured: true, frames: [context.sample, context.positionRecord],
             positions: [context.position], frame_coordinates: [null, 'POSS32433E149269'],
+            frame_ads_c: [context.positionAdsC, null],
         }),
     });
     vm.runInContext('vdl2LayerVisible = true; vdl2PositionHitboxes = [{x: 149.4, y: 32.7, position}]; showVdl2Position(position)', context);
