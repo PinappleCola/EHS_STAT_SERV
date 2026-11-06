@@ -18,7 +18,11 @@ const custom = {
 };
 
 async function load(fetch) {
-    const context = vm.createContext({ fetch, HTTP_API: 'http://localhost:8766', console: { warn() {} } });
+    const context = vm.createContext({
+        fetch, HTTP_API: 'http://localhost:8766', console: { warn() {} },
+        document: { documentElement: { style: { setProperty() {} } } },
+        vdl2PositionLabelScale: 1,
+    });
     vm.runInContext(source, context);
     await new Promise(resolve => setImmediate(resolve));
     return context;

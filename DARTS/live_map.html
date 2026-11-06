@@ -170,7 +170,8 @@
         }
         .vdl2-console-header { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; color: #67e8f9; background: rgba(8, 47, 73, 0.9); font-size: 0.78em; font-weight: bold; }
         #vdl2-feed-status { color: #cbd5e1; font-weight: normal; text-align: right; overflow-wrap: anywhere; }
-        #vdl2-frame-output { margin: 0; padding: 8px 10px; overflow: auto; color: #cbd5e1; font-size: 0.72em; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+        #vdl2-frame-output { margin: 0; padding: 8px 10px; overflow: auto; color: #cbd5e1; font-family: var(--vdl2-font-family, 'B612 Mono', 'Consolas', monospace); font-size: calc(var(--vdl2-font-size, 11px) * var(--vdl2-console-scale, 1)); line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+        #vdl2-message-popup { display: none; position: absolute; z-index: 61; margin: 0; padding: 8px; max-width: min(360px, calc(100vw - 24px)); max-height: 180px; overflow: auto; background: rgba(2, 6, 23, 0.96); color: #cbd5e1; border: 1px solid #67e8f9; border-radius: 4px; font-family: var(--vdl2-font-family, 'B612 Mono', 'Consolas', monospace); font-size: calc(var(--vdl2-font-size, 11px) * var(--vdl2-message-scale, 1)); line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
         .vdl2-active-icao { color: #4ade80; background: rgba(74, 222, 128, 0.12); font-weight: bold; }
         .vdl2-position-coordinates { color: #0f172a; background: #facc15; font-weight: bold; }
         .vdl2-config-status { color: #94a3b8; font-size: 0.75em; overflow-wrap: anywhere; }
@@ -438,6 +439,7 @@
         </div>
         <pre id="vdl2-frame-output">Set the JSON path in DECODER MNGR to start reading new frames.</pre>
     </div>
+    <pre id="vdl2-message-popup" aria-live="polite"></pre>
 
     <script>
         const statusText = document.getElementById('status-text');
@@ -746,6 +748,7 @@
                 if (Number.isFinite(config.position_label_scale) &&
                     config.position_label_scale >= 0.5 && config.position_label_scale <= 3) {
                     vdl2PositionLabelScale = config.position_label_scale;
+                    applyVdl2TextStyle();
                 }
             } catch (error) {
                 document.getElementById('vdl2-config-status').textContent = `Unable to load VDL2 configuration: ${error.message}`;
@@ -773,6 +776,84 @@
             }
         }
 
+        function formatVdl2Frame(record) {
+            const frame = record && record.vdl2;
+            if (!frame) return '';
+            const avlc = frame.avlc || {};
+            const src = avlc.src || {};
+            const dst = avlc.dst || {};
+            const captureDate = Number.isFinite(frame.t?.sec) ? new Date(frame.t.sec * 1000) : null;
+            const timestamp = captureDate && Number.isFinite(captureDate.getTime())
+                ? captureDate.toISOString().slice(0, 19).replace('T', ' ')
+                : '---- -- -- --:--:--';
+            const decimal = value => Number.isFinite(value) ? value.toFixed(1) : '--';
+            const frequency = Number.isFinite(frame.freq) ? (frame.freq / 1e6).toFixed(3) : '--';
+            const snr = Number.isFinite(frame.sig_level) && Number.isFinite(frame.noise_level)
+                ? frame.sig_level - frame.noise_level : null;
+            const address = endpoint => {
+                const description = [endpoint.type, endpoint.status].filter(Boolean).join(', ');
+                return `${endpoint.addr || '?'}${description ? ` (${description})` : ''}`;
+            };
+            const lines = [
+                `[${timestamp} GMT] [${frequency}] [${decimal(frame.sig_level)}/${decimal(frame.noise_level)} dBFS] [${decimal(snr)} dB] [${decimal(frame.freq_skew)} ppm]`,
+                `${address(src)} -> ${address(dst)}: ${avlc.cr || '?'}`,
+            ];
+            if (avlc.frame_type === 'I') {
+                lines.push(`AVLC type: I sseq: ${avlc.sseq ?? '?'} rseq: ${avlc.rseq ?? '?'} poll: ${typeof avlc.poll === 'boolean' ? Number(avlc.poll) : '?'}`);
+            } else if (avlc.frame_type === 'U') {
+                lines.push(`AVLC type: U (${avlc.cmd || '?'}) P/F: ${typeof avlc.pf === 'boolean' ? Number(avlc.pf) : '?'}`);
+            } else {
+                lines.push(`AVLC type: ${avlc.frame_type || '?'}${avlc.cmd ? ` (${avlc.cmd})` : ''}`);
+            }
+            if (avlc.acars) {
+                const acars = avlc.acars;
+                lines.push(
+                    ' ACARS:',
+                    `  Reg: ${acars.reg || '?'} Flight: ${acars.flight || '?'}`,
+                    `  Mode: ${acars.mode || '?'} Label: ${acars.label || '?'} Blk id: ${acars.blk_id ?? '?'} More: ${typeof acars.more === 'boolean' ? Number(acars.more) : '?'} Ack: ${acars.ack || '?'} Msg num: ${acars.msg_num || '?'}${acars.msg_num_seq || ''}`,
+                );
+                if (acars.sublabel) lines.push(`  Sublabel: ${acars.sublabel}`);
+                if (acars.mfi) lines.push(`  MFI: ${acars.mfi}`);
+                if (typeof acars.msg_text === 'string' && acars.msg_text.length) {
+                    const text = acars.msg_text.replace(/\r\n|\n\r|\r/g, '\n');
+                    lines.push('  Message:', ...text.split('\n').map(line => `   ${line}`));
+                }
+                if (acars['media-adv']?.current_link) {
+                    const advisory = acars['media-adv'];
+                    const link = advisory.current_link;
+                    const linkTime = link.time;
+                    const time = linkTime && [linkTime.hour, linkTime.min, linkTime.sec].every(Number.isFinite)
+                        ? ` at ${[linkTime.hour, linkTime.min, linkTime.sec].map(value => String(value).padStart(2, '0')).join(':')} UTC` : '';
+                    lines.push(
+                        `  Media Advisory${advisory.version !== undefined ? `, version ${advisory.version}` : ''}:`,
+                        `   Link ${link.descr || link.code || 'unknown'}${typeof link.established === 'boolean' ? (link.established ? ' established' : ' not established') : ''}${time}`,
+                    );
+                    if (Array.isArray(advisory.links_avail)) {
+                        lines.push(`   Available links: ${advisory.links_avail.map(item => item.descr || item.code || 'unknown').join(', ')}`);
+                    }
+                }
+            } else if (avlc.xid) {
+                const xid = avlc.xid;
+                lines.push(` XID: ${xid.type_descr || xid.type || 'unknown'}`);
+                for (const [key, heading] of [['pub_params', 'Public params'], ['vdl_params', 'VDL params']]) {
+                    if (!Array.isArray(xid[key]) || !xid[key].length) continue;
+                    lines.push(`  ${heading}:`);
+                    for (const param of xid[key]) {
+                        const name = param.name === 'dst_airport' ? 'Destination airport'
+                            : param.name === 'ac_location' ? 'Aircraft location'
+                            : String(param.name || 'Parameter').replace(/_/g, ' ');
+                        let value = typeof param.value === 'string' ? param.value : JSON.stringify(param.value);
+                        if (param.name === 'ac_location' && param.value?.loc) {
+                            const location = param.value.loc;
+                            value = `${location.lat}, ${location.lon}${Number.isFinite(param.value.alt) ? ` | ${param.value.alt} ft` : ''}`;
+                        }
+                        lines.push(`   ${name}: ${value}`);
+                    }
+                }
+            }
+            return lines.join('\n');
+        }
+
         let latestVdl2Frames = [];
         let latestVdl2Coordinates = [];
         let vdl2Positions = [];
@@ -796,7 +877,7 @@
             context.lineWidth = 1.5;
             context.textAlign = 'left';
             context.textBaseline = 'middle';
-            context.font = `${11 * vdl2PositionLabelScale}px 'B612 Mono', Consolas, monospace`;
+            setDataTagFont(context, false, vdl2PositionLabelScale);
             for (const history of groups.values()) {
                 history.sort((a, b) => a.report_time - b.report_time);
                 const visible = history.filter(position => {
@@ -831,11 +912,12 @@
                         context.globalAlpha = 1;
                         context.fillText(position.icao, point.x + 12, point.y);
                         context.fillText(position.message_type || 'VDL2 POS',
-                            point.x + 12, point.y + 14 * vdl2PositionLabelScale);
+                            point.x + 12, point.y + 14 * dataTagStyle.font_size_px / 11 * vdl2PositionLabelScale);
                     }
                 });
             }
             context.restore();
+            updateVdl2MessagePopup();
         }
         function findVdl2PositionAt(x, y) {
             let closest = null;
@@ -850,17 +932,55 @@
             return closest;
         }
         function showVdl2Position(position) {
-            selectedVdl2Position = position;
-            renderVdl2Frames();
-            document.getElementById('vdl2-feed-status').textContent =
-                `Selected · ${position.icao} · ${position.message_type || 'VDL2 POS'}`;
+            const samePosition = selectedVdl2Position &&
+                selectedVdl2Position.icao === position?.icao &&
+                selectedVdl2Position.message_type === position?.message_type &&
+                selectedVdl2Position.report_time === position?.report_time &&
+                selectedVdl2Position.coordinate_text === position?.coordinate_text;
+            selectedVdl2Position = samePosition ? null : position;
+            const popup = document.getElementById('vdl2-message-popup');
+            if (!selectedVdl2Position) {
+                popup.style.display = 'none';
+                return;
+            }
+            const text = String(position.record?.vdl2?.avlc?.acars?.msg_text || '')
+                .replace(/\r\n|\n\r|\r/g, '\n');
+            const index = position.coordinate_text ? text.indexOf(position.coordinate_text) : -1;
+            const fragment = document.createDocumentFragment();
+            appendVdl2Text(fragment, text, index < 0 ? [] : [{
+                start: index, end: index + position.coordinate_text.length,
+                className: 'vdl2-position-coordinates',
+            }]);
+            popup.replaceChildren(fragment);
+            updateVdl2MessagePopup();
+        }
+        function updateVdl2MessagePopup() {
+            const popup = document.getElementById('vdl2-message-popup');
+            if (!vdl2LayerVisible || !selectedVdl2Position) {
+                popup.style.display = 'none';
+                return;
+            }
+            const hitbox = vdl2PositionHitboxes.find(hit =>
+                hit.position.icao === selectedVdl2Position.icao &&
+                hit.position.message_type === selectedVdl2Position.message_type &&
+                hit.position.report_time === selectedVdl2Position.report_time &&
+                hit.position.coordinate_text === selectedVdl2Position.coordinate_text);
+            if (!hitbox) {
+                selectedVdl2Position = null;
+                popup.style.display = 'none';
+                return;
+            }
+            popup.style.display = 'block';
+            popup.style.left = `${Math.max(12, Math.min(hitbox.x + 20, window.innerWidth - popup.offsetWidth - 12))}px`;
+            popup.style.top = `${Math.max(12, Math.min(hitbox.y + 20, window.innerHeight - popup.offsetHeight - 12))}px`;
         }
         function appendVdl2Record(fragment, record, coordinateText) {
-            const json = JSON.stringify(record, null, 2);
+            const formatted = formatVdl2Frame(record);
             const highlights = [];
             if (coordinateText) {
-                const messageKey = json.indexOf('"msg_text":');
-                const index = messageKey >= 0 ? json.indexOf(coordinateText, messageKey) : -1;
+                const messageKey = formatted.indexOf('  Message:\n');
+                const index = messageKey >= 0
+                    ? formatted.indexOf(coordinateText, messageKey + '  Message:\n'.length) : -1;
                 if (index >= 0) {
                     highlights.push({
                         start: index,
@@ -874,46 +994,51 @@
                     plane.data_tag_inactive === false ||
                     (typeof plane.data_tag_inactive !== 'boolean' && Number.isFinite(plane.age) && plane.age < 10)
                 ).map(plane => String(plane.icao || '').toUpperCase()));
-                for (const [name, endpoint] of [['src', avlc.src], ['dst', avlc.dst]]) {
+                const lineStart = formatted.indexOf('\n') + 1;
+                const lineEnd = formatted.indexOf('\n', lineStart);
+                const arrow = formatted.indexOf(' -> ', lineStart);
+                for (const [endpoint, start, end] of [
+                    [avlc.src, lineStart, arrow],
+                    [avlc.dst, arrow + 4, lineEnd < 0 ? formatted.length : lineEnd],
+                ]) {
                     const icao = endpoint?.addr;
                     if (endpoint?.type !== 'Aircraft' || typeof icao !== 'string' ||
                         !/^[0-9a-f]{6}$/i.test(icao) || !activeIcaos.has(icao.toUpperCase())) continue;
-                    const endpointStart = json.indexOf(`"${name}"`);
-                    const endpointKey = json.indexOf('"addr"', endpointStart);
-                    const addressIndex = json.indexOf(JSON.stringify(icao), endpointKey);
-                    if (endpointStart >= 0 && endpointKey >= 0 && addressIndex >= 0) {
+                    const addressIndex = start >= 0 && end >= start
+                        ? formatted.indexOf(icao, start) : -1;
+                    if (addressIndex >= start && addressIndex + icao.length <= end) {
                         highlights.push({
-                            start: addressIndex + 1,
-                            end: addressIndex + 1 + icao.length,
+                            start: addressIndex,
+                            end: addressIndex + icao.length,
                             className: 'vdl2-active-icao',
                         });
                     }
                 }
             }
+            appendVdl2Text(fragment, formatted, highlights);
+        }
+        function appendVdl2Text(fragment, formatted, highlights) {
             highlights.sort((a, b) => a.start - b.start);
             let cursor = 0;
             for (const highlight of highlights) {
                 if (highlight.start < cursor) continue;
-                fragment.appendChild(document.createTextNode(json.slice(cursor, highlight.start)));
+                fragment.appendChild(document.createTextNode(formatted.slice(cursor, highlight.start)));
                 const span = document.createElement('span');
                 span.className = highlight.className;
-                span.textContent = json.slice(highlight.start, highlight.end);
+                span.textContent = formatted.slice(highlight.start, highlight.end);
                 fragment.appendChild(span);
                 cursor = highlight.end;
             }
-            fragment.appendChild(document.createTextNode(json.slice(cursor)));
+            fragment.appendChild(document.createTextNode(formatted.slice(cursor)));
         }
         function renderVdl2Frames() {
             const fragment = document.createDocumentFragment();
             const output = document.getElementById('vdl2-frame-output');
             const scrollTop = output.scrollTop;
-            const records = selectedVdl2Position
-                ? [selectedVdl2Position.record]
-                : latestVdl2Frames;
-            records.forEach((record, index) => {
+            latestVdl2Frames.forEach((record, index) => {
                 if (index) fragment.appendChild(document.createTextNode('\n\n'));
                 appendVdl2Record(fragment, record,
-                    selectedVdl2Position?.coordinate_text || latestVdl2Coordinates[index]);
+                    latestVdl2Coordinates[index]);
             });
             output.replaceChildren(fragment);
             output.scrollTop = scrollTop;
@@ -943,14 +1068,12 @@
                     output.textContent = `Unable to read ${feed.path}\n${feed.error}`;
                 } else {
                     vdl2Positions = Array.isArray(feed.positions) ? feed.positions : [];
-                    status.textContent = selectedVdl2Position
-                        ? `Selected · ${selectedVdl2Position.icao} · ${selectedVdl2Position.message_type || 'VDL2 POS'}`
-                        : `Watching · ${feed.frames.length} frames${feed.invalid_lines ? ` · ${feed.invalid_lines} invalid lines` : ''}`;
+                    status.textContent = `Watching · ${feed.frames.length} frames${feed.invalid_lines ? ` · ${feed.invalid_lines} invalid lines` : ''}`;
                     latestVdl2Frames = feed.frames.slice(-60);
                     latestVdl2Coordinates = Array.isArray(feed.frame_coordinates)
                         ? feed.frame_coordinates.slice(-60) : [];
                     if (latestVdl2Frames.length) renderVdl2Frames();
-                    else if (!selectedVdl2Position) output.textContent = 'Connected. Waiting for new JSON frames...';
+                    else output.textContent = 'Connected. Waiting for new JSON frames...';
                 }
                 if (output.textContent !== lastVdl2ConsoleText) {
                     output.scrollTop = output.scrollHeight;
@@ -958,9 +1081,11 @@
                 }
             } catch (error) {
                 latestVdl2Frames = [];
+                selectedVdl2Position = null;
                 document.getElementById('vdl2-feed-status').textContent = 'API OFFLINE';
                 document.getElementById('vdl2-frame-output').textContent = `VDL2 feed request failed: ${error.message}`;
             } finally {
+                if (!selectedVdl2Position) document.getElementById('vdl2-message-popup').style.display = 'none';
                 vdl2PollInFlight = false;
             }
         }
@@ -970,6 +1095,7 @@
             const consolePanel = document.getElementById('vdl2-console');
             const visible = consolePanel.style.display === 'flex';
             vdl2LayerVisible = !visible;
+            if (visible) showVdl2Position(null);
             consolePanel.style.display = visible ? 'none' : 'flex';
             button.classList.toggle('active', !visible);
             button.setAttribute('aria-pressed', String(!visible));
@@ -1569,6 +1695,15 @@
             active_text_colour: null, inactive_text_colour: null,
         };
         let dataTagStyle = { ...DEFAULT_DATA_TAG_STYLE };
+        function applyVdl2TextStyle() {
+            const family = ['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui'].includes(dataTagStyle.font_family)
+                ? dataTagStyle.font_family : `'${dataTagStyle.font_family}'`;
+            const style = document.documentElement.style;
+            style.setProperty('--vdl2-font-family', `${family}, 'B612 Mono', 'Consolas', monospace`);
+            style.setProperty('--vdl2-font-size', `${dataTagStyle.font_size_px}px`);
+            style.setProperty('--vdl2-console-scale', '1');
+            style.setProperty('--vdl2-message-scale', String(vdl2PositionLabelScale));
+        }
 
         function normalizeDataTagStyle(raw) {
             const style = { ...DEFAULT_DATA_TAG_STYLE };
@@ -1587,15 +1722,19 @@
             return style;
         }
 
-        function measureDataTag(ctx, lines, isSelected) {
-            const scale = dataTagStyle.font_size_px / 11;
+        function setDataTagFont(ctx, isSelected, scale = 1) {
+            const size = dataTagStyle.font_size_px * scale;
             const weight = isSelected ? 'bold ' : '';
-            const fallback = `${weight}${dataTagStyle.font_size_px}px 'B612 Mono', 'Consolas', monospace`;
+            const fallback = `${weight}${size}px 'B612 Mono', 'Consolas', monospace`;
             const family = ['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui'].includes(dataTagStyle.font_family)
                 ? dataTagStyle.font_family : `'${dataTagStyle.font_family}'`;
             // Reset first: canvas ignores invalid fonts rather than clearing its previous state.
             ctx.font = fallback;
-            ctx.font = `${weight}${dataTagStyle.font_size_px}px ${family}, 'B612 Mono', 'Consolas', monospace`;
+            ctx.font = `${weight}${size}px ${family}, 'B612 Mono', 'Consolas', monospace`;
+        }
+        function measureDataTag(ctx, lines, isSelected) {
+            const scale = dataTagStyle.font_size_px / 11;
+            setDataTagFont(ctx, isSelected);
             const font = ctx.font;
             let width = 0, ascent = 0, descent = 0;
             lines.forEach(line => {
@@ -1627,7 +1766,7 @@
         }
 
         fetch(`${HTTP_API}/api/data-tag-style`).then(response => response.ok ? response.json() : null)
-            .then(config => { dataTagStyle = normalizeDataTagStyle(config); })
+            .then(config => { dataTagStyle = normalizeDataTagStyle(config); applyVdl2TextStyle(); })
             .catch(error => console.warn('Data tag style config unavailable:', error));
 
         let nightBrightness = { brightness_map: 0.4, brightness_elements: 0.4, brightness_trails: 0.4 };
@@ -1862,6 +2001,7 @@
                         showVdl2Position(position);
                         return;
                     }
+                    showVdl2Position(null);
                 }
                 if (!measureActive && e.ctrlKey && hoveredEntity && entityCache[hoveredEntity]) {
                     const anchor = entityCache[hoveredEntity];
