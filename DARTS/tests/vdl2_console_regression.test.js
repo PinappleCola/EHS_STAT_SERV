@@ -30,6 +30,14 @@ function element(id) {
                 this.textContent = this.children.map(child => child.textContent).join('');
             },
         };
+        let content = '';
+        Object.defineProperty(elements[id], 'textContent', {
+            get() {
+                return this.children ? this.children.map(child => child.textContent).join('') : content;
+            },
+            set(value) { content = value; this.children = null; },
+        });
+        elements[id].replaceChildren = function(fragment) { this.children = fragment.children; };
     }
     return elements[id];
 }
@@ -38,19 +46,42 @@ const context = vm.createContext({
     document: {
         documentElement: { style: { setProperty() {} } },
         getElementById: element,
-        createDocumentFragment: () => ({ children: [], appendChild(child) { this.children.push(child); } }),
+        createDocumentFragment: () => ({
+            children: [],
+            get childNodes() { return this.children; },
+            get textContent() { return this.children.map(child => child.textContent).join(''); },
+            appendChild(child) { this.children.push(child); },
+        }),
         createTextNode: text => ({ textContent: text }),
         createElement: () => ({ textContent: '', className: '' }),
     },
     lastAircraftList: [],
     entityCache: {},
     renderHitboxes: [],
+    COS_LAT: Math.cos(34 * Math.PI / 180),
     window: { innerWidth: 800, innerHeight: 600 },
     dataTagStyle: { font_family: 'B612 Mono', font_size_px: 11 },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     setInterval() {},
     console,
 });
+const typingTimers = new Map();
+let typingTimerId = 0;
+context.setTimeout = callback => {
+    typingTimers.set(++typingTimerId, callback);
+    return typingTimerId;
+};
+context.clearTimeout = id => typingTimers.delete(id);
+function finishTyping() {
+    for (let ticks = 0; typingTimers.size; ticks++) {
+        assert.ok(ticks < 100, 'typing finishes within a bounded number of ticks');
+        const [id, callback] = typingTimers.entries().next().value;
+        typingTimers.delete(id);
+        callback();
+    }
+}
+const vdl2Sounds = [];
+context.playSoundEvent = event => vdl2Sounds.push(event);
 vm.runInContext(liveMap.slice(
     liveMap.indexOf('        function setDataTagFont('),
     liveMap.indexOf('        function measureDataTag('),
@@ -158,7 +189,9 @@ context.drawing = {
     save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
     translate(...args) { drawCalls.push(['translate', ...args]); },
     rotate(angle) { drawCalls.push(['rotate', angle]); },
-    closePath() {}, fill() {}, arc() {}, setLineDash() {},
+    closePath() {}, fill() {}, arc() {},
+    setLineDash(...args) { drawCalls.push(['dash', ...args]); },
+    ellipse(...args) { drawCalls.push(['ellipse', ...args]); },
     strokeRect(...args) { drawCalls.push(['envelope', ...args]); },
     fillText(...args) { drawCalls.push(['label', ...args]); },
 };
@@ -321,6 +354,75 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
     assert.strictEqual(positionDataSpans[1].textContent, '313.4°T');
     assert.ok(element('vdl2-frame-output').textContent.includes('ADS-C Basic Report: Position: -33.638077, 150.827522 | True track: 313.4°T'));
 
+    context.xidPosition = {
+        icao: '7CF836', lat: -33.6, lon: 150.9, alt: 4000,
+        position_uncertainty_nm: 4.2, message_type: 'XID LOCATION',
+        report_time: Date.now() / 1000,
+        record: { vdl2: { avlc: { xid: { type_descr: 'Handoff Initiation' } } } },
+    };
+    context.xidRecord = {
+        vdl2: {
+            t: { sec: 1793937866 },
+            avlc: {
+                src: { addr: '7CF836', type: 'Aircraft' },
+                frame_type: 'U', cmd: 'XID',
+                xid: { type_descr: 'Handoff Initiation', vdl_params: [
+                    { name: 'ac_location', value: { loc: { lat: -33.6, lon: 150.9 }, alt: 4000 } },
+                ] },
+            },
+        },
+    };
+    vm.runInContext(
+        'latestVdl2Frames = [xidRecord]; latestVdl2Coordinates = [null]; latestVdl2AdsC = [xidPosition]; renderVdl2Frames()',
+        context,
+    );
+    assert.ok(element('vdl2-frame-output').textContent.includes(
+        'XID Aircraft Location: Position: -33.600000, 150.900000 | Alt: 4000 ft | Estimated coordinate-rounding radius: 4.2 NM'
+    ));
+    assert.deepStrictEqual(
+        element('vdl2-frame-output').children.filter(child => child.className === 'vdl2-position-data')
+            .map(child => child.textContent),
+        ['-33.600000, 150.900000', '4000 ft', '4.2 NM'],
+    );
+    drawCalls.length = 0;
+    vm.runInContext(
+        'vdl2LayerVisible = true; vdl2Positions = [xidPosition]; drawVdl2Positions(drawing, 0, 0, 1, Date.now())',
+        context,
+    );
+    assert.ok(drawCalls.some(call => call[0] === 'ellipse'), 'XID fix draws an uncertainty ellipse');
+    assert.ok(drawCalls.some(call => call[0] === 'dash' && call[1].join(',') === '2,3'),
+        'XID uncertainty ellipse uses a dotted outline');
+    vm.runInContext('showVdl2Position(vdl2PositionHitboxes[0].position)', context);
+    assert.ok(element('vdl2-message-popup').textContent.includes('"type_descr": "Handoff Initiation"'));
+    assert.ok(element('vdl2-message-popup').textContent.includes('not reported sensor accuracy'));
+    vm.runInContext('showVdl2Position(vdl2PositionHitboxes[0].position)', context);
+    assert.strictEqual(element('vdl2-message-popup').style.display, 'none',
+        'clicking the same XID fix toggles its payload popup off');
+
+    context.airportRecord = {
+        vdl2: { avlc: { src: { addr: '7CF836', type: 'Aircraft' },
+            acars: { msg_text: 'YSSY /ypad YSSY XYSSYX YSSY123 YSSYYPAD <script>' } } },
+    };
+    context.xidPosition.airport_codes = ['YPAD', 'YSSY'];
+    vm.runInContext(
+        'latestVdl2Frames = [airportRecord]; latestVdl2Coordinates = [null]; latestVdl2AdsC = [null]; latestVdl2Airports = [["YPAD", "YSSY"]]; renderVdl2Frames()',
+        context,
+    );
+    assert.deepStrictEqual(element('vdl2-frame-output').children.filter(
+        child => child.className === 'vdl2-position-data').map(child => child.textContent),
+    ['YSSY', 'ypad', 'YSSY'], 'airport coloring respects token boundaries and preserves case');
+    assert.ok(element('vdl2-frame-output').textContent.includes('<script>'),
+        'payloads remain literal text, not HTML');
+    drawCalls.length = 0;
+    vm.runInContext('vdl2Positions = [xidPosition]; drawVdl2Positions(drawing, 0, 0, 1, Date.now())', context);
+    assert.ok(drawCalls.some(call => call[0] === 'label' && call[1] === 'YPAD YSSY'),
+        'decoded fixes include deduplicated airport tags');
+    context.xidPosition.record = context.airportRecord;
+    vm.runInContext('showVdl2Position(xidPosition)', context);
+    assert.ok(element('vdl2-message-popup').children.some(
+        child => child.className === 'vdl2-position-data' && child.textContent === 'YSSY'));
+    vm.runInContext('showVdl2Position(null); latestVdl2Airports = []', context);
+
     context.HTTP_API = 'http://localhost:8766';
     context.fetch = async () => ({
         ok: true,
@@ -332,6 +434,7 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
     });
     vm.runInContext('vdl2LayerVisible = true; vdl2PositionHitboxes = [{x: 149.4, y: 32.7, position}]; showVdl2Position(position)', context);
     await vm.runInContext('pollVdl2Feed()', context);
+    finishTyping();
     assert.ok(element('vdl2-frame-output').textContent.includes('Destination airport: YAMB'),
         'the console keeps showing other frames while an envelope is selected');
     assert.ok(element('vdl2-frame-output').textContent.includes('  Message:\n   POSS32433E149269'));
@@ -343,7 +446,7 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
     assert.strictEqual(element('vdl2-message-popup').style.display, 'none');
     context.dotRecord = {
         vdl2: { avlc: { src: { addr: '7c6dd9', type: 'Aircraft' },
-            acars: { label: 'SA', msg_text: 'Ordinary message payload' } } },
+            acars: { label: 'SA', msg_text: 'Ordinary message payload YSSY' } } },
     };
     context.dotFeed = {
         path: 'feed.json', stream_id: 'test-stream', frame_ids: [],
@@ -356,10 +459,12 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
     context.dotFeed.frames = [context.dotRecord];
     context.dotFeed.frame_ids = [1];
     context.dotFeed.frame_positions = [null];
+    context.dotFeed.frame_airports = [['YSSY']];
     vm.runInContext('ingestVdl2MessageDots(dotFeed); ingestVdl2MessageDots(dotFeed)', context);
     assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 1,
         'repeated polling must not duplicate message dots');
     assert.strictEqual(vm.runInContext('vdl2MessageDots[0].lat', context), -34.1);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots[0].airport_codes.join(" ")', context), 'YSSY');
     context.lastAircraftList[0].lat = '-35';
     context.lastAircraftList[0].data_tag_inactive = true;
     vm.runInContext('pruneVdl2MessageDots()', context);
@@ -385,7 +490,11 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
     assert.strictEqual(altitudeUsed, '19801');
     assert.strictEqual(context.drawing.fillStyle, 'rgb(20, 100, 200)');
     assert.ok(drawCalls.some(call => call[0] === 'dot' && call[1] === 150.9 && call[2] === -34.1));
-    assert.strictEqual(element('vdl2-message-popup').textContent, 'Ordinary message payload');
+    assert.strictEqual(element('vdl2-message-popup').textContent, 'Ordinary message payload YSSY');
+    assert.ok(drawCalls.some(call => call[0] === 'label' && call[1] === 'YSSY'),
+        'ADS-B-correlated dots also show their airport tags');
+    assert.ok(element('vdl2-message-popup').children.some(
+        child => child.className === 'vdl2-position-data' && child.textContent === 'YSSY'));
     vm.runInContext('showVdl2Position(vdl2MessageDots[0])', context);
     assert.strictEqual(element('vdl2-message-popup').style.display, 'none');
     vm.runInContext('showVdl2Position(vdl2MessageDots[0])', context);
@@ -410,10 +519,13 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
     context.dotFeed.frame_ids = [7];
     context.dotFeed.frames = [context.dotRecord];
     context.dotFeed.frame_positions = [null];
-    context.dotFeed.new_frames = [5, 6, 7].map(id => ({ id, record: context.dotRecord, position: null }));
+    context.dotFeed.new_frames = [5, 6, 7].map(id => ({
+        id, record: context.dotRecord, position: null, airport_codes: ['YSSY'],
+    }));
     vm.runInContext('ingestVdl2MessageDots(dotFeed)', context);
     assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 3,
         'new-frame batches include messages that fell out of the console buffer');
+    assert.ok(vm.runInContext('vdl2MessageDots.every(dot => dot.airport_codes[0] === "YSSY")', context));
     vm.runInContext('ingestVdl2MessageDots(dotFeed)', context);
     assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 3);
     vm.runInContext("vdl2Positions = [{...positionAdsC, message_type: 'H1/DF RSI', report_time: Date.now()/1000}]; vdl2MessageDots = []; drawVdl2Positions(drawing, 0, 0, 1, Date.now())", context);
@@ -439,11 +551,106 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
     assert.ok(drawCalls.some(call => call[0] === 'label' && call[1] === '750260 NEXT+1'));
     vm.runInContext('showVdl2Position(vdl2PositionHitboxes[1].position)', context);
     assert.ok(element('vdl2-message-popup').textContent.includes('Not an observed aircraft position.'));
-    assert.ok(element('vdl2-message-popup').textContent.includes('ETA from report: 351 s'));
+    assert.ok(element('vdl2-message-popup').textContent.includes('Decoded ETA: 351 s'));
     vm.runInContext('showVdl2Position(vdl2PositionHitboxes[1].position)', context);
     assert.strictEqual(element('vdl2-message-popup').style.display, 'none');
     vm.runInContext('latestVdl2AdsC = [waypointReport]; renderVdl2Frames()', context);
     assert.ok(element('vdl2-frame-output').textContent.includes('ADS-C Waypoint Change: Position:'));
     assert.ok(element('vdl2-frame-output').textContent.includes('Predicted NEXT+1:'));
+
+    context.basicRoute = {
+        ...context.waypointReport, message_type: 'ADS-C BASIC', alt: 18348, pos_accuracy_nm: 0.05,
+        predicted_route: [
+            {label: 'NEXT', lat: -33.411827, lon: 150.438709, alt: 23160, eta_sec: 168},
+            {label: 'NEXT+1', lat: -33.113823, lon: 150.079765, alt: 29776},
+        ],
+    };
+    drawCalls.length = 0;
+    vm.runInContext('vdl2Positions = [basicRoute]; drawVdl2Positions(drawing, 0, 0, 1, Date.now())', context);
+    assert.strictEqual(vm.runInContext('vdl2PositionHitboxes.length', context), 3);
+    assert.ok(drawCalls.some(call => call[0] === 'dash' && call[1].join(',') === '2,3'),
+        'predicted route is dotted');
+    assert.ok(drawCalls.some(call => call[0] === 'label' && call[1] === '750260 NEXT+1'));
+    vm.runInContext('showVdl2Position(vdl2PositionHitboxes[1].position)', context);
+    assert.ok(element('vdl2-message-popup').textContent.includes('Predicted altitude: 23160 ft'));
+    assert.ok(element('vdl2-message-popup').textContent.includes('Not an observed aircraft position.'));
+    vm.runInContext('showVdl2Position(vdl2PositionHitboxes[0].position)', context);
+    assert.ok(element('vdl2-message-popup').textContent.includes('Reported position accuracy: 0.05 NM'));
+    vm.runInContext('latestVdl2AdsC = [basicRoute]; renderVdl2Frames()', context);
+    assert.ok(element('vdl2-frame-output').textContent.includes('Predicted NEXT: -33.411827, 150.438709 | Alt: 23160 ft'));
+    assert.ok(element('vdl2-frame-output').children.some(
+        child => child.className === 'vdl2-position-data' && child.textContent === '-33.411827, 150.438709'));
+    vm.runInContext(`vdl2Positions = [basicRoute, {...basicRoute, message_type: 'ADS-C WPT CHANGE'}];
+        drawVdl2Positions(drawing, 0, 0, 1, Date.now())`, context);
+    assert.notStrictEqual(
+        vm.runInContext('vdl2PositionEntityId(vdl2PositionHitboxes[1].position)', context),
+        vm.runInContext('vdl2PositionEntityId(vdl2PositionHitboxes[4].position)', context),
+        'identical predictions from different report types have distinct identities');
+    for (const type of ['ADS-C ALT RANGE', 'ADS-C LAT DEV']) {
+        context.eventPosition = {...context.waypointReport, message_type: type, predicted_route: [], alt: 5708};
+        drawCalls.length = 0;
+        vm.runInContext('vdl2Positions = [eventPosition]; drawVdl2Positions(drawing, 0, 0, 1, Date.now())', context);
+        assert.strictEqual(vm.runInContext('vdl2PositionHitboxes.length', context), 1);
+        assert.ok(drawCalls.some(call => call[0] === 'label' && call[1] === type));
+        vm.runInContext('showVdl2Position(vdl2PositionHitboxes[0].position)', context);
+        assert.ok(element('vdl2-message-popup').textContent.includes('Altitude: 5708 ft'));
+        vm.runInContext('latestVdl2AdsC = [eventPosition]; renderVdl2Frames()', context);
+        assert.ok(element('vdl2-frame-output').textContent.includes(type === 'ADS-C ALT RANGE'
+            ? 'ADS-C Altitude Range Event: Position:' : 'ADS-C Lateral Deviation Event: Position:'));
+    }
+
+    vm.runInContext('stopVdl2Typing(); latestVdl2Frames = [airportRecord]; latestVdl2AdsC = []; latestVdl2Airports = [["YPAD", "YSSY"]]; latestVdl2Coordinates = []; vdl2LayerVisible = true', context);
+    element('vdl2-frame-output').textContent = '';
+    vm.runInContext('renderVdl2Frames(true)', context);
+    assert.strictEqual(element('vdl2-frame-output').textContent, '',
+        'new console text starts unrevealed');
+    const [firstTimer, firstTick] = typingTimers.entries().next().value;
+    typingTimers.delete(firstTimer);
+    firstTick();
+    const partialText = element('vdl2-frame-output').textContent;
+    assert.ok(partialText.length > 0);
+    vm.runInContext('renderVdl2Frames()', context);
+    assert.strictEqual(element('vdl2-frame-output').textContent, partialText,
+        'ADS-B-triggered console refresh does not restart or finish typing');
+    finishTyping();
+    const completedText = element('vdl2-frame-output').textContent;
+    assert.ok(completedText.includes(context.airportRecord.vdl2.avlc.acars.msg_text));
+    assert.strictEqual(element('vdl2-frame-output').children.filter(
+        child => child.className === 'vdl2-position-data').length, 3,
+    'type-out preserves airport coloring');
+    vm.runInContext('renderVdl2Frames(true)', context);
+    assert.strictEqual(typingTimers.size, 0, 'unchanged polling does not replay typing');
+    context.airportRecord.vdl2.avlc.acars.msg_text += '\nNew message tail';
+    vm.runInContext('renderVdl2Frames(true)', context);
+    assert.strictEqual(element('vdl2-frame-output').textContent, completedText,
+        'existing console prefix stays visible');
+    finishTyping();
+    assert.ok(element('vdl2-frame-output').textContent.endsWith('New message tail'));
+    context.airportRecord.vdl2.avlc.acars.msg_text += '\nHidden tail';
+    vm.runInContext('renderVdl2Frames(true)', context);
+    element('vdl2-console').style.display = 'flex';
+    vm.runInContext('toggleVdl2Console()', context);
+    assert.strictEqual(typingTimers.size, 0, 'hiding the console cancels animation');
+    assert.ok(element('vdl2-frame-output').textContent.endsWith('Hidden tail'),
+        'hiding does not lose unrevealed message content');
+
+    context.soundFeed = {
+        stream_id: 'sound-stream', path: 'sound-feed.json', frame_ids: [1, 2],
+        new_frames: [{id: 1}, {id: 2}],
+    };
+    vm.runInContext('notifyNewVdl2Messages(soundFeed)', context);
+    assert.strictEqual(vdl2Sounds.length, 0, 'initial buffer does not trigger sound');
+    context.soundFeed.frame_ids.push(3, 4);
+    context.soundFeed.new_frames = [{id: 3}, {id: 4}];
+    vm.runInContext('notifyNewVdl2Messages(soundFeed); notifyNewVdl2Messages(soundFeed)', context);
+    assert.strictEqual(vdl2Sounds.length, 1, 'one notification per new batch, no repeated poll playback');
+    assert.strictEqual(vdl2Sounds[0].sound_id, '08');
+    context.soundFeed.stream_id = 'restarted';
+    vm.runInContext('notifyNewVdl2Messages(soundFeed)', context);
+    assert.strictEqual(vdl2Sounds.length, 1, 'feed restart does not replay buffered notifications');
+    context.soundFeed.frame_ids = [10];
+    context.soundFeed.new_frames = [{id: 5}, {id: 10}];
+    vm.runInContext('notifyNewVdl2Messages(soundFeed)', context);
+    assert.strictEqual(vdl2Sounds.length, 2, 'new batches notify even while the layer is hidden');
     console.log('vdl2_console_regression: OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

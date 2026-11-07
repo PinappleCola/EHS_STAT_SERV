@@ -18,7 +18,7 @@ Supported IDs:
 - `05` Squawk enters `7500`
 - `06` Squawk enters `7600`
 - `07` Squawk enters `7700`
-- `08` Reserved
+- `08` New VDL2 message (one notification per newly received batch)
 - `09` Reserved
 - `10` Reserved
 
@@ -28,4 +28,6 @@ Behavior notes:
 - If multiple files share the same two-digit prefix, DARTS warns in the server console and uses the lexicographically first filename deterministically.
 - Playback occurs in the browser-based live map via the existing DARTS HTTP/WebSocket runtime, fetched from `http://localhost:8766/sounds/XX` (the fixed `HTTP_API` server, regardless of how the map page is opened).
 - Browsers may block audio until the page receives a user interaction.
+- VDL2 notifications do not replay the initial frame buffer or repeated polls.
+  They continue while the VDL2 layer is hidden, without changing ADS-B alerts.
 - Use WAV files only. Short clips under five seconds are recommended to keep transfer, memory, and startup costs modest.
