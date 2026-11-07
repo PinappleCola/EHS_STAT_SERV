@@ -5,6 +5,7 @@ import os
 import re
 import threading
 import time
+import uuid
 
 
 def parse_poss_report(record):
@@ -130,8 +131,65 @@ def parse_adsc_basic_report(record):
     }
 
 
+def parse_rsi_report(record):
+    frame = record.get("vdl2", {})
+    if not isinstance(frame, dict) or not isinstance(frame.get("avlc"), dict):
+        return None
+    avlc = frame["avlc"]
+    source, acars = avlc.get("src"), avlc.get("acars")
+    if not isinstance(source, dict) or not isinstance(acars, dict):
+        return None
+    icao = source.get("addr")
+    if (source.get("type") != "Aircraft" or not isinstance(icao, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{6}", icao)
+            or acars.get("label") != "H1" or acars.get("sublabel") != "DF"
+            or acars.get("err") is not False or acars.get("crc_ok") is not True
+            or acars.get("more") is not False):
+        return None
+    text = acars.get("msg_text")
+    if not isinstance(text, str):
+        return None
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if not re.match(r"^\s*RSI\s*\n", text):
+        return None
+    clock = re.search(r"(?m)^\s*(\d{2})(\d{2})\s+(\d{2})([A-Z]{3})(\d{2})\s+", text)
+    row = re.search(
+        r"LAT\s+LON\s+GALT\s+TTRK\s+GS\s*\n\s*"
+        r"([+-]?\d+\.\d+)\s+([+-]?\d+\.\d+)\s+(\d+)\s+([+-]?\d+)\s+(\d+)\s*(?:\n|$)", text
+    )
+    status = re.search(
+        r"INOP\s+NON-AP\s+INHB\s+POS-ERR\s*\n\s*\d+\s+\d+\s+\d+\s+(\d+)\s*(?:\n|$)", text
+    )
+    if not clock or not row or not status or int(status[1]) != 0:
+        return None
+    lat, lon, track = float(row[1]), float(row[2]), int(row[4])
+    if not -90 <= lat <= 90 or not -180 <= lon <= 180 or not -180 <= track < 360:
+        return None
+    timestamp = frame.get("t", {})
+    capture = timestamp.get("sec") if isinstance(timestamp, dict) else None
+    if isinstance(capture, bool) or not isinstance(capture, (int, float)) or not math.isfinite(capture):
+        return None
+    months = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+    try:
+        report_time = datetime.datetime(
+            2000 + int(clock[5]), months.index(clock[4]) + 1, int(clock[3]),
+            int(clock[1]), int(clock[2]), tzinfo=datetime.timezone.utc,
+        ).timestamp()
+    except (ValueError, OverflowError):
+        return None
+    if report_time > capture + 60:
+        return None
+    return {
+        "icao": icao.upper(), "lat": lat, "lon": lon,
+        "true_track_deg": track % 360, "report_time": report_time,
+        "message_type": "H1/DF RSI", "coordinate_text": None, "record": record,
+    }
+
+
 class Vdl2JsonFeed:
     def __init__(self):
+        self.stream_id = uuid.uuid4().hex
+        self.sequence = 0
         self.lock = threading.Lock()
         self.state = {
             "path": None,
@@ -141,6 +199,8 @@ class Vdl2JsonFeed:
             "frames": [],
             "frame_coordinates": [],
             "frame_ads_c": [],
+            "frame_positions": [],
+            "frame_ids": [],
             "error": "",
             "invalid_lines": 0,
             "last_frame_time": None,
@@ -149,6 +209,7 @@ class Vdl2JsonFeed:
 
     def snapshot(self, path):
         path = path.strip() if isinstance(path, str) else ""
+        new_frames = []
         with self.lock:
             state = self.state
             if path != state["path"]:
@@ -160,6 +221,8 @@ class Vdl2JsonFeed:
                     "frames": [],
                     "frame_coordinates": [],
                     "frame_ads_c": [],
+                    "frame_positions": [],
+                    "frame_ids": [],
                     "error": "",
                     "invalid_lines": 0,
                     "last_frame_time": None,
@@ -201,6 +264,21 @@ class Vdl2JsonFeed:
                         state["last_frame_time"] = time.time()
                         position = parse_poss_report(frame)
                         adsc_position = parse_adsc_basic_report(frame)
+                        rsi_position = parse_rsi_report(frame)
+                        decoded_position = position or adsc_position or rsi_position
+                        self.sequence += 1
+                        state["frame_ids"].append(self.sequence)
+                        state["frame_ids"] = state["frame_ids"][-100:]
+                        state["frame_positions"].append(
+                            {key: decoded_position.get(key) for key in
+                             ("icao", "lat", "lon", "true_track_deg", "message_type")}
+                            if decoded_position else None
+                        )
+                        state["frame_positions"] = state["frame_positions"][-100:]
+                        new_frames.append({
+                            "id": self.sequence, "record": frame,
+                            "position": state["frame_positions"][-1],
+                        })
                         state["frame_coordinates"].append(
                             position["coordinate_text"] if position else None
                         )
@@ -213,7 +291,7 @@ class Vdl2JsonFeed:
                             if adsc_position else None
                         )
                         state["frame_ads_c"] = state["frame_ads_c"][-100:]
-                        for parsed_position in (position, adsc_position):
+                        for parsed_position in (position, adsc_position, rsi_position):
                             if not parsed_position:
                                 continue
                             key = (parsed_position["icao"], parsed_position["message_type"])
@@ -259,6 +337,10 @@ class Vdl2JsonFeed:
                 "frames": list(state["frames"]),
                 "frame_coordinates": list(state["frame_coordinates"]),
                 "frame_ads_c": list(state["frame_ads_c"]),
+                "frame_positions": list(state["frame_positions"]),
+                "frame_ids": list(state["frame_ids"]),
+                "stream_id": self.stream_id,
+                "new_frames": new_frames,
                 "positions": [
                     position for history in state["positions"].values() for position in history
                 ],

@@ -841,7 +841,7 @@
                     const coordinates = `${adscPosition.lat.toFixed(6)}, ${adscPosition.lon.toFixed(6)}`;
                     const track = Number.isFinite(adscPosition.true_track_deg)
                         ? ` | True track: ${adscPosition.true_track_deg.toFixed(1)}\u00b0T` : '';
-                    lines.push(` ADS-C Basic Report: Position: ${coordinates}${track}`);
+                    lines.push(` ${adscPosition.message_type === 'H1/DF RSI' ? 'RSI Report' : 'ADS-C Basic Report'}: Position: ${coordinates}${track}`);
                 }
             } else if (avlc.xid) {
                 const xid = avlc.xid;
@@ -874,6 +874,65 @@
         let vdl2PositionDataColour = '#ffff00';
         let vdl2PositionHitboxes = [];
         let selectedVdl2Position = null;
+        let vdl2MessageDots = [];
+        let vdl2MessageStream = null;
+        let vdl2MessagePath = null;
+        let vdl2MessageSequence = 0;
+        function isActiveVdl2Aircraft(plane) {
+            return plane.data_tag_inactive === false ||
+                (typeof plane.data_tag_inactive !== 'boolean' && Number.isFinite(plane.age) && plane.age < 10);
+        }
+        function pruneVdl2MessageDots() {
+            const present = new Set(lastAircraftList.map(plane => String(plane.icao || '').toUpperCase()));
+            vdl2MessageDots = vdl2MessageDots.filter(dot => present.has(dot.icao));
+            if (selectedVdl2Position?._isMessageDot &&
+                !vdl2MessageDots.includes(selectedVdl2Position)) showVdl2Position(null);
+        }
+        function ingestVdl2MessageDots(feed) {
+            if (!Array.isArray(feed.frame_ids) || !Array.isArray(feed.frames)) return;
+            pruneVdl2MessageDots();
+            if (vdl2MessageStream !== feed.stream_id || vdl2MessagePath !== feed.path) {
+                vdl2MessageStream = feed.stream_id;
+                vdl2MessagePath = feed.path;
+                vdl2MessageDots = [];
+                vdl2MessageSequence = feed.frame_ids.reduce((max, id) => Math.max(max, id), 0);
+                return;
+            }
+            const active = new Map(lastAircraftList.filter(isActiveVdl2Aircraft)
+                .map(plane => [String(plane.icao || '').toUpperCase(), plane]));
+            const frames = new Map(feed.frames.map((record, index) => [
+                feed.frame_ids[index], {
+                    id: feed.frame_ids[index], record,
+                    position: feed.frame_positions?.[index] ||
+                        feed.frame_coordinates?.[index] || feed.frame_ads_c?.[index],
+                },
+            ]));
+            for (const frame of feed.new_frames || []) frames.set(frame.id, frame);
+            [...frames.values()].sort((a, b) => a.id - b.id).forEach(({ id: sequence, record, position }) => {
+                if (!Number.isInteger(sequence) || sequence <= vdl2MessageSequence) return;
+                vdl2MessageSequence = sequence;
+                if (position) return;
+                const source = record.vdl2?.avlc?.src;
+                if (source?.type !== 'Aircraft' || typeof source.addr !== 'string' ||
+                    !/^[0-9a-f]{6}$/i.test(source.addr)) return;
+                const icao = source.addr.toUpperCase();
+                const plane = active.get(icao);
+                if (!plane || plane.lat === null || plane.lon === null ||
+                    plane.lat === undefined || plane.lon === undefined ||
+                    plane.lat === '' || plane.lon === '') return;
+                const lat = Number(plane.lat), lon = Number(plane.lon);
+                if (!Number.isFinite(lat) || !Number.isFinite(lon) ||
+                    Math.abs(lat) > 90 || Math.abs(lon) > 180) return;
+                const acars = record.vdl2?.avlc?.acars;
+                vdl2MessageDots.push({
+                    icao, lat, lon, alt: plane.alt, record,
+                    report_time: Date.now() / 1000,
+                    message_type: `ADS-B MATCH ${acars?.label || record.vdl2?.avlc?.cmd || 'VDL2'}`,
+                    coordinate_text: null, _isMessageDot: true,
+                    frame_id: sequence,
+                });
+            });
+        }
         function drawVdl2Aircraft(context, x, y, track) {
             if (!Number.isFinite(track)) {
                 context.beginPath();
@@ -906,7 +965,7 @@
             context.restore();
         }
         function vdl2PositionEntityId(position) {
-            return `VDL2_${position.message_type}_${position.icao}_${position.report_time}_${position.lat}_${position.lon}`;
+            return `VDL2_${position.message_type}_${position.icao}_${position.frame_id ?? position.report_time}_${position.lat}_${position.lon}`;
         }
         function drawVdl2Positions(context, centerX, centerY, ppd, now) {
             vdl2PositionHitboxes = [];
@@ -951,7 +1010,7 @@
                 points.forEach(({ position, point }, index) => {
                     const age = now / 1000 - position.report_time;
                     context.globalAlpha = Math.max(0.12, 1 - age / 600);
-                    if (position.message_type === 'ADS-C BASIC') {
+                    if (position.message_type === 'ADS-C BASIC' || position.message_type === 'H1/DF RSI') {
                         drawVdl2Aircraft(context, point.x, point.y, position.true_track_deg);
                     } else {
                         context.strokeRect(point.x - 8, point.y - 5, 16, 10);
@@ -981,6 +1040,24 @@
                     }
                 });
             }
+            pruneVdl2MessageDots();
+            for (const position of vdl2MessageDots) {
+                const point = getCanvasPoint(position.lat, position.lon, centerX, centerY, ppd);
+                const colour = resolveAltitudeTrailColour(position.alt);
+                context.globalAlpha = 1;
+                context.fillStyle = `rgb(${colour[0]}, ${colour[1]}, ${colour[2]})`;
+                context.beginPath();
+                context.arc(point.x, point.y, 3, 0, Math.PI * 2);
+                context.fill();
+                vdl2PositionHitboxes.push({ x: point.x, y: point.y, position });
+                const id = vdl2PositionEntityId(position);
+                entityCache[id] = {
+                    lat: position.lat, lon: position.lon, alt: position.alt,
+                    _latency: { state_age: now / 1000 - position.report_time },
+                    _isVdl2Position: true,
+                };
+                renderHitboxes.push({ id, x: point.x, y: point.y });
+            }
             context.restore();
             updateVdl2MessagePopup();
         }
@@ -1000,6 +1077,7 @@
             const samePosition = selectedVdl2Position &&
                 selectedVdl2Position.icao === position?.icao &&
                 selectedVdl2Position.message_type === position?.message_type &&
+                selectedVdl2Position.frame_id === position?.frame_id &&
                 selectedVdl2Position.report_time === position?.report_time &&
                 selectedVdl2Position.coordinate_text === position?.coordinate_text;
             selectedVdl2Position = samePosition ? null : position;
@@ -1008,7 +1086,8 @@
                 popup.style.display = 'none';
                 return;
             }
-            const text = String(position.record?.vdl2?.avlc?.acars?.msg_text || '')
+            const text = String(position.record?.vdl2?.avlc?.acars?.msg_text ||
+                (position._isMessageDot ? JSON.stringify(position.record, null, 2) : ''))
                 .replace(/\r\n|\n\r|\r/g, '\n');
             const index = position.coordinate_text ? text.indexOf(position.coordinate_text) : -1;
             const fragment = document.createDocumentFragment();
@@ -1028,6 +1107,7 @@
             const hitbox = vdl2PositionHitboxes.find(hit =>
                 hit.position.icao === selectedVdl2Position.icao &&
                 hit.position.message_type === selectedVdl2Position.message_type &&
+                hit.position.frame_id === selectedVdl2Position.frame_id &&
                 hit.position.report_time === selectedVdl2Position.report_time &&
                 hit.position.coordinate_text === selectedVdl2Position.coordinate_text);
             if (!hitbox) {
@@ -1055,10 +1135,8 @@
                 }
             } else {
                 const avlc = record.vdl2?.avlc || {};
-                const activeIcaos = new Set(lastAircraftList.filter(plane =>
-                    plane.data_tag_inactive === false ||
-                    (typeof plane.data_tag_inactive !== 'boolean' && Number.isFinite(plane.age) && plane.age < 10)
-                ).map(plane => String(plane.icao || '').toUpperCase()));
+                const activeIcaos = new Set(lastAircraftList.filter(isActiveVdl2Aircraft)
+                    .map(plane => String(plane.icao || '').toUpperCase()));
                 const lineStart = formatted.indexOf('\n') + 1;
                 const lineEnd = formatted.indexOf('\n', lineStart);
                 const arrow = formatted.indexOf(' -> ', lineStart);
@@ -1134,6 +1212,7 @@
                 const status = document.getElementById('vdl2-feed-status');
                 const output = document.getElementById('vdl2-frame-output');
                 if (!feed.configured) {
+                    vdl2MessageDots = [];
                     latestVdl2Frames = [];
                     latestVdl2AdsC = [];
                     vdl2Positions = [];
@@ -1147,13 +1226,16 @@
                     status.textContent = 'FILE ERROR';
                     output.textContent = `Unable to read ${feed.path}\n${feed.error}`;
                 } else {
+                    ingestVdl2MessageDots(feed);
                     vdl2Positions = Array.isArray(feed.positions) ? feed.positions : [];
                     status.textContent = `Watching · ${feed.frames.length} frames${feed.invalid_lines ? ` · ${feed.invalid_lines} invalid lines` : ''}`;
                     latestVdl2Frames = feed.frames.slice(-60);
                     latestVdl2Coordinates = Array.isArray(feed.frame_coordinates)
                         ? feed.frame_coordinates.slice(-60) : [];
-                    latestVdl2AdsC = Array.isArray(feed.frame_ads_c)
-                        ? feed.frame_ads_c.slice(-60) : [];
+                    latestVdl2AdsC = Array.isArray(feed.frame_positions)
+                        ? feed.frame_positions.slice(-60).map(position =>
+                            position?.message_type === 'H1/M1 POS' ? null : position)
+                        : (Array.isArray(feed.frame_ads_c) ? feed.frame_ads_c.slice(-60) : []);
                     if (latestVdl2Frames.length) renderVdl2Frames();
                     else output.textContent = 'Connected. Waiting for new JSON frames...';
                 }
@@ -3368,6 +3450,7 @@
             statusText.innerText = 'OFFLINE - CONSOLE DETACHED';
             statusText.className = 'offline';
             lastAircraftList = [];
+            pruneVdl2MessageDots();
             if (latestVdl2Frames.length) renderVdl2Frames();
         };
         setInterval(reportUiState, 2000);
@@ -3419,6 +3502,7 @@
                 
                 let aircraftList = Array.isArray(parsedData.airframes) ? parsedData.airframes : (Array.isArray(parsedData) ? parsedData : []);
                 lastAircraftList = aircraftList; 
+                pruneVdl2MessageDots();
                 if (latestVdl2Frames.length) renderVdl2Frames();
                 const now = Date.now();
 

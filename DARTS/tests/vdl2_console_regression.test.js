@@ -341,5 +341,88 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
     context.fetch = async () => ({ ok: true, json: async () => ({ configured: false }) });
     await vm.runInContext('pollVdl2Feed()', context);
     assert.strictEqual(element('vdl2-message-popup').style.display, 'none');
+    context.dotRecord = {
+        vdl2: { avlc: { src: { addr: '7c6dd9', type: 'Aircraft' },
+            acars: { label: 'SA', msg_text: 'Ordinary message payload' } } },
+    };
+    context.dotFeed = {
+        path: 'feed.json', stream_id: 'test-stream', frame_ids: [],
+        frames: [], frame_positions: [],
+    };
+    context.lastAircraftList = [
+        { icao: '7C6DD9', lat: '-34.1', lon: '150.9', alt: '19801', data_tag_inactive: false },
+    ];
+    vm.runInContext('ingestVdl2MessageDots(dotFeed)', context);
+    context.dotFeed.frames = [context.dotRecord];
+    context.dotFeed.frame_ids = [1];
+    context.dotFeed.frame_positions = [null];
+    vm.runInContext('ingestVdl2MessageDots(dotFeed); ingestVdl2MessageDots(dotFeed)', context);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 1,
+        'repeated polling must not duplicate message dots');
+    assert.strictEqual(vm.runInContext('vdl2MessageDots[0].lat', context), -34.1);
+    context.lastAircraftList[0].lat = '-35';
+    context.lastAircraftList[0].data_tag_inactive = true;
+    vm.runInContext('pruneVdl2MessageDots()', context);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots[0].lat', context), -34.1,
+        'dots stay at their observed ADS-B position, even while a track is inactive');
+    context.dotFeed.frames.push(context.dotRecord);
+    context.dotFeed.frame_ids.push(2);
+    context.dotFeed.frame_positions.push(null);
+    vm.runInContext('ingestVdl2MessageDots(dotFeed)', context);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 1,
+        'inactive matches do not create dots');
+    context.lastAircraftList[0].data_tag_inactive = false;
+    context.dotFeed.frames.push(context.dotRecord);
+    context.dotFeed.frame_ids.push(3);
+    context.dotFeed.frame_positions.push({ message_type: 'H1/DF RSI' });
+    vm.runInContext('ingestVdl2MessageDots(dotFeed)', context);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 1,
+        'decoded position reports must not also create ADS-B message dots');
+    let altitudeUsed;
+    context.resolveAltitudeTrailColour = altitude => { altitudeUsed = altitude; return [20, 100, 200]; };
+    context.drawing.arc = (...args) => drawCalls.push(['dot', ...args]);
+    vm.runInContext('vdl2LayerVisible = true; vdl2Positions = []; drawVdl2Positions(drawing, 0, 0, 1, Date.now()); showVdl2Position(vdl2MessageDots[0])', context);
+    assert.strictEqual(altitudeUsed, '19801');
+    assert.strictEqual(context.drawing.fillStyle, 'rgb(20, 100, 200)');
+    assert.ok(drawCalls.some(call => call[0] === 'dot' && call[1] === 150.9 && call[2] === -34.1));
+    assert.strictEqual(element('vdl2-message-popup').textContent, 'Ordinary message payload');
+    vm.runInContext('showVdl2Position(vdl2MessageDots[0])', context);
+    assert.strictEqual(element('vdl2-message-popup').style.display, 'none');
+    vm.runInContext('showVdl2Position(vdl2MessageDots[0])', context);
+    context.lastAircraftList = [];
+    vm.runInContext('pruneVdl2MessageDots()', context);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 0);
+    assert.strictEqual(element('vdl2-message-popup').style.display, 'none');
+    context.lastAircraftList = [{ icao: '7C6DD9', lat: -35, lon: 151, alt: 20000, age: 1 }];
+    vm.runInContext('ingestVdl2MessageDots(dotFeed)', context);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 0,
+        'reappearing tracks cannot restore consumed messages');
+    context.dotFeed.frames.push(context.dotRecord);
+    context.dotFeed.frame_ids.push(4);
+    context.dotFeed.frame_positions.push(null);
+    vm.runInContext('ingestVdl2MessageDots(dotFeed)', context);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 1);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots[0].lat', context), -35);
+    context.dotFeed.stream_id = 'restarted-stream';
+    vm.runInContext('ingestVdl2MessageDots(dotFeed)', context);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 0,
+        'a restarted feed establishes a baseline instead of replaying buffered messages');
+    context.dotFeed.frame_ids = [7];
+    context.dotFeed.frames = [context.dotRecord];
+    context.dotFeed.frame_positions = [null];
+    context.dotFeed.new_frames = [5, 6, 7].map(id => ({ id, record: context.dotRecord, position: null }));
+    vm.runInContext('ingestVdl2MessageDots(dotFeed)', context);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 3,
+        'new-frame batches include messages that fell out of the console buffer');
+    vm.runInContext('ingestVdl2MessageDots(dotFeed)', context);
+    assert.strictEqual(vm.runInContext('vdl2MessageDots.length', context), 3);
+    vm.runInContext("vdl2Positions = [{...positionAdsC, message_type: 'H1/DF RSI', report_time: Date.now()/1000}]; vdl2MessageDots = []; drawVdl2Positions(drawing, 0, 0, 1, Date.now())", context);
+    assert.ok(drawCalls.some(call => call[0] === 'label' && call[1] === 'H1/DF RSI'));
+
+    context.positionAdsC.message_type = 'H1/DF RSI';
+    vm.runInContext('latestVdl2Frames = [dotRecord]; latestVdl2Coordinates = [null]; latestVdl2AdsC = [positionAdsC]; renderVdl2Frames()', context);
+    assert.ok(element('vdl2-frame-output').textContent.includes('RSI Report: Position:'));
+    assert.strictEqual(element('vdl2-frame-output').children.filter(
+        child => child.className === 'vdl2-position-data').length, 2);
     console.log('vdl2_console_regression: OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });
