@@ -178,6 +178,9 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
             feed.write("invalid-json\n")
         snapshot = self.feed.snapshot(str(self.feed_path))
         self.assertEqual(snapshot["frames"], records[-100:])
+        self.assertEqual(snapshot["frame_ids"], list(range(7, 107)))
+        self.assertEqual(len(snapshot["new_frames"]), 106)
+        self.assertEqual(len(snapshot["frame_positions"]), 100)
         self.assertEqual(
             snapshot["frame_coordinates"], ["POSS32433E149269", None] * 50
         )
@@ -200,6 +203,110 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
         self.assertEqual(len(snapshot["positions"]), 1)
         self.assertEqual(snapshot["positions"][0]["message_type"], "ADS-C BASIC")
         self.assertEqual(snapshot["positions"][0]["true_track_deg"], 313.417969)
+
+    @staticmethod
+    def _rsi_record():
+        capture = DARTS.datetime.datetime(2026, 11, 7, 6, 13, 38,
+                                         tzinfo=DARTS.datetime.timezone.utc).timestamp()
+        return {"vdl2": {"t": {"sec": capture}, "avlc": {
+            "src": {"addr": "7C6DD9", "type": "Aircraft"},
+            "acars": {"label": "H1", "sublabel": "DF", "err": False,
+                      "crc_ok": True, "more": False, "msg_text":
+                      "RSI\r\nTEST FLIGHT\r\n0613 07NOV26 YSSY YPAD CL 235\r\n\r\n"
+                      "  LAT      LON      GALT  TTRK GS\r\n"
+                      "-34.1103  150.9005  19801  -73 323\r\n\r\n"
+                      "INOP NON-AP INHB POS-ERR\r\n  1  0  0  0\r\n"},
+        }}}
+
+    def test_adsc_waypoint_change_current_and_predicted_route(self):
+        record = self._adsc_record()
+        record["vdl2"]["t"]["sec"] = 1794040298
+        tags = record["vdl2"]["avlc"]["acars"]["arinc622"]["adsc"]["tags"]
+        tags[:] = [
+            {"wpt_change_event": {"lat": -33.779869, "lon": 150.573807, "ts_sec": 1896.0}},
+            {"predicted_route": {
+                "next_wpt": {"lat": -33.746567, "lon": 151.124325, "eta_sec": 351},
+                "next_next_wpt": {"lat": -33.845959, "lon": 151.149902},
+            }},
+        ]
+        parsed = DARTS.parse_adsc_waypoint_report(record)
+        self.assertEqual(parsed["message_type"], "ADS-C WPT CHANGE")
+        self.assertEqual(parsed["report_time"], 1794040296)
+        self.assertIsNone(parsed["true_track_deg"])
+        self.assertEqual(parsed["lat"], -33.779869)
+        self.assertEqual([point["label"] for point in parsed["predicted_route"]], ["NEXT", "NEXT+1"])
+        self.assertEqual(parsed["predicted_route"][0]["eta_sec"], 351)
+        self.assertIsNone(DARTS.parse_adsc_basic_report(record))
+        with patch.object(DARTS.time, "time", return_value=1794040298):
+            self.feed.snapshot(str(self.feed_path))
+            with self.feed_path.open("a") as feed:
+                feed.write(json.dumps(record) + "\n")
+            snapshot = self.feed.snapshot(str(self.feed_path))
+        self.assertEqual(snapshot["frame_positions"][0]["message_type"], "ADS-C WPT CHANGE")
+        self.assertEqual(len(snapshot["positions"]), 1)
+        self.assertEqual(len(snapshot["positions"][0]["predicted_route"]), 2)
+        tags[1]["predicted_route"]["next_wpt"]["lat"] = 91
+        self.assertEqual(len(DARTS.parse_adsc_waypoint_report(record)["predicted_route"]), 1)
+        tags[0]["wpt_change_event"]["ts_sec"] = 3600
+        self.assertIsNone(DARTS.parse_adsc_waypoint_report(record))
+
+    def test_adsc_waypoint_timestamp_previous_hour(self):
+        record = self._adsc_record()
+        record["vdl2"]["t"]["sec"] = 1794042002  # 09:00:02 UTC
+        record["vdl2"]["avlc"]["acars"]["arinc622"]["adsc"]["tags"] = [
+            {"wpt_change_event": {"lat": -33.7, "lon": 150.5, "ts_sec": 3599}},
+        ]
+        self.assertEqual(DARTS.parse_adsc_waypoint_report(record)["report_time"], 1794041999)
+
+    def test_rsi_decimal_position_signed_track_and_report_time(self):
+        record = self._rsi_record()
+        parsed = DARTS.parse_rsi_report(record)
+        self.assertEqual(parsed["lat"], -34.1103)
+        self.assertEqual(parsed["lon"], 150.9005)
+        self.assertEqual(parsed["true_track_deg"], 287)
+        self.assertEqual(parsed["message_type"], "H1/DF RSI")
+        self.assertEqual(parsed["report_time"], record["vdl2"]["t"]["sec"] - 38)
+        for raw, expected in (("-152", 208), ("73", 73), ("0", 0), ("359", 359)):
+            candidate = copy.deepcopy(record)
+            candidate["vdl2"]["avlc"]["acars"]["msg_text"] = (
+                candidate["vdl2"]["avlc"]["acars"]["msg_text"].replace("-73", raw))
+            self.assertEqual(DARTS.parse_rsi_report(candidate)["true_track_deg"], expected)
+
+    def test_rsi_rejects_invalid_or_incomplete_positions(self):
+        record = self._rsi_record()
+        for field, value in (("more", True), ("crc_ok", False), ("err", True),
+                             ("sublabel", "M1")):
+            candidate = copy.deepcopy(record)
+            candidate["vdl2"]["avlc"]["acars"][field] = value
+            self.assertIsNone(DARTS.parse_rsi_report(candidate))
+        text = record["vdl2"]["avlc"]["acars"]["msg_text"]
+        for invalid in (text.replace("-34.1103", "-94.1103"),
+                        text.replace("-73", "-181"), text.replace("-73", "360"),
+                        text.replace("  1  0  0  0", "  1  0  0  1"),
+                        text.replace("07NOV26", "31NOV26"),
+                        text.replace("0613", "2413"),
+                        text.replace("POS-ERR", "OTHER")):
+            candidate = copy.deepcopy(record)
+            candidate["vdl2"]["avlc"]["acars"]["msg_text"] = invalid
+            self.assertIsNone(DARTS.parse_rsi_report(candidate))
+
+    def test_rsi_feed_classification_and_sequence_alignment(self):
+        record = self._rsi_record()
+        now = record["vdl2"]["t"]["sec"]
+        with patch.object(DARTS.time, "time", return_value=now):
+            self.feed.snapshot(str(self.feed_path))
+            with self.feed_path.open("a") as feed:
+                feed.write(json.dumps(record) + "\n" + self._frame() + "\n")
+            snapshot = self.feed.snapshot(str(self.feed_path))
+            self.assertEqual(snapshot["frame_ids"], [1, 2])
+            self.assertEqual(snapshot["frame_positions"][0]["message_type"], "H1/DF RSI")
+            self.assertIsNone(snapshot["frame_positions"][1])
+            self.assertEqual(snapshot["positions"][0]["true_track_deg"], 287)
+            self.assertEqual(self.feed.snapshot(str(self.feed_path))["frame_ids"], [1, 2])
+        with patch.object(DARTS.time, "time", return_value=now + 562):
+            self.assertEqual(self.feed.snapshot(str(self.feed_path))["positions"], [])
+        self.assertEqual(self.feed.snapshot("")["frame_ids"], [])
+        self.assertEqual(self.feed.snapshot("")["new_frames"], [])
 
 
 if __name__ == "__main__":

@@ -170,6 +170,39 @@ VDL2 markers also support the map's measurement tool: Ctrl-click a marker to
 start a measurement, then Ctrl-click another marker, waypoint, or aircraft to
 lock the other endpoint. Hovering previews a snapped measurement; an ordinary
 click still opens the message popup.
+Complete CRC-valid H1/DF `RSI` reports are also plotted as aircraft silhouettes
+using the decimal-degree `LAT`/`LON` row and `TTRK` (true track). Negative tracks
+are normalized to 0–360 degrees (`-73` becomes `287`); reports with invalid
+coordinates, invalid date/time, or a missing/nonzero `POS-ERR` are not decoded
+as position fixes. RSI fixes expire ten minutes after the payload UTC date/time
+and use the same source labels, measurement controls, and configurable extracted
+value text color as ADS-C reports.
+ADS-C waypoint-change events also plot the reported current fix, labeled
+`ADS-C WPT CHANGE`. The latest report's predicted `NEXT` and `NEXT+1` points
+appear as separate triangle markers joined by a dashed route, not as observed
+aircraft history. Their tags include the ICAO and predicted-point type; clicking
+one shows its coordinates and available ETA with an explicit prediction notice.
+The current fix uses valid true track when supplied, otherwise a direction-neutral
+point. Event timestamps use seconds past the hour resolved against reception;
+the event and its predictions expire together after ten minutes. These decoded
+events are excluded from ADS-B-correlated message dots.
+
+Other newly observed VDL2 messages with an aircraft source ICAO matching an
+active ADS-B track create small dots on the **VDL MODE 2** layer. Successfully
+decoded POSS, ADS-C Basic, RSI, and waypoint-change reports do not also create these dots.
+Each dot is anchored to the ADS-B coordinates available when the browser first
+receives the message, with the altitude-trail color for that observed altitude.
+This is a correlation point, **not a position reported by the VDL2 message**.
+Dots do not move with the aircraft. Click to toggle the full ACARS text (or
+decoded JSON for messages without ACARS text); Ctrl-click supports measurement.
+Dots persist while their ICAO remains in the live ADS-B aircraft list, including
+its inactive/coasting period, and are permanently removed on disappearance or
+ADS-B disconnection. Reappearing aircraft start fresh; old buffered messages
+are never restored. Reloading the map or changing/restarting the VDL2 feed starts
+a new dot session without replaying its initial buffer. Reading and correlation
+continue while the layer is hidden. The console retains its existing 60-frame
+display/100-frame buffer; newly read batches are sent separately so larger
+batches can still create message dots.
 The VDL2 console adds the extracted position and true track to the report and
 colors those values yellow by default. Set `vdl2_position_data_colour` in
 `DARTS/runtime_config.json` to an opaque `#RGB` or `#RRGGBB` color to change it,
