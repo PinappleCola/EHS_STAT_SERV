@@ -178,18 +178,32 @@ as position fixes. RSI fixes expire ten minutes after the payload UTC date/time
 and use the same source labels, measurement controls, and configurable extracted
 value text color as ADS-C reports.
 ADS-C waypoint-change events also plot the reported current fix, labeled
-`ADS-C WPT CHANGE`. The latest report's predicted `NEXT` and `NEXT+1` points
-appear as separate triangle markers joined by a dashed route, not as observed
+`ADS-C WPT CHANGE`. Basic and waypoint-change reports can include predicted
+`NEXT` and `NEXT+1` points, shown as separate triangle markers linked from the
+reported current position by a dotted route, not as observed
 aircraft history. Their tags include the ICAO and predicted-point type; clicking
-one shows its coordinates and available ETA with an explicit prediction notice.
+one shows its coordinates and available predicted altitude and ETA with an
+explicit prediction notice.
 The current fix uses valid true track when supplied, otherwise a direction-neutral
-point. Event timestamps use seconds past the hour resolved against reception;
-the event and its predictions expire together after ten minutes. These decoded
-events are excluded from ADS-B-correlated message dots.
+point. ADS-C altitude-range and lateral-deviation events also plot their reported
+positions, labeled `ADS-C ALT RANGE` and `ADS-C LAT DEV`; the event type does not
+identify the trigger threshold. Their popups show available altitude and reported
+position accuracy. ADS-C report timestamps use seconds past the UTC hour resolved
+against reception; Basic reports without a timestamp use capture time. Reports
+and their predictions expire together after ten minutes. These decoded reports
+are excluded from ADS-B-correlated message dots.
+Validated XID handoff aircraft-location parameters (`ac_location`) are plotted
+as a point with a dotted circle. XID coordinates are rounded to one decimal
+degree, so the circle's roughly 4 NM radius near Sydney is a conservative
+coordinate-rounding estimate, **not reported sensor accuracy**. The XID marker
+uses the frame capture time, retains any decoded altitude for measurement, and
+opens the full decoded payload on click. Its extracted coordinates, altitude,
+and estimated radius are shown in the console using the configurable position
+data text color.
 
 Other newly observed VDL2 messages with an aircraft source ICAO matching an
 active ADS-B track create small dots on the **VDL MODE 2** layer. Successfully
-decoded POSS, ADS-C Basic, RSI, and waypoint-change reports do not also create these dots.
+decoded POSS, ADS-C reports, RSI, and XID locations do not also create these dots.
 Each dot is anchored to the ADS-B coordinates available when the browser first
 receives the message, with the altitude-trail color for that observed altitude.
 This is a correlation point, **not a position reported by the VDL2 message**.
@@ -204,18 +218,62 @@ continue while the layer is hidden. The console retains its existing 60-frame
 display/100-frame buffer; newly read batches are sent separately so larger
 batches can still create message dots.
 The VDL2 console adds the extracted position and true track to the report and
-colors those values yellow by default. Set `vdl2_position_data_colour` in
+colors extracted coordinates, track, altitude, and XID rounding radius yellow
+by default. Set `vdl2_position_data_colour` in
 `DARTS/runtime_config.json` to an opaque `#RGB` or `#RRGGBB` color to change it,
-then restart DARTS. Only complete CRC-valid ADS-C reports with valid coordinates
-are plotted; the marker uses the VDL2 frame capture time.
+then restart DARTS. ADS-C and ACARS position reports require complete, CRC-valid
+messages and valid coordinates; XID locations require an aircraft source,
+valid coordinates, and a decoded `ac_location` parameter. XID locations use
+the VDL2 frame capture time, while reports with payload timestamps use those
+timestamps for their ten-minute lifetime.
 The console, marker labels, and message boxes use the aircraft data-tag font.
+Newly received VDL2 message batches play sound `08` (New VDL2 Message), using
+the existing browser audio system after user interaction. Initial buffered
+messages and repeated polls do not replay alerts; notifications continue while
+the VDL2 layer is hidden. Batches share one notification to avoid overlapping
+audio during bursts.
+The embedded VDL2 console types out new text using small, scheduled updates,
+preserving its existing text colors without additional visual effects.
+Unchanged text is not retyped. Large updates finish within roughly 0.75 seconds
+under normal browser scheduling; hiding the console shows the full text without
+animation. This affects only display, not feed ingestion or position plotting.
 The console scale defaults to `1`. Adjust the marker-label and message-box scale with `vdl2_position_label_scale` in
-`DARTS/runtime_config.json` (default `1`, accepted range `0.5`–`3`). Coordinates
-use degrees and tenths of minutes; restart DARTS after changing the setting.
-Fixes remain visible for ten minutes from their payload UTC report time (dated
-relative to the capture timestamp). Reports with bad ACARS CRCs, incomplete
-messages, or invalid coordinates are not plotted.
+`DARTS/runtime_config.json` (default `1`, accepted range `0.5`–`3`). Restart
+DARTS after changing the setting. Fixes remain visible for ten minutes from
+their payload UTC report time (resolved relative to capture time), or from the
+frame capture time for XID. Reports that fail their parser's validation are not
+plotted.
 These markers are independent of ADS-B positions and do not alter its tracks.
+
+### VDL2 airport lookup
+
+Place `airports.JSON` (case-sensitive filename on Linux) in the `DARTS`
+directory as a JSON object keyed by four-letter ICAO codes, for example:
+
+```json
+{
+  "YSSY": {"icao": "YSSY", "name": "Sydney Airport"},
+  "YPAD": {"icao": "YPAD", "name": "Adelaide Airport"}
+}
+```
+
+Additional fields such as IATA code, coordinates, city, and timezone are
+accepted but are not used for matching. Each newly received VDL2 message is
+checked for complete four-letter codes in decoded ACARS/XID payload values.
+Matching is case-insensitive; embedded strings such as `XYSSYX`, `YSSY123`,
+or `YSSYYPAD` are not matched. Matches use the existing configurable yellow
+position-data text color in both the console and message popup. Each associated
+observed VDL2 fix or ADS-B-correlated message dot gets a sorted, deduplicated
+airport-code tag; multiple codes are references, not inferred departure,
+destination, or route information.
+
+The lookup is cached and reloaded when the file changes. Changes apply to new
+messages, not previously buffered fixes or dots. A missing or malformed file
+disables airport matching and displays a lookup warning in the VDL2 console;
+VDL2 reception and position parsing continue. No airport lookup is performed
+in the ADS-B decoder, WebSocket emission, or map redraw loop. VDL2 data does
+not modify ADS-B aircraft state, but the server and browser still share CPU
+resources, so high message volumes can affect responsiveness.
 
 ## Configuration (`DARTS/runtime_config.json`)
 

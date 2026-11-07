@@ -80,6 +80,12 @@ assert.strictEqual(context.soundTestApi.resolveSoundUrl(`${HTTP_API}/sounds/07`)
 context.soundTestApi.playSoundEvent({ event_id: 'session:3', sound_id: '2' });
 assert.strictEqual(playedSounds[playedSounds.length - 1], `${HTTP_API}/sounds/02`);
 
+context.soundTestApi.playSoundEvent({ event_id: 'vdl2:stream:4', sound_id: '08' });
+assert.strictEqual(playedSounds[playedSounds.length - 1], `${HTTP_API}/sounds/08`);
+const countAfterVdl2 = playedSounds.length;
+context.soundTestApi.playSoundEvent({ event_id: 'vdl2:stream:4', sound_id: '08' });
+assert.strictEqual(playedSounds.length, countAfterVdl2, 'VDL2 sound events use existing deduplication');
+
 // Failures log the absolute URL that could not be fetched.
 context.soundTestApi.playSoundEvent({ event_id: 'session:4', sound_id: '99', url: '/sounds/99' });
 setImmediate(() => {

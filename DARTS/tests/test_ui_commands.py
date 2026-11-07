@@ -1,9 +1,12 @@
 import asyncio
+import copy
 import http.client
 import http.server
 import importlib.util
 import json
+import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -55,6 +58,57 @@ class UICommandTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 conn.close()
         return await asyncio.to_thread(request)
+
+    async def test_vdl2_airport_burst_preserves_adsb_state_and_broadcast(self):
+        now = time.time()
+        aircraft = {"icao": "7CF836", "last_seen": now, "ident_time": 0,
+                    "lat": -33.6, "lon": 150.9, "alt": 4000}
+        original = copy.deepcopy(aircraft)
+        with tempfile.TemporaryDirectory() as directory:
+            airport_path = Path(directory) / "airports.JSON"
+            airport_path.write_text('{"YSSY": {"icao": "YSSY"}}')
+            feed_path = Path(directory) / "vdl2.json"
+            feed_path.write_text("")
+            feed = DARTS.Vdl2JsonFeed(airport_path)
+            feed.snapshot(str(feed_path))
+            record = {"vdl2": {"t": {"sec": now}, "avlc": {
+                "src": {"addr": "7CF836", "type": "Aircraft"},
+                "frame_type": "U", "cmd": "XID", "xid": {"vdl_params": [
+                    {"name": "dst_airport", "value": "YSSY"},
+                    {"name": "ac_location", "value": {
+                        "loc": {"lat": -34.0, "lon": 151.0}, "alt": 7000}},
+                ]},
+            }}}
+            feed_path.write_text((json.dumps(record) + "\n") * 500)
+            with mock.patch.object(DARTS, "VDL2_FEED", feed), \
+                    mock.patch.dict(DARTS.RUNTIME_CONFIG, {"vdl2_json_path": str(feed_path)}), \
+                    mock.patch.object(DARTS, "aircraft_state", {"7CF836": aircraft}), \
+                    mock.patch.object(DARTS, "compute_display_heading", return_value=None):
+                async with websockets.connect(self.ws_url) as client:
+                    await asyncio.wait_for(client.recv(), 3)
+
+                    def read_feed():
+                        conn = http.client.HTTPConnection("127.0.0.1", self.http_server.server_port, timeout=5)
+                        try:
+                            conn.request("GET", "/api/vdl2-feed")
+                            response = conn.getresponse()
+                            self.assertEqual(response.status, 200)
+                            return json.loads(response.read())
+                        finally:
+                            conn.close()
+
+                    snapshot, broadcast = await asyncio.gather(
+                        asyncio.to_thread(read_feed),
+                        asyncio.wait_for(client.recv(), 3),
+                    )
+                    self.assertEqual(len(snapshot["new_frames"]), 500)
+                    self.assertEqual(snapshot["frame_airports"], [["YSSY"]] * 100)
+                    self.assertEqual(snapshot["positions"][0]["lat"], -34.0)
+                    plane = json.loads(broadcast)["airframes"][0]
+                    for field in ("icao", "lat", "lon", "alt", "last_seen"):
+                        self.assertEqual(plane[field], original[field])
+                    self.assertEqual(plane["_latency"]["last_update"], round(now, 3))
+                    self.assertEqual(aircraft, original)
 
     async def wait_for_state(self, predicate):
         for _ in range(100):

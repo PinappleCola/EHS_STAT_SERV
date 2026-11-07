@@ -8,6 +8,28 @@ import time
 import uuid
 
 
+AIRPORT_CODE_RE = re.compile(r"(?<![A-Z0-9])([A-Z]{4})(?![A-Z0-9])")
+
+
+def find_airport_codes(record, airport_codes):
+    """Match complete ICAO tokens in decoded payload values, not JSON keys."""
+    avlc = record.get("vdl2", {}).get("avlc", {})
+    if not airport_codes or not isinstance(avlc, dict):
+        return []
+    pending = [avlc.get("acars"), avlc.get("xid")]
+    matches = set()
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, str):
+            matches.update(code for code in AIRPORT_CODE_RE.findall(value.upper())
+                           if code in airport_codes)
+    return sorted(matches)
+
+
 def parse_poss_report(record):
     frame = record.get("vdl2", {})
     if not isinstance(frame, dict):
@@ -66,6 +88,67 @@ def parse_adsc_basic_report(record):
 
 def parse_adsc_waypoint_report(record):
     return _parse_adsc_report(record, "wpt_change_event", "ADS-C WPT CHANGE")
+
+
+def parse_adsc_altitude_event(record):
+    return _parse_adsc_report(record, "alt_range_event", "ADS-C ALT RANGE")
+
+
+def parse_adsc_lateral_event(record):
+    return _parse_adsc_report(record, "lat_dev_change_event", "ADS-C LAT DEV")
+
+
+def parse_xid_aircraft_location(record):
+    frame = record.get("vdl2", {})
+    if not isinstance(frame, dict):
+        return None
+    avlc = frame.get("avlc", {})
+    if not isinstance(avlc, dict) or avlc.get("frame_type") != "U" or avlc.get("cmd") != "XID":
+        return None
+    source = avlc.get("src")
+    xid = avlc.get("xid")
+    if not isinstance(source, dict) or source.get("type") != "Aircraft" or not isinstance(xid, dict):
+        return None
+    icao = source.get("addr")
+    if not isinstance(icao, str) or not re.fullmatch(r"[0-9a-fA-F]{6}", icao):
+        return None
+    timestamp = frame.get("t", {})
+    capture = timestamp.get("sec") if isinstance(timestamp, dict) else None
+    if isinstance(capture, bool) or not isinstance(capture, (int, float)) or not math.isfinite(capture):
+        return None
+    params = xid.get("vdl_params")
+    if not isinstance(params, list):
+        return None
+    for param in params:
+        if not isinstance(param, dict) or param.get("name") != "ac_location":
+            continue
+        value = param.get("value")
+        location = value.get("loc") if isinstance(value, dict) else None
+        if not isinstance(location, dict):
+            continue
+        lat, lon = location.get("lat"), location.get("lon")
+        if (isinstance(lat, bool) or not isinstance(lat, (int, float))
+                or not math.isfinite(lat) or not -90 <= lat <= 90):
+            return None
+        if (isinstance(lon, bool) or not isinstance(lon, (int, float))
+                or not math.isfinite(lon) or not -180 <= lon <= 180):
+            return None
+        # A one-decimal-degree coordinate represents a rounded cell; this
+        # radius conservatively reaches the cell's corners at this latitude.
+        lat_half_cell_nm = 0.05 * 60
+        lon_half_cell_nm = 0.05 * 60 * math.cos(math.radians(lat))
+        radius_nm = math.hypot(lat_half_cell_nm, lon_half_cell_nm)
+        altitude = value.get("alt")
+        if isinstance(altitude, bool) or not isinstance(altitude, (int, float)) or not math.isfinite(altitude):
+            altitude = None
+        return {
+            "icao": icao.upper(), "lat": lat, "lon": lon,
+            "true_track_deg": None, "alt": altitude,
+            "position_uncertainty_nm": radius_nm,
+            "report_time": float(capture), "message_type": "XID LOCATION",
+            "coordinate_text": None, "record": record,
+        }
+    return None
 
 
 def _parse_adsc_report(record, report_key, message_type):
@@ -128,16 +211,17 @@ def _parse_adsc_report(record, report_key, message_type):
                 and math.isfinite(value) and 0 <= value < 360):
             true_track = value
     report_time = float(capture)
-    route = []
-    if report_key == "wpt_change_event":
-        seconds = basic_report.get("ts_sec")
+    seconds = basic_report.get("ts_sec")
+    if seconds is not None or report_key != "basic_report":
         if (isinstance(seconds, bool) or not isinstance(seconds, (int, float))
-                or not 0 <= seconds < 3600):
+                or not math.isfinite(seconds) or not 0 <= seconds < 3600):
             return None
         # ADS-C timestamps are seconds past the hour, dated against reception.
         report_time = math.floor(capture / 3600) * 3600 + seconds
         if report_time > capture + 60:
             report_time -= 3600
+    route = []
+    if report_key in ("basic_report", "wpt_change_event"):
         for tag in tags:
             predicted = tag.get("predicted_route") if isinstance(tag, dict) else None
             if not isinstance(predicted, dict):
@@ -153,6 +237,10 @@ def _parse_adsc_report(record, report_key, message_type):
                         or not -180 <= lon_wpt <= 180):
                     continue
                 point = {"lat": lat_wpt, "lon": lon_wpt, "label": label}
+                altitude = waypoint.get("alt")
+                if (isinstance(altitude, (int, float)) and not isinstance(altitude, bool)
+                        and math.isfinite(altitude)):
+                    point["alt"] = altitude
                 eta = waypoint.get("eta_sec")
                 if (isinstance(eta, (int, float)) and not isinstance(eta, bool)
                         and math.isfinite(eta) and eta >= 0):
@@ -169,7 +257,15 @@ def _parse_adsc_report(record, report_key, message_type):
         "coordinate_text": None,
         "record": record,
     }
-    if report_key == "wpt_change_event":
+    altitude = basic_report.get("alt")
+    if (isinstance(altitude, (int, float)) and not isinstance(altitude, bool)
+            and math.isfinite(altitude)):
+        result["alt"] = altitude
+    accuracy = basic_report.get("pos_accuracy_nm")
+    if (isinstance(accuracy, (int, float)) and not isinstance(accuracy, bool)
+            and math.isfinite(accuracy) and accuracy >= 0):
+        result["pos_accuracy_nm"] = accuracy
+    if report_key in ("basic_report", "wpt_change_event"):
         result["predicted_route"] = route
     return result
 
@@ -230,10 +326,16 @@ def parse_rsi_report(record):
 
 
 class Vdl2JsonFeed:
-    def __init__(self):
+    def __init__(self, airport_path=None):
         self.stream_id = uuid.uuid4().hex
         self.sequence = 0
         self.lock = threading.Lock()
+        self.airport_path = airport_path if airport_path is not None else os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "airports.JSON"
+        )
+        self.airport_signature = None
+        self.airport_codes = frozenset()
+        self.airport_lookup_error = ""
         self.state = {
             "path": None,
             "offset": 0,
@@ -243,12 +345,37 @@ class Vdl2JsonFeed:
             "frame_coordinates": [],
             "frame_ads_c": [],
             "frame_positions": [],
+            "frame_airports": [],
             "frame_ids": [],
             "error": "",
             "invalid_lines": 0,
             "last_frame_time": None,
             "positions": {},
         }
+
+    def _refresh_airport_lookup(self):
+        try:
+            stat = os.stat(self.airport_path)
+            signature = (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+            if signature == self.airport_signature:
+                return
+            self.airport_signature = signature
+            with open(self.airport_path, encoding="utf-8-sig") as lookup_file:
+                lookup = json.load(lookup_file)
+            if not isinstance(lookup, dict):
+                raise ValueError("expected an object keyed by four-letter ICAO airport codes")
+            for code, airport in lookup.items():
+                if not re.fullmatch(r"[A-Z]{4}", code) or not isinstance(airport, dict):
+                    raise ValueError(f"invalid airport entry: {code!r}")
+                if airport.get("icao", code) != code:
+                    raise ValueError(f"ICAO field does not match airport key: {code}")
+            self.airport_codes = frozenset(lookup)
+            self.airport_lookup_error = ""
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            if isinstance(exc, OSError):
+                self.airport_signature = None
+            self.airport_codes = frozenset()
+            self.airport_lookup_error = f"Airport lookup unavailable ({self.airport_path}): {exc}"
 
     def snapshot(self, path):
         path = path.strip() if isinstance(path, str) else ""
@@ -265,6 +392,7 @@ class Vdl2JsonFeed:
                     "frame_coordinates": [],
                     "frame_ads_c": [],
                     "frame_positions": [],
+                    "frame_airports": [],
                     "frame_ids": [],
                     "error": "",
                     "invalid_lines": 0,
@@ -273,6 +401,7 @@ class Vdl2JsonFeed:
                 })
 
             if path:
+                self._refresh_airport_lookup()
                 try:
                     stat = os.stat(path)
                     identity = (stat.st_dev, stat.st_ino)
@@ -302,6 +431,9 @@ class Vdl2JsonFeed:
                         if not isinstance(frame, dict) or not isinstance(frame.get("vdl2"), dict):
                             state["invalid_lines"] += 1
                             continue
+                        airports = find_airport_codes(frame, self.airport_codes)
+                        state["frame_airports"].append(airports)
+                        state["frame_airports"] = state["frame_airports"][-100:]
                         state["frames"].append(frame)
                         state["frames"] = state["frames"][-100:]
                         state["last_frame_time"] = time.time()
@@ -309,19 +441,29 @@ class Vdl2JsonFeed:
                         adsc_position = parse_adsc_basic_report(frame)
                         rsi_position = parse_rsi_report(frame)
                         waypoint_position = parse_adsc_waypoint_report(frame)
-                        decoded_position = position or adsc_position or rsi_position or waypoint_position
+                        altitude_position = parse_adsc_altitude_event(frame)
+                        lateral_position = parse_adsc_lateral_event(frame)
+                        xid_position = parse_xid_aircraft_location(frame)
+                        parsed_positions = (position, adsc_position, rsi_position, waypoint_position,
+                                            altitude_position, lateral_position, xid_position)
+                        for parsed_position in parsed_positions:
+                            if parsed_position:
+                                parsed_position["airport_codes"] = airports
+                        decoded_position = next((item for item in parsed_positions if item), None)
                         self.sequence += 1
                         state["frame_ids"].append(self.sequence)
                         state["frame_ids"] = state["frame_ids"][-100:]
                         state["frame_positions"].append(
                             {key: decoded_position.get(key) for key in
-                             ("icao", "lat", "lon", "true_track_deg", "message_type", "predicted_route")}
+                             ("icao", "lat", "lon", "true_track_deg", "message_type", "predicted_route",
+                              "position_uncertainty_nm", "pos_accuracy_nm", "alt", "airport_codes")}
                             if decoded_position else None
                         )
                         state["frame_positions"] = state["frame_positions"][-100:]
                         new_frames.append({
                             "id": self.sequence, "record": frame,
                             "position": state["frame_positions"][-1],
+                            "airport_codes": airports,
                         })
                         state["frame_coordinates"].append(
                             position["coordinate_text"] if position else None
@@ -335,13 +477,14 @@ class Vdl2JsonFeed:
                             if adsc_position else None
                         )
                         state["frame_ads_c"] = state["frame_ads_c"][-100:]
-                        for parsed_position in (position, adsc_position, rsi_position, waypoint_position):
+                        for parsed_position in parsed_positions:
                             if not parsed_position:
                                 continue
                             key = (parsed_position["icao"], parsed_position["message_type"])
                             history = state["positions"].setdefault(key, [])
-                            duplicate = any(
-                                item["report_time"] == parsed_position["report_time"]
+                            duplicate_index = next((
+                                index for index, item in enumerate(history)
+                                if item["report_time"] == parsed_position["report_time"]
                                 and (
                                     item.get("coordinate_text") == parsed_position["coordinate_text"]
                                     if parsed_position["coordinate_text"] is not None
@@ -349,11 +492,12 @@ class Vdl2JsonFeed:
                                     and item["lon"] == parsed_position["lon"]
                                     and item.get("true_track_deg") == parsed_position["true_track_deg"]
                                 )
-                                for item in history
-                            )
-                            if not duplicate:
+                            ), None)
+                            if duplicate_index is None:
                                 history.append(parsed_position)
                                 history.sort(key=lambda item: item["report_time"])
+                            else:
+                                history[duplicate_index] = parsed_position
                     state["error"] = ""
                 except OSError as exc:
                     state["error"] = str(exc)
@@ -382,6 +526,8 @@ class Vdl2JsonFeed:
                 "frame_coordinates": list(state["frame_coordinates"]),
                 "frame_ads_c": list(state["frame_ads_c"]),
                 "frame_positions": list(state["frame_positions"]),
+                "frame_airports": list(state["frame_airports"]),
+                "airport_lookup_error": self.airport_lookup_error if path else "",
                 "frame_ids": list(state["frame_ids"]),
                 "stream_id": self.stream_id,
                 "new_frames": new_frames,

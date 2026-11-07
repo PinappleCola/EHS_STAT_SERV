@@ -20,10 +20,15 @@ DARTS = _load_darts_module()
 
 class Vdl2FeedRegressionTests(unittest.TestCase):
     def setUp(self):
-        self.feed = DARTS.Vdl2JsonFeed()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.feed_path = Path(self.temp_dir.name) / "vdl2.json"
         self.feed_path.write_bytes(b"")
+        self.airport_path = Path(self.temp_dir.name) / "airports.JSON"
+        self.airport_path.write_text(json.dumps({
+            "YSSY": {"icao": "YSSY", "name": "Sydney Airport"},
+            "YPAD": {"icao": "YPAD", "name": "Adelaide Airport"},
+        }))
+        self.feed = DARTS.Vdl2JsonFeed(self.airport_path)
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -31,6 +36,72 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
     @staticmethod
     def _frame(src="7CAF1B"):
         return json.dumps({"vdl2": {"avlc": {"src": {"addr": src}}}})
+
+    def test_airport_matching_only_complete_payload_tokens(self):
+        record = self._rsi_record()
+        original = copy.deepcopy(record)
+        self.assertEqual(DARTS.find_airport_codes(record, {"YSSY", "YPAD"}),
+                         ["YPAD", "YSSY"])
+        self.assertEqual(record, original, "matching must not modify decoded records")
+        record["vdl2"]["avlc"]["acars"]["msg_text"] = (
+            "yssy /YPAD YSSY, XYSSYX YSSY123 1YPAD YSSYYPAD UNKNOWN"
+        )
+        self.assertEqual(DARTS.find_airport_codes(record, {"YSSY", "YPAD"}),
+                         ["YPAD", "YSSY"])
+        record["vdl2"]["avlc"]["acars"] = {"YSSY": "XYSSYX", "flight": "YSSY123"}
+        record["vdl2"]["avlc"]["src"]["addr"] = "YPAD"
+        self.assertEqual(DARTS.find_airport_codes(record, {"YSSY", "YPAD"}), [])
+        record = self._xid_record()
+        record["vdl2"]["avlc"]["xid"]["vdl_params"].append(
+            {"name": "dst_airport", "value": "YSSY"})
+        self.assertEqual(DARTS.find_airport_codes(record, {"YSSY"}), ["YSSY"])
+        self.assertEqual(DARTS.find_airport_codes(record, set()), [])
+
+    def test_airport_lookup_is_cached_and_matches_are_aligned(self):
+        record = self._rsi_record()
+        unmatched = {"vdl2": {"avlc": {"src": {"addr": "7CAF1B", "type": "Aircraft"},
+                                     "acars": {"msg_text": "No airports here"}}}}
+        original = copy.deepcopy(record)
+        with patch.object(DARTS.time, "time", return_value=record["vdl2"]["t"]["sec"]), \
+                patch.object(DARTS.json, "load", wraps=DARTS.json.load) as load, \
+                patch.object(DARTS, "find_airport_codes", wraps=DARTS.find_airport_codes) as match:
+            self.feed.snapshot(str(self.feed_path))
+            with self.feed_path.open("a") as feed:
+                feed.write(json.dumps(record) + "\n" + json.dumps(unmatched) + "\n")
+            snapshot = self.feed.snapshot(str(self.feed_path))
+            self.feed.snapshot(str(self.feed_path))
+            self.assertEqual(load.call_count, 1, "unchanged lookup is not reread per poll")
+            self.assertEqual(match.call_count, 2, "only new records are matched")
+        self.assertEqual(snapshot["frame_airports"], [["YPAD", "YSSY"], []])
+        self.assertEqual(snapshot["new_frames"][0]["airport_codes"], ["YPAD", "YSSY"])
+        self.assertEqual(snapshot["frame_positions"][0]["airport_codes"], ["YPAD", "YSSY"])
+        self.assertEqual(snapshot["positions"][0]["airport_codes"], ["YPAD", "YSSY"])
+        self.assertEqual(snapshot["frames"], [original, unmatched])
+        self.assertEqual(snapshot["airport_lookup_error"], "")
+        self.assertEqual(self.feed.snapshot("")["frame_airports"], [])
+
+    def test_airport_lookup_errors_do_not_interrupt_vdl2_and_recover(self):
+        self.airport_path.unlink()
+        missing = self.feed.snapshot(str(self.feed_path))
+        self.assertTrue(missing["connected"])
+        self.assertIn("Airport lookup unavailable", missing["airport_lookup_error"])
+        for content in ("{", "[]", '{"BAD": {}}', '{"YSSY": {"icao": "YPAD"}}'):
+            self.airport_path.write_text(content)
+            with self.feed_path.open("a") as feed:
+                feed.write(json.dumps(self._rsi_record()) + "\n")
+            snapshot = self.feed.snapshot(str(self.feed_path))
+            self.assertTrue(snapshot["connected"])
+            self.assertTrue(snapshot["airport_lookup_error"])
+            self.assertEqual(snapshot["frame_airports"][-1], [])
+        self.airport_path.write_text('{"YSSY": {"icao": "YSSY"}}')
+        # Ensure the replacement is observable even on coarse-timestamp filesystems.
+        stat = self.airport_path.stat()
+        DARTS.os.utime(self.airport_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+        with self.feed_path.open("a") as feed:
+            feed.write(json.dumps(self._rsi_record()) + "\n")
+        snapshot = self.feed.snapshot(str(self.feed_path))
+        self.assertEqual(snapshot["airport_lookup_error"], "")
+        self.assertEqual(snapshot["frame_airports"][-1], ["YSSY"])
 
     def test_reads_only_complete_newline_delimited_frames(self):
         self.feed_path.write_text(self._frame("OLD123") + "\n", encoding="utf-8")
@@ -99,6 +170,34 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
         invalid["vdl2"]["avlc"]["acars"]["crc_ok"] = False
         self.assertIsNone(DARTS.parse_adsc_basic_report(invalid))
 
+    def test_xid_aircraft_location_and_rounding_uncertainty(self):
+        record = self._xid_record()
+        position = DARTS.parse_xid_aircraft_location(record)
+        expected_radius = DARTS.math.hypot(
+            3, 3 * DARTS.math.cos(DARTS.math.radians(-33.6))
+        )
+        self.assertEqual(position["icao"], "7CF836")
+        self.assertEqual(position["lat"], -33.6)
+        self.assertEqual(position["lon"], 150.9)
+        self.assertEqual(position["alt"], 4000)
+        self.assertEqual(position["message_type"], "XID LOCATION")
+        self.assertEqual(position["report_time"], 1793937866.0)
+        self.assertAlmostEqual(position["position_uncertainty_nm"], expected_radius)
+        self.assertIs(position["record"], record)
+
+        invalid = copy.deepcopy(record)
+        invalid["vdl2"]["avlc"]["xid"]["vdl_params"][0]["value"]["loc"]["lat"] = 91
+        self.assertIsNone(DARTS.parse_xid_aircraft_location(invalid))
+        invalid = copy.deepcopy(record)
+        invalid["vdl2"]["avlc"]["xid"]["vdl_params"][0]["value"]["loc"]["lon"] = float("nan")
+        self.assertIsNone(DARTS.parse_xid_aircraft_location(invalid))
+        invalid = copy.deepcopy(record)
+        invalid["vdl2"]["avlc"]["src"]["addr"] = "not-icao"
+        self.assertIsNone(DARTS.parse_xid_aircraft_location(invalid))
+        invalid = copy.deepcopy(record)
+        invalid["vdl2"]["avlc"]["xid"]["vdl_params"][0]["value"]["alt"] = True
+        self.assertIsNone(DARTS.parse_xid_aircraft_location(invalid)["alt"])
+
     @staticmethod
     def _position_record():
         return {"vdl2": {
@@ -131,6 +230,21 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
                         ]},
                     },
                 },
+            },
+        }}
+
+    @staticmethod
+    def _xid_record():
+        return {"vdl2": {
+            "t": {"sec": 1793937866},
+            "avlc": {
+                "src": {"addr": "7CF836", "type": "Aircraft"},
+                "frame_type": "U", "cmd": "XID",
+                "xid": {"vdl_params": [
+                    {"name": "ac_location", "value": {
+                        "loc": {"lat": -33.6, "lon": 150.9}, "alt": 4000,
+                    }},
+                ]},
             },
         }}
 
@@ -204,6 +318,20 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
         self.assertEqual(snapshot["positions"][0]["message_type"], "ADS-C BASIC")
         self.assertEqual(snapshot["positions"][0]["true_track_deg"], 313.417969)
 
+    def test_xid_location_is_added_to_position_history_and_frame_metadata(self):
+        record = self._xid_record()
+        with patch.object(DARTS.time, "time", return_value=record["vdl2"]["t"]["sec"]):
+            self.feed.snapshot(str(self.feed_path))
+            with self.feed_path.open("a") as feed:
+                feed.write(json.dumps(record) + "\n")
+            snapshot = self.feed.snapshot(str(self.feed_path))
+        expected_radius = DARTS.parse_xid_aircraft_location(record)["position_uncertainty_nm"]
+        self.assertEqual(snapshot["frame_positions"][0]["message_type"], "XID LOCATION")
+        self.assertAlmostEqual(snapshot["frame_positions"][0]["position_uncertainty_nm"], expected_radius)
+        self.assertEqual(snapshot["frame_positions"][0]["alt"], 4000)
+        self.assertEqual(snapshot["positions"][0]["icao"], "7CF836")
+        self.assertAlmostEqual(snapshot["positions"][0]["position_uncertainty_nm"], expected_radius)
+
     @staticmethod
     def _rsi_record():
         capture = DARTS.datetime.datetime(2026, 11, 7, 6, 13, 38,
@@ -257,6 +385,76 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
             {"wpt_change_event": {"lat": -33.7, "lon": 150.5, "ts_sec": 3599}},
         ]
         self.assertEqual(DARTS.parse_adsc_waypoint_report(record)["report_time"], 1794041999)
+
+    def test_adsc_basic_predicted_route_and_report_time(self):
+        record = self._adsc_record()
+        record["vdl2"]["t"]["sec"] = 1794027780
+        tags = record["vdl2"]["avlc"]["acars"]["arinc622"]["adsc"]["tags"]
+        tags[0]["basic_report"].update(
+            lat=-33.593445, lon=150.591488, alt=18348, ts_sec=179, pos_accuracy_nm=0.05)
+        tags.append({"predicted_route": {
+            "next_wpt": {"lat": -33.411827, "lon": 150.438709, "alt": 23160, "eta_sec": 168},
+            "next_next_wpt": {"lat": -33.113823, "lon": 150.079765, "alt": 29776},
+        }})
+        parsed = DARTS.parse_adsc_basic_report(record)
+        self.assertEqual(parsed["report_time"], 1794027779)
+        self.assertEqual(parsed["alt"], 18348)
+        self.assertEqual(parsed["pos_accuracy_nm"], 0.05)
+        self.assertEqual(parsed["predicted_route"], [
+            {"label": "NEXT", "lat": -33.411827, "lon": 150.438709, "alt": 23160, "eta_sec": 168},
+            {"label": "NEXT+1", "lat": -33.113823, "lon": 150.079765, "alt": 29776},
+        ])
+        with patch.object(DARTS.time, "time", return_value=1794027780):
+            self.feed.snapshot(str(self.feed_path))
+            with self.feed_path.open("a") as feed:
+                feed.write(json.dumps(record) + "\n")
+            snapshot = self.feed.snapshot(str(self.feed_path))
+        self.assertEqual(snapshot["frame_positions"][0]["predicted_route"], parsed["predicted_route"])
+        self.assertEqual(snapshot["positions"][0]["report_time"], 1794027779)
+        self.assertEqual(snapshot["positions"][0]["alt"], 18348)
+        tags[-1]["predicted_route"]["next_wpt"]["alt"] = 24000
+        with patch.object(DARTS.time, "time", return_value=1794027780):
+            with self.feed_path.open("a") as feed:
+                feed.write(json.dumps(record) + "\n")
+            snapshot = self.feed.snapshot(str(self.feed_path))
+        self.assertEqual(len(snapshot["positions"]), 1)
+        self.assertEqual(snapshot["positions"][0]["predicted_route"][0]["alt"], 24000)
+        tags[-1]["predicted_route"]["next_wpt"]["lat"] = float("nan")
+        self.assertEqual(len(DARTS.parse_adsc_basic_report(record)["predicted_route"]), 1)
+        tags[0]["basic_report"]["ts_sec"] = float("nan")
+        self.assertIsNone(DARTS.parse_adsc_basic_report(record))
+
+    def test_adsc_altitude_and_lateral_events(self):
+        for key, label, parser in (
+            ("alt_range_event", "ADS-C ALT RANGE", DARTS.parse_adsc_altitude_event),
+            ("lat_dev_change_event", "ADS-C LAT DEV", DARTS.parse_adsc_lateral_event),
+        ):
+            with self.subTest(key=key):
+                record = self._adsc_record()
+                record["vdl2"]["t"]["sec"] = 1794032337
+                tags = record["vdl2"]["avlc"]["acars"]["arinc622"]["adsc"]["tags"]
+                tags[:] = [{key: {"lat": -33.823299, "lon": 151.029224, "alt": 5708,
+                                  "ts_sec": 1135, "pos_accuracy_nm": 0.05}}]
+                parsed = parser(record)
+                self.assertEqual((parsed["message_type"], parsed["report_time"]), (label, 1794032335))
+                self.assertEqual((parsed["lat"], parsed["lon"], parsed["alt"]), (-33.823299, 151.029224, 5708))
+                self.assertEqual(parsed["pos_accuracy_nm"], 0.05)
+                with patch.object(DARTS.time, "time", return_value=1794032337):
+                    self.feed.snapshot(str(self.feed_path))
+                    with self.feed_path.open("a") as feed:
+                        feed.write(json.dumps(record) + "\n")
+                    snapshot = self.feed.snapshot(str(self.feed_path))
+                self.assertEqual(snapshot["frame_positions"][-1]["message_type"], label)
+                self.assertTrue(any(p["message_type"] == label for p in snapshot["positions"]))
+                invalid = copy.deepcopy(record)
+                invalid["vdl2"]["avlc"]["acars"]["arinc622"]["crc_ok"] = False
+                self.assertIsNone(parser(invalid))
+                invalid = copy.deepcopy(record)
+                invalid["vdl2"]["avlc"]["acars"]["arinc622"]["adsc"]["tags"][0][key]["ts_sec"] = 3600
+                self.assertIsNone(parser(invalid))
+                invalid = copy.deepcopy(record)
+                invalid["vdl2"]["avlc"]["acars"]["arinc622"]["adsc"]["tags"][0][key]["lat"] = True
+                self.assertIsNone(parser(invalid))
 
     def test_rsi_decimal_position_signed_track_and_report_time(self):
         record = self._rsi_record()
