@@ -841,7 +841,12 @@
                     const coordinates = `${adscPosition.lat.toFixed(6)}, ${adscPosition.lon.toFixed(6)}`;
                     const track = Number.isFinite(adscPosition.true_track_deg)
                         ? ` | True track: ${adscPosition.true_track_deg.toFixed(1)}\u00b0T` : '';
-                    lines.push(` ${adscPosition.message_type === 'H1/DF RSI' ? 'RSI Report' : 'ADS-C Basic Report'}: Position: ${coordinates}${track}`);
+                    const reportName = adscPosition.message_type === 'H1/DF RSI' ? 'RSI Report'
+                        : adscPosition.message_type === 'ADS-C WPT CHANGE' ? 'ADS-C Waypoint Change' : 'ADS-C Basic Report';
+                    lines.push(` ${reportName}: Position: ${coordinates}${track}`);
+                    for (const waypoint of adscPosition.predicted_route || []) {
+                        lines.push(`  Predicted ${waypoint.label}: ${waypoint.lat.toFixed(6)}, ${waypoint.lon.toFixed(6)}${Number.isFinite(waypoint.eta_sec) ? ` | ETA: ${waypoint.eta_sec} s` : ''}`);
+                    }
                 }
             } else if (avlc.xid) {
                 const xid = avlc.xid;
@@ -1010,7 +1015,7 @@
                 points.forEach(({ position, point }, index) => {
                     const age = now / 1000 - position.report_time;
                     context.globalAlpha = Math.max(0.12, 1 - age / 600);
-                    if (position.message_type === 'ADS-C BASIC' || position.message_type === 'H1/DF RSI') {
+                    if (['ADS-C BASIC', 'H1/DF RSI', 'ADS-C WPT CHANGE'].includes(position.message_type)) {
                         drawVdl2Aircraft(context, point.x, point.y, position.true_track_deg);
                     } else {
                         context.strokeRect(point.x - 8, point.y - 5, 16, 10);
@@ -1037,6 +1042,42 @@
                         context.fillText(position.icao, point.x + 12, point.y);
                         context.fillText(position.message_type || 'VDL2 POS',
                             point.x + 12, point.y + 14 * dataTagStyle.font_size_px / 11 * vdl2PositionLabelScale);
+                        if (position.message_type === 'ADS-C WPT CHANGE') {
+                            let previous = point;
+                            for (const waypoint of position.predicted_route || []) {
+                                const next = getCanvasPoint(waypoint.lat, waypoint.lon, centerX, centerY, ppd);
+                                context.save();
+                                context.globalAlpha = 0.65;
+                                context.setLineDash([4, 4]);
+                                context.beginPath();
+                                context.moveTo(previous.x, previous.y);
+                                context.lineTo(next.x, next.y);
+                                context.stroke();
+                                context.setLineDash([]);
+                                context.beginPath();
+                                context.moveTo(next.x, next.y - 5);
+                                context.lineTo(next.x + 5, next.y + 4);
+                                context.lineTo(next.x - 5, next.y + 4);
+                                context.closePath();
+                                context.stroke();
+                                context.fillText(`${position.icao} ${waypoint.label}`, next.x + 8, next.y);
+                                context.restore();
+                                const predicted = {
+                                    ...position, lat: waypoint.lat, lon: waypoint.lon,
+                                    message_type: `ADS-C PREDICTED ${waypoint.label}`,
+                                    predicted_waypoint: waypoint,
+                                };
+                                vdl2PositionHitboxes.push({ x: next.x, y: next.y, position: predicted });
+                                const id = vdl2PositionEntityId(predicted);
+                                entityCache[id] = {
+                                    lat: waypoint.lat, lon: waypoint.lon, alt: null,
+                                    _isVdl2Position: true,
+                                    _latency: { state_age: now / 1000 - position.report_time },
+                                };
+                                renderHitboxes.push({ id, x: next.x, y: next.y });
+                                previous = next;
+                            }
+                        }
                     }
                 });
             }
@@ -1086,7 +1127,10 @@
                 popup.style.display = 'none';
                 return;
             }
-            const text = String(position.record?.vdl2?.avlc?.acars?.msg_text ||
+            const waypoint = position.predicted_waypoint;
+            const text = String(waypoint
+                ? `ADS-C PREDICTED ${waypoint.label}\nLat: ${waypoint.lat}\nLon: ${waypoint.lon}${Number.isFinite(waypoint.eta_sec) ? `\nETA from report: ${waypoint.eta_sec} s` : ''}\nNot an observed aircraft position.`
+                : position.record?.vdl2?.avlc?.acars?.msg_text ||
                 (position._isMessageDot ? JSON.stringify(position.record, null, 2) : ''))
                 .replace(/\r\n|\n\r|\r/g, '\n');
             const index = position.coordinate_text ? text.indexOf(position.coordinate_text) : -1;

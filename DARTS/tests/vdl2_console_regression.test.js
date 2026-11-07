@@ -158,7 +158,7 @@ context.drawing = {
     save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
     translate(...args) { drawCalls.push(['translate', ...args]); },
     rotate(angle) { drawCalls.push(['rotate', angle]); },
-    closePath() {}, fill() {}, arc() {},
+    closePath() {}, fill() {}, arc() {}, setLineDash() {},
     strokeRect(...args) { drawCalls.push(['envelope', ...args]); },
     fillText(...args) { drawCalls.push(['label', ...args]); },
 };
@@ -424,5 +424,26 @@ assert.strictEqual(drawCalls.length, 0, 'hidden layer must not draw positions');
     assert.ok(element('vdl2-frame-output').textContent.includes('RSI Report: Position:'));
     assert.strictEqual(element('vdl2-frame-output').children.filter(
         child => child.className === 'vdl2-position-data').length, 2);
+    context.waypointReport = {
+        icao: '750260', lat: -33.779869, lon: 150.573807,
+        true_track_deg: null, message_type: 'ADS-C WPT CHANGE',
+        report_time: Date.now() / 1000,
+        predicted_route: [
+            {label: 'NEXT', lat: -33.746567, lon: 151.124325, eta_sec: 351},
+            {label: 'NEXT+1', lat: -33.845959, lon: 151.149902},
+        ],
+    };
+    vm.runInContext('vdl2Positions = [waypointReport]; drawVdl2Positions(drawing, 0, 0, 1, Date.now())', context);
+    assert.strictEqual(vm.runInContext('vdl2PositionHitboxes.length', context), 3);
+    assert.ok(drawCalls.some(call => call[0] === 'label' && call[1] === '750260 NEXT'));
+    assert.ok(drawCalls.some(call => call[0] === 'label' && call[1] === '750260 NEXT+1'));
+    vm.runInContext('showVdl2Position(vdl2PositionHitboxes[1].position)', context);
+    assert.ok(element('vdl2-message-popup').textContent.includes('Not an observed aircraft position.'));
+    assert.ok(element('vdl2-message-popup').textContent.includes('ETA from report: 351 s'));
+    vm.runInContext('showVdl2Position(vdl2PositionHitboxes[1].position)', context);
+    assert.strictEqual(element('vdl2-message-popup').style.display, 'none');
+    vm.runInContext('latestVdl2AdsC = [waypointReport]; renderVdl2Frames()', context);
+    assert.ok(element('vdl2-frame-output').textContent.includes('ADS-C Waypoint Change: Position:'));
+    assert.ok(element('vdl2-frame-output').textContent.includes('Predicted NEXT+1:'));
     console.log('vdl2_console_regression: OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

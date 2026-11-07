@@ -61,6 +61,14 @@ def parse_poss_report(record):
 
 
 def parse_adsc_basic_report(record):
+    return _parse_adsc_report(record, "basic_report", "ADS-C BASIC")
+
+
+def parse_adsc_waypoint_report(record):
+    return _parse_adsc_report(record, "wpt_change_event", "ADS-C WPT CHANGE")
+
+
+def _parse_adsc_report(record, report_key, message_type):
     frame = record.get("vdl2", {})
     if not isinstance(frame, dict):
         return None
@@ -97,8 +105,8 @@ def parse_adsc_basic_report(record):
     for tag in tags:
         if not isinstance(tag, dict):
             continue
-        if basic_report is None and isinstance(tag.get("basic_report"), dict):
-            basic_report = tag["basic_report"]
+        if basic_report is None and isinstance(tag.get(report_key), dict):
+            basic_report = tag[report_key]
         if earth_ref_data is None and isinstance(tag.get("earth_ref_data"), dict):
             earth_ref_data = tag["earth_ref_data"]
     if basic_report is None:
@@ -119,16 +127,51 @@ def parse_adsc_basic_report(record):
         if (isinstance(value, (int, float)) and not isinstance(value, bool)
                 and math.isfinite(value) and 0 <= value < 360):
             true_track = value
-    return {
+    report_time = float(capture)
+    route = []
+    if report_key == "wpt_change_event":
+        seconds = basic_report.get("ts_sec")
+        if (isinstance(seconds, bool) or not isinstance(seconds, (int, float))
+                or not 0 <= seconds < 3600):
+            return None
+        # ADS-C timestamps are seconds past the hour, dated against reception.
+        report_time = math.floor(capture / 3600) * 3600 + seconds
+        if report_time > capture + 60:
+            report_time -= 3600
+        for tag in tags:
+            predicted = tag.get("predicted_route") if isinstance(tag, dict) else None
+            if not isinstance(predicted, dict):
+                continue
+            for key, label in (("next_wpt", "NEXT"), ("next_next_wpt", "NEXT+1")):
+                waypoint = predicted.get(key)
+                if not isinstance(waypoint, dict):
+                    continue
+                lat_wpt, lon_wpt = waypoint.get("lat"), waypoint.get("lon")
+                if (isinstance(lat_wpt, bool) or not isinstance(lat_wpt, (int, float))
+                        or not -90 <= lat_wpt <= 90
+                        or isinstance(lon_wpt, bool) or not isinstance(lon_wpt, (int, float))
+                        or not -180 <= lon_wpt <= 180):
+                    continue
+                point = {"lat": lat_wpt, "lon": lon_wpt, "label": label}
+                eta = waypoint.get("eta_sec")
+                if (isinstance(eta, (int, float)) and not isinstance(eta, bool)
+                        and math.isfinite(eta) and eta >= 0):
+                    point["eta_sec"] = eta
+                route.append(point)
+            break
+    result = {
         "icao": icao.upper(),
         "lat": lat,
         "lon": lon,
         "true_track_deg": true_track,
-        "report_time": float(capture),
-        "message_type": "ADS-C BASIC",
+        "report_time": report_time,
+        "message_type": message_type,
         "coordinate_text": None,
         "record": record,
     }
+    if report_key == "wpt_change_event":
+        result["predicted_route"] = route
+    return result
 
 
 def parse_rsi_report(record):
@@ -265,13 +308,14 @@ class Vdl2JsonFeed:
                         position = parse_poss_report(frame)
                         adsc_position = parse_adsc_basic_report(frame)
                         rsi_position = parse_rsi_report(frame)
-                        decoded_position = position or adsc_position or rsi_position
+                        waypoint_position = parse_adsc_waypoint_report(frame)
+                        decoded_position = position or adsc_position or rsi_position or waypoint_position
                         self.sequence += 1
                         state["frame_ids"].append(self.sequence)
                         state["frame_ids"] = state["frame_ids"][-100:]
                         state["frame_positions"].append(
                             {key: decoded_position.get(key) for key in
-                             ("icao", "lat", "lon", "true_track_deg", "message_type")}
+                             ("icao", "lat", "lon", "true_track_deg", "message_type", "predicted_route")}
                             if decoded_position else None
                         )
                         state["frame_positions"] = state["frame_positions"][-100:]
@@ -291,7 +335,7 @@ class Vdl2JsonFeed:
                             if adsc_position else None
                         )
                         state["frame_ads_c"] = state["frame_ads_c"][-100:]
-                        for parsed_position in (position, adsc_position, rsi_position):
+                        for parsed_position in (position, adsc_position, rsi_position, waypoint_position):
                             if not parsed_position:
                                 continue
                             key = (parsed_position["icao"], parsed_position["message_type"])

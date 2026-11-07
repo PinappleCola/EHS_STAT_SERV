@@ -218,6 +218,46 @@ class Vdl2FeedRegressionTests(unittest.TestCase):
                       "INOP NON-AP INHB POS-ERR\r\n  1  0  0  0\r\n"},
         }}}
 
+    def test_adsc_waypoint_change_current_and_predicted_route(self):
+        record = self._adsc_record()
+        record["vdl2"]["t"]["sec"] = 1794040298
+        tags = record["vdl2"]["avlc"]["acars"]["arinc622"]["adsc"]["tags"]
+        tags[:] = [
+            {"wpt_change_event": {"lat": -33.779869, "lon": 150.573807, "ts_sec": 1896.0}},
+            {"predicted_route": {
+                "next_wpt": {"lat": -33.746567, "lon": 151.124325, "eta_sec": 351},
+                "next_next_wpt": {"lat": -33.845959, "lon": 151.149902},
+            }},
+        ]
+        parsed = DARTS.parse_adsc_waypoint_report(record)
+        self.assertEqual(parsed["message_type"], "ADS-C WPT CHANGE")
+        self.assertEqual(parsed["report_time"], 1794040296)
+        self.assertIsNone(parsed["true_track_deg"])
+        self.assertEqual(parsed["lat"], -33.779869)
+        self.assertEqual([point["label"] for point in parsed["predicted_route"]], ["NEXT", "NEXT+1"])
+        self.assertEqual(parsed["predicted_route"][0]["eta_sec"], 351)
+        self.assertIsNone(DARTS.parse_adsc_basic_report(record))
+        with patch.object(DARTS.time, "time", return_value=1794040298):
+            self.feed.snapshot(str(self.feed_path))
+            with self.feed_path.open("a") as feed:
+                feed.write(json.dumps(record) + "\n")
+            snapshot = self.feed.snapshot(str(self.feed_path))
+        self.assertEqual(snapshot["frame_positions"][0]["message_type"], "ADS-C WPT CHANGE")
+        self.assertEqual(len(snapshot["positions"]), 1)
+        self.assertEqual(len(snapshot["positions"][0]["predicted_route"]), 2)
+        tags[1]["predicted_route"]["next_wpt"]["lat"] = 91
+        self.assertEqual(len(DARTS.parse_adsc_waypoint_report(record)["predicted_route"]), 1)
+        tags[0]["wpt_change_event"]["ts_sec"] = 3600
+        self.assertIsNone(DARTS.parse_adsc_waypoint_report(record))
+
+    def test_adsc_waypoint_timestamp_previous_hour(self):
+        record = self._adsc_record()
+        record["vdl2"]["t"]["sec"] = 1794042002  # 09:00:02 UTC
+        record["vdl2"]["avlc"]["acars"]["arinc622"]["adsc"]["tags"] = [
+            {"wpt_change_event": {"lat": -33.7, "lon": 150.5, "ts_sec": 3599}},
+        ]
+        self.assertEqual(DARTS.parse_adsc_waypoint_report(record)["report_time"], 1794041999)
+
     def test_rsi_decimal_position_signed_track_and_report_time(self):
         record = self._rsi_record()
         parsed = DARTS.parse_rsi_report(record)

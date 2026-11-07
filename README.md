@@ -177,10 +177,19 @@ coordinates, invalid date/time, or a missing/nonzero `POS-ERR` are not decoded
 as position fixes. RSI fixes expire ten minutes after the payload UTC date/time
 and use the same source labels, measurement controls, and configurable extracted
 value text color as ADS-C reports.
+ADS-C waypoint-change events also plot the reported current fix, labeled
+`ADS-C WPT CHANGE`. The latest report's predicted `NEXT` and `NEXT+1` points
+appear as separate triangle markers joined by a dashed route, not as observed
+aircraft history. Their tags include the ICAO and predicted-point type; clicking
+one shows its coordinates and available ETA with an explicit prediction notice.
+The current fix uses valid true track when supplied, otherwise a direction-neutral
+point. Event timestamps use seconds past the hour resolved against reception;
+the event and its predictions expire together after ten minutes. These decoded
+events are excluded from ADS-B-correlated message dots.
 
 Other newly observed VDL2 messages with an aircraft source ICAO matching an
 active ADS-B track create small dots on the **VDL MODE 2** layer. Successfully
-decoded POSS, ADS-C Basic, and RSI reports do not also create these dots.
+decoded POSS, ADS-C Basic, RSI, and waypoint-change reports do not also create these dots.
 Each dot is anchored to the ADS-B coordinates available when the browser first
 receives the message, with the altitude-trail color for that observed altitude.
 This is a correlation point, **not a position reported by the VDL2 message**.
